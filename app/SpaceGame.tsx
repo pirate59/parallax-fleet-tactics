@@ -14,6 +14,12 @@ import {
   type StoryEncounter,
   type StoryOutcome,
 } from "./storyEngine";
+import {
+  destinationFromShipMovement,
+  shipMovementFromDestination,
+  shipQuaternionForRotation,
+  type ShipRelativeMovement,
+} from "./maneuverEngine";
 
 type Vec3 = [number, number, number];
 type ArmourFace = "fore" | "aft" | "port" | "starboard" | "dorsal" | "ventral";
@@ -355,11 +361,7 @@ const forwardVector = (rotation: Vec3) => {
   ).normalize();
 };
 
-const quaternionFor = (rotation: Vec3) =>
-  new THREE.Quaternion().setFromEuler(
-    // Ships face local -Z: positive turn rotates the cone nose toward local starboard.
-    new THREE.Euler(degrees(rotation[0]), degrees(-rotation[1]), degrees(rotation[2]), "YXZ"),
-  );
+const quaternionFor = shipQuaternionForRotation;
 
 const distanceBetween = (a: Vec3, b: Vec3) =>
   new THREE.Vector3(...a).distanceTo(new THREE.Vector3(...b));
@@ -1841,6 +1843,9 @@ export function SpaceGame() {
   const allReady = livingPlayerShips.length > 0 && readyCount === livingPlayerShips.length && allDestinationsValid;
   const plottedDistance = selectedShip && selectedDraft ? distanceBetween(selectedShip.position, selectedDraft.destination) : 0;
   const destinationValid = selectedShip && selectedDraft ? isDestinationValid(selectedShip, selectedDraft.destination) : false;
+  const relativeMovement = selectedShip && selectedDraft
+    ? shipMovementFromDestination(selectedShip.position, selectedShip.rotation, selectedDraft.destination)
+    : { forward: 0, right: 0, up: 0 };
 
   const updateAudioSettings = useCallback((patch: Partial<AudioSettings>) => {
     setAudioSettings((current) => ({ ...current, ...patch }));
@@ -1867,12 +1872,17 @@ export function SpaceGame() {
     });
   }, [selectedShip, phase]);
 
-  const updateDestinationAxis = useCallback((axis: 0 | 1 | 2, value: number) => {
-    if (!selectedDraft) return;
-    const destination = [...selectedDraft.destination] as Vec3;
-    destination[axis] = value;
-    updateDraft({ destination });
-  }, [selectedDraft, updateDraft]);
+  const updateRelativeMovement = useCallback((axis: keyof ShipRelativeMovement, value: number) => {
+    if (!selectedShip || !selectedDraft) return;
+    const movement = shipMovementFromDestination(selectedShip.position, selectedShip.rotation, selectedDraft.destination);
+    updateDraft({
+      destination: destinationFromShipMovement(
+        selectedShip.position,
+        selectedShip.rotation,
+        { ...movement, [axis]: value },
+      ),
+    });
+  }, [selectedShip, selectedDraft, updateDraft]);
 
   const faceTarget = useCallback(() => {
     if (!selectedShip || !selectedDraft) return;
@@ -2381,15 +2391,15 @@ export function SpaceGame() {
           {selectedShip.team === "player" && selectedDraft ? (
             <>
               <section className="orders-block location-block">
-                <div className="section-heading stepped"><span><b>01</b>TARGET LOCATION</span><strong>GRID ENDPOINT</strong></div>
+                <div className="section-heading stepped"><span><b>01</b>TARGET LOCATION</span><strong>SHIP-RELATIVE</strong></div>
                 <div className={`plot-status ${destinationValid ? "valid" : "invalid"}`}>
-                  <span>VECTOR LENGTH</span>
+                  <span>LOCAL VECTOR LENGTH</span>
                   <strong>{plottedDistance.toFixed(1)} / {selectedShip.maxMove} KM</strong>
                   <i><b style={{ width: `${Math.min(100, (plottedDistance / selectedShip.maxMove) * 100)}%` }} /></i>
                 </div>
-                <SliderControl label="Grid X" axis="X" value={selectedDraft.destination[0]} min={Math.max(-BATTLEFIELD_HALF, selectedShip.position[0] - selectedShip.maxMove)} max={Math.min(BATTLEFIELD_HALF, selectedShip.position[0] + selectedShip.maxMove)} suffix=" km" step={0.5} decimals={1} disabled={controlsDisabled} onChange={(value) => updateDestinationAxis(0, value)} />
-                <SliderControl label="Altitude" axis="Y" value={selectedDraft.destination[1]} min={Math.max(-BATTLEFIELD_VERTICAL_HALF, selectedShip.position[1] - selectedShip.maxMove)} max={Math.min(BATTLEFIELD_VERTICAL_HALF, selectedShip.position[1] + selectedShip.maxMove)} suffix=" km" step={0.5} decimals={1} disabled={controlsDisabled} onChange={(value) => updateDestinationAxis(1, value)} />
-                <SliderControl label="Grid Z" axis="Z" value={selectedDraft.destination[2]} min={Math.max(-BATTLEFIELD_HALF, selectedShip.position[2] - selectedShip.maxMove)} max={Math.min(BATTLEFIELD_HALF, selectedShip.position[2] + selectedShip.maxMove)} suffix=" km" step={0.5} decimals={1} disabled={controlsDisabled} onChange={(value) => updateDestinationAxis(2, value)} />
+                <SliderControl label="Forward / back" axis="F" value={relativeMovement.forward} min={-selectedShip.maxMove} max={selectedShip.maxMove} suffix=" km" step={0.25} decimals={2} lowLabel="BACK" highLabel="FORWARD" disabled={controlsDisabled} onChange={(value) => updateRelativeMovement("forward", value)} />
+                <SliderControl label="Left / right" axis="R" value={relativeMovement.right} min={-selectedShip.maxMove} max={selectedShip.maxMove} suffix=" km" step={0.25} decimals={2} lowLabel="LEFT" highLabel="RIGHT" disabled={controlsDisabled} onChange={(value) => updateRelativeMovement("right", value)} />
+                <SliderControl label="Up / down" axis="U" value={relativeMovement.up} min={-selectedShip.maxMove} max={selectedShip.maxMove} suffix=" km" step={0.25} decimals={2} lowLabel="DOWN" highLabel="UP" disabled={controlsDisabled} onChange={(value) => updateRelativeMovement("up", value)} />
                 <div className="quick-actions">
                   <button type="button" disabled={controlsDisabled} onClick={() => updateDraft({ destination: [...selectedShip.position] as Vec3 })}>Hold position</button>
                   <button type="button" disabled={controlsDisabled} onClick={() => updateDraft({ destination: destinationFromManeuver(selectedShip, selectedShip.maxMove * 0.6, 0, 0, 0) })}>Forward 60%</button>
