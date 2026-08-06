@@ -1549,13 +1549,38 @@ kbd {
   box-shadow: 0 0 11px rgba(105, 223, 255, 0.22);
 }
 
-.armour-grid {
+.shield-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 7px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--type-meta);
+  line-height: 1.35;
+  letter-spacing: 0.1em;
+}
+
+.shield-heading span {
+  color: #7897a9;
+}
+
+.shield-heading strong {
+  max-width: 56%;
+  color: #8cdeef;
+  font-size: var(--type-micro);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-align: right;
+}
+
+.shield-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 7px;
 }
 
-.armour-grid > div {
+.shield-grid > div {
   position: relative;
   min-width: 0;
   display: grid;
@@ -1566,7 +1591,7 @@ kbd {
   background: rgba(112, 187, 216, 0.025);
 }
 
-.armour-grid span {
+.shield-grid span {
   overflow: hidden;
   color: #6f8999;
   font-size: var(--type-meta);
@@ -1574,34 +1599,34 @@ kbd {
   text-transform: uppercase;
 }
 
-.armour-grid strong {
+.shield-grid strong {
   color: #b7d8e5;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--type-label);
   font-weight: 500;
 }
 
-.armour-grid i {
+.shield-grid i {
   grid-column: 1 / -1;
   height: 2px;
   background: rgba(255, 255, 255, 0.06);
 }
 
-.armour-grid b {
+.shield-grid b {
   display: block;
   height: 100%;
   background: #5fc6e7;
 }
 
-.armour-grid .damaged b {
+.shield-grid .damaged b {
   background: var(--amber);
 }
 
-.armour-grid .breached {
+.shield-grid .depleted {
   border-color: rgba(255, 81, 101, 0.27);
 }
 
-.armour-grid .breached b {
+.shield-grid .depleted b {
   background: var(--coral);
 }
 
@@ -1964,6 +1989,70 @@ input[type="range"]::-moz-range-thumb {
 .ally-status strong {
   color: #94d9c2;
   font-weight: 500;
+}
+
+.salvage-grid > button.elite {
+  isolation: isolate;
+  border-color: rgba(255, 194, 103, 0.76);
+  background:
+    radial-gradient(circle at 88% 14%, rgba(169, 103, 255, 0.2), transparent 38%),
+    radial-gradient(circle at 16% 90%, rgba(105, 223, 255, 0.12), transparent 42%),
+    linear-gradient(145deg, rgba(35, 25, 46, 0.96), rgba(7, 22, 33, 0.94));
+  box-shadow:
+    inset 3px 0 #ffc267,
+    inset 0 1px rgba(174, 242, 255, 0.24),
+    0 0 0 1px rgba(176, 112, 255, 0.16),
+    0 14px 36px rgba(112, 60, 168, 0.18),
+    0 0 28px rgba(105, 223, 255, 0.1);
+}
+
+.salvage-grid > button.elite::before {
+  opacity: 0.78;
+  background:
+    linear-gradient(116deg, transparent 20%, rgba(255, 222, 167, 0.08) 38%, transparent 54%),
+    radial-gradient(circle at 84% 18%, rgba(187, 122, 255, 0.24), transparent 42%),
+    radial-gradient(circle at 10% 92%, rgba(105, 223, 255, 0.16), transparent 40%);
+}
+
+.salvage-grid > button.elite:hover {
+  border-color: #ffd38c;
+  box-shadow:
+    inset 3px 0 #ffd38c,
+    inset 0 1px rgba(192, 246, 255, 0.34),
+    0 0 0 1px rgba(190, 135, 255, 0.25),
+    0 16px 42px rgba(119, 62, 178, 0.25),
+    0 0 34px rgba(105, 223, 255, 0.16);
+}
+
+.salvage-grid > button.elite:hover::before {
+  opacity: 1;
+}
+
+.salvage-grid > button.elite .salvage-index {
+  color: #c6a6ec;
+}
+
+.salvage-grid > button.elite small {
+  color: #ffd596;
+}
+
+.salvage-grid > button.elite strong {
+  color: #f6f2ff;
+  text-shadow: 0 0 14px rgba(176, 112, 255, 0.3), 0 0 20px rgba(105, 223, 255, 0.12);
+}
+
+.salvage-grid > button.elite p {
+  color: #91a9b8;
+}
+
+.salvage-grid > button.elite > b {
+  color: #b9f4ff;
+  text-shadow: 0 0 12px rgba(105, 223, 255, 0.26);
+}
+
+.salvage-grid > button.elite > i {
+  color: #e0c4ff;
+  text-shadow: 0 0 11px rgba(176, 112, 255, 0.38);
 }
 
 @keyframes spin {

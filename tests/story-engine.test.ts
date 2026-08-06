@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ELITE_SALVAGE_CHANCE,
+  ELITE_SALVAGE_OPTIONS,
   SALVAGE_OPTIONS,
   STORY_ENCOUNTERS,
   STORY_GATE_COUNT,
@@ -31,9 +33,92 @@ test("story campaign exposes a varied, mixed-risk encounter deck", () => {
   }
 
   const effects = STORY_ENCOUNTERS.flatMap((encounter) => encounter.choices.flatMap((choice) => choice.outcomes.flatMap((outcome) => outcome.effects)));
-  assert.deepEqual(new Set(effects.map((effect) => effect.kind)), new Set(["stat", "armour", "hull", "recruit", "threat"]));
+  assert.deepEqual(new Set(effects.map((effect) => effect.kind)), new Set(["stat", "shield", "hull", "recruit", "threat"]));
   const stats = effects.filter((effect) => effect.kind === "stat").map((effect) => effect.stat);
   assert.ok(["weaponDamage", "weaponRange", "maxMove"].every((stat) => stats.includes(stat as typeof stats[number])));
+});
+
+test("standard salvage values are doubled and use shield terminology", () => {
+  assert.deepEqual(
+    SALVAGE_OPTIONS.map((option) => ({ id: option.id, rarity: option.rarity, effects: option.effects })),
+    [
+      { id: "cannon-capacitors", rarity: "standard", effects: [{ kind: "stat", stat: "weaponDamage", amount: 8 }] },
+      { id: "rail-collimator", rarity: "standard", effects: [{ kind: "stat", stat: "weaponRange", amount: 3 }] },
+      { id: "drive-actuators", rarity: "standard", effects: [{ kind: "stat", stat: "maxMove", amount: 1.5 }] },
+      { id: "ablative-weave", rarity: "standard", effects: [{ kind: "shield", amount: 16 }] },
+      { id: "hull-foam", rarity: "standard", effects: [{ kind: "hull", amount: 36 }] },
+      {
+        id: "keel-reinforcement",
+        rarity: "standard",
+        effects: [{ kind: "stat", stat: "maxHull", amount: 20 }, { kind: "hull", amount: 20 }],
+      },
+    ],
+  );
+
+  const visibleCopy = [
+    ...SALVAGE_OPTIONS.flatMap((option) => [option.category, option.label, option.description, option.effectLabel]),
+    ...ELITE_SALVAGE_OPTIONS.flatMap((option) => [option.category, option.label, option.description, option.effectLabel]),
+    ...STORY_ENCOUNTERS.flatMap((encounter) => [
+      encounter.signal,
+      encounter.title,
+      encounter.description,
+      ...encounter.choices.flatMap((choice) => [
+        choice.label,
+        choice.description,
+        ...choice.outcomes.flatMap((outcome) => [outcome.title, outcome.description, outcome.effectLabel]),
+      ]),
+    ]),
+  ].join("\n");
+  assert.doesNotMatch(visibleCopy, /armou?r/i);
+});
+
+test("elite salvage is unique and three times the new standard strength", () => {
+  assert.equal(ELITE_SALVAGE_CHANCE, 0.12);
+  assert.equal(ELITE_SALVAGE_OPTIONS.length, 9);
+  assert.equal(new Set(ELITE_SALVAGE_OPTIONS.map((option) => option.id)).size, ELITE_SALVAGE_OPTIONS.length);
+  assert.ok(ELITE_SALVAGE_OPTIONS.every((option) => option.rarity === "elite" && option.unique));
+
+  assert.deepEqual(
+    ELITE_SALVAGE_OPTIONS.slice(0, 6).map((option) => option.effects),
+    [
+      [{ kind: "stat", stat: "weaponDamage", amount: 24 }],
+      [{ kind: "stat", stat: "weaponRange", amount: 9 }],
+      [{ kind: "stat", stat: "maxMove", amount: 4.5 }],
+      [{ kind: "shield", amount: 48 }],
+      [{ kind: "hull", amount: 108 }],
+      [{ kind: "stat", stat: "maxHull", amount: 60 }, { kind: "hull", amount: 60 }],
+    ],
+  );
+  assert.deepEqual(
+    ELITE_SALVAGE_OPTIONS.slice(6).map((option) => option.effects),
+    [
+      [{ kind: "eliteWeapon", weapon: "railgun" }],
+      [{ kind: "eliteWeapon", weapon: "turret" }],
+      [{ kind: "eliteWeapon", weapon: "flak" }],
+    ],
+  );
+});
+
+test("elite salvage obeys the chance boundary and replaces at most one standard", () => {
+  const noElite = pickSalvageOptions(() => ELITE_SALVAGE_CHANCE, 3);
+  assert.equal(noElite.filter((option) => option.rarity === "elite").length, 0);
+
+  const eliteOffer = pickSalvageOptions(() => ELITE_SALVAGE_CHANCE - 0.000001, 3);
+  assert.equal(eliteOffer.length, 3);
+  assert.equal(new Set(eliteOffer.map((option) => option.id)).size, 3);
+  assert.equal(eliteOffer.filter((option) => option.rarity === "elite").length, 1);
+  assert.equal(eliteOffer.filter((option) => option.rarity === "standard").length, 2);
+});
+
+test("elite salvage exclusions prevent repeat offers", () => {
+  const remainingElite = ELITE_SALVAGE_OPTIONS.at(-1);
+  assert.ok(remainingElite);
+  const excluded = ELITE_SALVAGE_OPTIONS.slice(0, -1).map((option) => option.id);
+  const offer = pickSalvageOptions(() => 0, 3, excluded);
+  assert.equal(offer.find((option) => option.rarity === "elite")?.id, remainingElite?.id);
+
+  const exhausted = pickSalvageOptions(() => 0, 3, ELITE_SALVAGE_OPTIONS.map((option) => option.id));
+  assert.ok(exhausted.every((option) => option.rarity === "standard"));
 });
 
 test("weighted outcome rolls are deterministic at their boundaries", () => {

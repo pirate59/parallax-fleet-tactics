@@ -1,11 +1,14 @@
+import type { EliteWeaponKind } from "./combatEngine";
+
 export type StoryStat = "weaponDamage" | "weaponRange" | "maxMove" | "maxHull";
 
 export type StoryEffect =
   | { kind: "stat"; stat: StoryStat; amount: number }
-  | { kind: "armour"; amount: number }
+  | { kind: "shield"; amount: number }
   | { kind: "hull"; amount: number }
   | { kind: "recruit"; ship: "scout" | "escort" | "gunboat" }
-  | { kind: "threat"; threat: "retrieval" | "patrol" | "hunter"; delay: number };
+  | { kind: "threat"; threat: "retrieval" | "patrol" | "hunter"; delay: number }
+  | { kind: "eliteWeapon"; weapon: EliteWeaponKind };
 
 export type StoryOutcomeTone = "favourable" | "costly" | "danger";
 
@@ -40,10 +43,13 @@ export type SalvageOption = {
   label: string;
   description: string;
   effectLabel: string;
+  rarity: "standard" | "elite";
+  unique?: boolean;
   effects: StoryEffect[];
 };
 
 export const STORY_GATE_COUNT = 10;
+export const ELITE_SALVAGE_CHANCE = 0.12;
 
 export const SALVAGE_OPTIONS: SalvageOption[] = [
   {
@@ -51,51 +57,153 @@ export const SALVAGE_OPTIONS: SalvageOption[] = [
     category: "WEAPONS",
     label: "Cannon capacitors",
     description: "Rewire a captured discharge bank into the forward cannon.",
-    effectLabel: "+4 gun damage",
-    effects: [{ kind: "stat", stat: "weaponDamage", amount: 4 }],
+    effectLabel: "+8 gun damage",
+    rarity: "standard",
+    effects: [{ kind: "stat", stat: "weaponDamage", amount: 8 }],
   },
   {
     id: "rail-collimator",
     category: "WEAPONS",
     label: "Rail collimator",
     description: "Extend the coherent firing solution before the beam disperses.",
-    effectLabel: "+1.5 km gun range",
-    effects: [{ kind: "stat", stat: "weaponRange", amount: 1.5 }],
+    effectLabel: "+3 km gun range",
+    rarity: "standard",
+    effects: [{ kind: "stat", stat: "weaponRange", amount: 3 }],
   },
   {
     id: "drive-actuators",
     category: "MOVEMENT",
     label: "Drive actuators",
     description: "Fit lighter gimbal assemblies taken from a raider engine bank.",
-    effectLabel: "+0.75 km movement",
-    effects: [{ kind: "stat", stat: "maxMove", amount: 0.75 }],
+    effectLabel: "+1.5 km movement",
+    rarity: "standard",
+    effects: [{ kind: "stat", stat: "maxMove", amount: 1.5 }],
   },
   {
     id: "ablative-weave",
     category: "DEFENCE",
-    label: "Ablative weave",
-    description: "Laminate recovered plating across every armour facing.",
-    effectLabel: "+8 all armour",
-    effects: [{ kind: "armour", amount: 8 }],
+    label: "Ablative shield weave",
+    description: "Tune recovered field emitters across every shield facing.",
+    effectLabel: "+16 all shields",
+    rarity: "standard",
+    effects: [{ kind: "shield", amount: 16 }],
   },
   {
     id: "hull-foam",
     category: "REPAIR",
     label: "Reactive hull foam",
     description: "Seal fractures and brace the stolen ship for the next gate.",
-    effectLabel: "+18 hull repair",
-    effects: [{ kind: "hull", amount: 18 }],
+    effectLabel: "+36 hull repair",
+    rarity: "standard",
+    effects: [{ kind: "hull", amount: 36 }],
   },
   {
     id: "keel-reinforcement",
     category: "DEFENCE",
     label: "Keel reinforcement",
     description: "Weld a corsair spine section into the primary hull frame.",
-    effectLabel: "+10 max hull and repair",
+    effectLabel: "+20 max hull and repair",
+    rarity: "standard",
     effects: [
-      { kind: "stat", stat: "maxHull", amount: 10 },
-      { kind: "hull", amount: 10 },
+      { kind: "stat", stat: "maxHull", amount: 20 },
+      { kind: "hull", amount: 20 },
     ],
+  },
+];
+
+export const ELITE_SALVAGE_OPTIONS: SalvageOption[] = [
+  {
+    id: "elite-cannon-capacitors",
+    category: "ELITE WEAPONS",
+    label: "Siege cannon capacitors",
+    description: "Route an intact capital-grade discharge bank through the forward cannon.",
+    effectLabel: "+24 gun damage",
+    rarity: "elite",
+    unique: true,
+    effects: [{ kind: "stat", stat: "weaponDamage", amount: 24 }],
+  },
+  {
+    id: "elite-rail-collimator",
+    category: "ELITE WEAPONS",
+    label: "Event-horizon collimator",
+    description: "Install a prototype lens that holds the firing solution far beyond fleet tolerances.",
+    effectLabel: "+9 km gun range",
+    rarity: "elite",
+    unique: true,
+    effects: [{ kind: "stat", stat: "weaponRange", amount: 9 }],
+  },
+  {
+    id: "elite-drive-actuators",
+    category: "ELITE MOVEMENT",
+    label: "Inertial ghost drive",
+    description: "Fit phase-synced actuators that move before their drive flare resolves.",
+    effectLabel: "+4.5 km movement",
+    rarity: "elite",
+    unique: true,
+    effects: [{ kind: "stat", stat: "maxMove", amount: 4.5 }],
+  },
+  {
+    id: "elite-shield-weave",
+    category: "ELITE DEFENCE",
+    label: "Citadel shield weave",
+    description: "Bind a fortress-grade field lattice into every shield facing.",
+    effectLabel: "+48 all shields",
+    rarity: "elite",
+    unique: true,
+    effects: [{ kind: "shield", amount: 48 }],
+  },
+  {
+    id: "elite-hull-foam",
+    category: "ELITE REPAIR",
+    label: "Lazarus repair cloud",
+    description: "Release a sealed reconstruction swarm through every damaged compartment.",
+    effectLabel: "+108 hull repair",
+    rarity: "elite",
+    unique: true,
+    effects: [{ kind: "hull", amount: 108 }],
+  },
+  {
+    id: "elite-keel-reinforcement",
+    category: "ELITE DEFENCE",
+    label: "Titan keel",
+    description: "Integrate a dreadnought spine section into the stolen ship's primary frame.",
+    effectLabel: "+60 max hull and repair",
+    rarity: "elite",
+    unique: true,
+    effects: [
+      { kind: "stat", stat: "maxHull", amount: 60 },
+      { kind: "hull", amount: 60 },
+    ],
+  },
+  {
+    id: "elite-railgun",
+    category: "ELITE WEAPON",
+    label: "Needlepoint rail gun",
+    description: "Add a narrow-aperture spinal mount for extreme-range firing solutions.",
+    effectLabel: "Rail gun · 3× range · 0.3× firing arc",
+    rarity: "elite",
+    unique: true,
+    effects: [{ kind: "eliteWeapon", weapon: "railgun" }],
+  },
+  {
+    id: "elite-turret",
+    category: "ELITE WEAPON",
+    label: "Omnidirectional turret",
+    description: "Add a tracking mount able to fire through a complete spherical arc.",
+    effectLabel: "Turret · 0.75× range · 360° firing arc",
+    rarity: "elite",
+    unique: true,
+    effects: [{ kind: "eliteWeapon", weapon: "turret" }],
+  },
+  {
+    id: "elite-flak",
+    category: "ELITE WEAPON",
+    label: "Breach flak cannon",
+    description: "Add a brutal close-range mount loaded with overmass penetrator clouds.",
+    effectLabel: "Flak cannon · 5× damage · 0.3× range",
+    rarity: "elite",
+    unique: true,
+    effects: [{ kind: "eliteWeapon", weapon: "flak" }],
   },
 ];
 
@@ -149,7 +257,7 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         label: "Destroy the relay",
         description: "Erase the checkpoint before it can finish its challenge-response cycle.",
         outcomes: [
-          { id: "relay-plating", title: "Authority plating", description: "The shattered node yields dense panels rated for military debris fields.", effectLabel: "+9 all armour", tone: "favourable", weight: 43, effects: [{ kind: "armour", amount: 9 }] },
+          { id: "relay-plating", title: "Authority shield bank", description: "The shattered node yields dense field capacitors rated for military debris fields.", effectLabel: "+9 all shields", tone: "favourable", weight: 43, effects: [{ kind: "shield", amount: 9 }] },
           { id: "relay-power", title: "Charged emitter", description: "Its defence capacitor slots neatly into the cannon bus.", effectLabel: "+4 gun damage", tone: "favourable", weight: 27, effects: [{ kind: "stat", stat: "weaponDamage", amount: 4 }] },
           { id: "relay-charge", title: "Failsafe detonation", description: "An anti-tamper charge fires through the tractor line and scorches the keel.", effectLabel: "−17 hull", tone: "danger", weight: 30, effects: [{ kind: "hull", amount: -17 }] },
         ],
@@ -169,7 +277,7 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         outcomes: [
           { id: "cryo-escort", title: "Veteran watch", description: "The sleeper in the command capsule is a patrol officer with a hidden escort craft keyed to their biometrics.", effectLabel: "Escort joins the squad", tone: "favourable", weight: 22, effects: [{ kind: "recruit", ship: "escort" }] },
           { id: "cryo-repair", title: "Damage-control crew", description: "The revived engineers repay the rescue by sealing your most dangerous breaches.", effectLabel: "+17 hull repair", tone: "favourable", weight: 48, effects: [{ kind: "hull", amount: 17 }] },
-          { id: "cryo-panic", title: "Wake shock", description: "A terrified sleeper fires a cutting lance through the armour deck before being subdued.", effectLabel: "−10 all armour", tone: "danger", weight: 30, effects: [{ kind: "armour", amount: -10 }] },
+          { id: "cryo-panic", title: "Wake shock", description: "A terrified sleeper fires a cutting lance through the shield emitters before being subdued.", effectLabel: "−10 all shields", tone: "danger", weight: 30, effects: [{ kind: "shield", amount: -10 }] },
         ],
       },
       {
@@ -216,14 +324,14 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
     id: "salvager-shrine",
     signal: "SALVAGER CLAN · RITUAL CHANNEL",
     title: "The iron shrine",
-    description: "A family of armoured salvagers guards a field of fresh wrecks. They offer safe passage if you honour an unfamiliar trade ritual.",
+    description: "A family of shielded salvagers guards a field of fresh wrecks. They offer safe passage if you honour an unfamiliar trade ritual.",
     choices: [
       {
         id: "honour-ritual",
         label: "Honour the trade ritual",
         description: "Power down the cannon and exchange parts under their rules.",
         outcomes: [
-          { id: "shrine-armour", title: "Clan-forged plates", description: "The salvagers fit layered impact plates while singing the names of their previous owners.", effectLabel: "+10 all armour", tone: "favourable", weight: 43, effects: [{ kind: "armour", amount: 10 }] },
+          { id: "shrine-shield", title: "Clan-forged screen", description: "The salvagers tune layered shield projectors while singing the names of their previous owners.", effectLabel: "+10 all shields", tone: "favourable", weight: 43, effects: [{ kind: "shield", amount: 10 }] },
           { id: "shrine-repair", title: "Honest mechanics", description: "Their crew restores pressure to compartments you had written off.", effectLabel: "+18 hull repair", tone: "favourable", weight: 31, effects: [{ kind: "hull", amount: 18 }] },
           { id: "shrine-fraud", title: "Painted scrap", description: "The replacement cannon couplings shear as soon as the salvagers jump away.", effectLabel: "−4 gun damage", tone: "danger", weight: 26, effects: [{ kind: "stat", stat: "weaponDamage", amount: -4 }] },
         ],
@@ -262,7 +370,7 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         description: "Refuse the paradox and destroy it before it can replace you.",
         outcomes: [
           { id: "echo-resonance", title: "Resonant cannon", description: "The shot returns as clean harmonic data that amplifies the next discharge.", effectLabel: "+5 gun damage", tone: "favourable", weight: 44, effects: [{ kind: "stat", stat: "weaponDamage", amount: 5 }] },
-          { id: "echo-reflection", title: "Same firing solution", description: "The duplicate fires at the same instant, stripping armour from every exposed surface.", effectLabel: "−11 all armour", tone: "danger", weight: 31, effects: [{ kind: "armour", amount: -11 }] },
+          { id: "echo-reflection", title: "Same firing solution", description: "The duplicate fires at the same instant, collapsing shields across every exposed surface.", effectLabel: "−11 all shields", tone: "danger", weight: 31, effects: [{ kind: "shield", amount: -11 }] },
           { id: "echo-return", title: "Unclosed loop", description: "The target vanishes, but its signature continues to follow one gate behind.", effectLabel: "Echo hunter in a future gate", tone: "costly", weight: 25, effects: [{ kind: "threat", threat: "hunter", delay: 1 }] },
         ],
       },
@@ -280,7 +388,7 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         description: "Slow your escape long enough to hide the refugees in your wake.",
         outcomes: [
           { id: "cutter-scout", title: "Volunteer wing", description: "A refugee pilot launches their armed scout and pledges it to your escape.", effectLabel: "Scout joins the squad", tone: "favourable", weight: 23, effects: [{ kind: "recruit", ship: "scout" }] },
-          { id: "cutter-armour", title: "Cargo plating", description: "The cutter transfers hull panels it can no longer carry safely.", effectLabel: "+9 all armour", tone: "favourable", weight: 48, effects: [{ kind: "armour", amount: 9 }] },
+          { id: "cutter-shield", title: "Cargo shield cells", description: "The cutter transfers reserve field capacitors it can no longer carry safely.", effectLabel: "+9 all shields", tone: "favourable", weight: 48, effects: [{ kind: "shield", amount: 9 }] },
           { id: "cutter-pursuit", title: "Shared wake", description: "You hide the cutter, but its pursuers lock onto your drive flare instead.", effectLabel: "Patrol intercept in a future gate", tone: "danger", weight: 29, effects: [{ kind: "threat", threat: "patrol", delay: 1 }] },
         ],
       },
@@ -318,7 +426,7 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         description: "Clear the lane with a cannon pulse before the crates drift closer.",
         outcomes: [
           { id: "cache-clear", title: "Open vector", description: "The controlled blast clears a path that lets the drive run at full authority.", effectLabel: "+0.75 km movement", tone: "favourable", weight: 44, effects: [{ kind: "stat", stat: "maxMove", amount: 0.75 }] },
-          { id: "cache-shockwave", title: "Fragment storm", description: "The blast wave catches your broadside and pits every armour face.", effectLabel: "−10 all armour", tone: "danger", weight: 31, effects: [{ kind: "armour", amount: -10 }] },
+          { id: "cache-shockwave", title: "Fragment storm", description: "The blast wave catches your broadside and overloads every shield facing.", effectLabel: "−10 all shields", tone: "danger", weight: 31, effects: [{ kind: "shield", amount: -10 }] },
           { id: "cache-patrol", title: "Ordnance alarm", description: "The destruction wakes a carrier defence flight parked beyond the next fold.", effectLabel: "Patrol intercept in a future gate", tone: "costly", weight: 25, effects: [{ kind: "threat", threat: "patrol", delay: 1 }] },
         ],
       },
@@ -345,7 +453,7 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         label: "Dismantle the drone",
         description: "Pull the machine out of its orbit and force the aperture manually.",
         outcomes: [
-          { id: "gatekeeper-armour", title: "Dense machine shell", description: "The drone's layered casing becomes clean armour stock.", effectLabel: "+10 all armour", tone: "favourable", weight: 43, effects: [{ kind: "armour", amount: 10 }] },
+          { id: "gatekeeper-shield", title: "Dense machine field", description: "The drone's enforcement array yields clean shield projectors.", effectLabel: "+10 all shields", tone: "favourable", weight: 43, effects: [{ kind: "shield", amount: 10 }] },
           { id: "gatekeeper-emitter", title: "Compact emitter", description: "Its enforcement beam adds a brutal pulse to the main cannon.", effectLabel: "+4 gun damage", tone: "favourable", weight: 28, effects: [{ kind: "stat", stat: "weaponDamage", amount: 4 }] },
           { id: "gatekeeper-charge", title: "Custodian failsafe", description: "The drone destroys its core and punches a molten line through your lower decks.", effectLabel: "−19 hull", tone: "danger", weight: 29, effects: [{ kind: "hull", amount: -19 }] },
         ],
@@ -364,7 +472,7 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         description: "Open the maintenance ports and let the swarm decide what needs fixing.",
         outcomes: [
           { id: "nanite-hull", title: "Hull rewritten", description: "The swarm closes fractures and rebuilds structural members atom by atom.", effectLabel: "+22 hull repair", tone: "favourable", weight: 44, effects: [{ kind: "hull", amount: 22 }] },
-          { id: "nanite-armour", title: "Living armour", description: "The cloud thickens every plate before returning to the void.", effectLabel: "+11 all armour", tone: "favourable", weight: 31, effects: [{ kind: "armour", amount: 11 }] },
+          { id: "nanite-shield", title: "Living shields", description: "The cloud retunes every field emitter before returning to the void.", effectLabel: "+11 all shields", tone: "favourable", weight: 31, effects: [{ kind: "shield", amount: 11 }] },
           { id: "nanite-contamination", title: "Sensor bloom", description: "Residual machines colonize the targeting array and blur distant contacts.", effectLabel: "−1.5 km gun range", tone: "danger", weight: 25, effects: [{ kind: "stat", stat: "weaponRange", amount: -1.5 }] },
         ],
       },
@@ -402,7 +510,7 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         description: "Broadcast your real vector and dare the closest hunter to take the ship.",
         outcomes: [
           { id: "bounty-cannon", title: "Hunter blinks", description: "The nearest ship retreats, shedding a weapons pod to lighten its jump.", effectLabel: "+5 gun damage", tone: "favourable", weight: 42, effects: [{ kind: "stat", stat: "weaponDamage", amount: 5 }] },
-          { id: "bounty-armour", title: "Abandoned cache", description: "The hunter leaves a trapped cache, but your crew safely recovers its armour mesh.", effectLabel: "+10 all armour", tone: "favourable", weight: 30, effects: [{ kind: "armour", amount: 10 }] },
+          { id: "bounty-shield", title: "Abandoned cache", description: "The hunter leaves a trapped cache, but your crew safely recovers its shield mesh.", effectLabel: "+10 all shields", tone: "favourable", weight: 30, effects: [{ kind: "shield", amount: 10 }] },
           { id: "bounty-trap", title: "Challenge accepted", description: "A concealed kinetic round arrives before the reply, smashing into the engine deck.", effectLabel: "−22 hull", tone: "danger", weight: 28, effects: [{ kind: "hull", amount: -22 }] },
         ],
       },
@@ -430,7 +538,7 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         description: "Time the gate jump to the reactor's collapse and steal its momentum.",
         outcomes: [
           { id: "reactor-move", title: "Slingshot burn", description: "The drive learns to hold an impossible acceleration curve.", effectLabel: "+1 km movement", tone: "favourable", weight: 49, effects: [{ kind: "stat", stat: "maxMove", amount: 1 }] },
-          { id: "reactor-armour", title: "Radiation scouring", description: "The wave carries you clear but peels material from every facing.", effectLabel: "−12 all armour", tone: "danger", weight: 28, effects: [{ kind: "armour", amount: -12 }] },
+          { id: "reactor-shield", title: "Radiation scouring", description: "The wave carries you clear but strips charge from every shield facing.", effectLabel: "−12 all shields", tone: "danger", weight: 28, effects: [{ kind: "shield", amount: -12 }] },
           { id: "reactor-wing", title: "Dead carrier wakes", description: "The blast restores a defence craft just long enough for it to mark your next aperture.", effectLabel: "Patrol intercept in a future gate", tone: "costly", weight: 23, effects: [{ kind: "threat", threat: "patrol", delay: 1 }] },
         ],
       },
@@ -458,7 +566,7 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         description: "Copy what data you can without opening the airlock.",
         outcomes: [
           { id: "officer-range", title: "Intercept tables", description: "The pod carries current fleet ranging tables in its emergency cache.", effectLabel: "+1.5 km gun range", tone: "favourable", weight: 43, effects: [{ kind: "stat", stat: "weaponRange", amount: 1.5 }] },
-          { id: "officer-armour", title: "Command shell", description: "The pod's reinforced panels become a patchwork second skin.", effectLabel: "+9 all armour", tone: "favourable", weight: 30, effects: [{ kind: "armour", amount: 9 }] },
+          { id: "officer-shield", title: "Command screen", description: "The pod's reinforced field cells become a patchwork second shield layer.", effectLabel: "+9 all shields", tone: "favourable", weight: 30, effects: [{ kind: "shield", amount: 9 }] },
           { id: "officer-witness", title: "Witness recovered", description: "A hostile patrol retrieves the officer and receives your exact gate sequence.", effectLabel: "Retrieval ship in a future gate", tone: "danger", weight: 27, effects: [{ kind: "threat", threat: "retrieval", delay: 2 }] },
         ],
       },
@@ -477,7 +585,7 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         outcomes: [
           { id: "mine-scout", title: "Pilot recovered", description: "The survivor restores a compact scout and joins the squad rather than face the lattice alone.", effectLabel: "Scout joins the squad", tone: "favourable", weight: 23, effects: [{ kind: "recruit", ship: "scout" }] },
           { id: "mine-calibration", title: "Precision fire", description: "Clearing the path teaches your gunners to place energy exactly where it matters.", effectLabel: "+4 gun damage", tone: "favourable", weight: 46, effects: [{ kind: "stat", stat: "weaponDamage", amount: 4 }] },
-          { id: "mine-chain", title: "Lattice cascade", description: "A hidden mine chain erupts across the port side before the corridor opens.", effectLabel: "−11 all armour · −8 hull", tone: "danger", weight: 31, effects: [{ kind: "armour", amount: -11 }, { kind: "hull", amount: -8 }] },
+          { id: "mine-chain", title: "Lattice cascade", description: "A hidden mine chain erupts across the port side before the corridor opens.", effectLabel: "−11 all shields · −8 hull", tone: "danger", weight: 31, effects: [{ kind: "shield", amount: -11 }, { kind: "hull", amount: -8 }] },
         ],
       },
       {
@@ -520,13 +628,25 @@ export function pickStoryEncounter(seenIds: string[], rng: () => number = Math.r
   return pool[Math.floor(safeRoll(rng) * pool.length)];
 }
 
-export function pickSalvageOptions(rng: () => number = Math.random, count = 3) {
+export function pickSalvageOptions(
+  rng: () => number = Math.random,
+  count = 3,
+  excludedEliteIds: readonly string[] = [],
+) {
   const pool = [...SALVAGE_OPTIONS];
   for (let index = pool.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(safeRoll(rng) * (index + 1));
     [pool[index], pool[swapIndex]] = [pool[swapIndex], pool[index]];
   }
-  return pool.slice(0, Math.min(count, pool.length));
+  const drawCount = Math.max(0, Math.min(Math.floor(count), pool.length));
+  const options = pool.slice(0, drawCount);
+  const availableElites = ELITE_SALVAGE_OPTIONS.filter((option) => !excludedEliteIds.includes(option.id));
+  if (!options.length || !availableElites.length || safeRoll(rng) >= ELITE_SALVAGE_CHANCE) return options;
+
+  const elite = availableElites[Math.floor(safeRoll(rng) * availableElites.length)];
+  const replaceIndex = Math.floor(safeRoll(rng) * options.length);
+  options[replaceIndex] = elite;
+  return options;
 }
 
 export function createFortuneMap(rng: () => number = Math.random) {
