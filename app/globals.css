@@ -1216,7 +1216,7 @@ kbd {
 .ship-tabs {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(145px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
 }
 
 .ship-tabs button {

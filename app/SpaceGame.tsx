@@ -3,13 +3,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import {
+  STORY_GATE_COUNT,
+  createFortuneMap,
+  pickSalvageOptions,
+  pickStoryEncounter,
+  rollStoryOutcome,
+  type SalvageOption,
+  type StoryEffect,
+  type StoryEncounter,
+  type StoryOutcome,
+} from "./storyEngine";
 
 type Vec3 = [number, number, number];
 type ArmourFace = "fore" | "aft" | "port" | "starboard" | "dorsal" | "ventral";
 type Team = "player" | "ally" | "enemy";
 type Phase = "planning" | "executing" | "victory" | "defeat";
-type GameScreen = "menu" | "battle";
+type GameScreen = "menu" | "battle" | "story";
 type GameMode = "story" | "skirmish" | "endless" | "hardcore";
+type StoryStage = "briefing" | "combat" | "salvage" | "encounter" | "outcome" | "won" | "lost";
 
 type AudioSettings = {
   soundEnabled: boolean;
@@ -67,6 +79,27 @@ type CombatFocus = {
   team: Team;
 };
 
+type PendingStoryThreat = {
+  id: string;
+  kind: "retrieval" | "patrol" | "hunter";
+  triggerGate: number;
+  source: string;
+};
+
+type StoryRun = {
+  stage: StoryStage;
+  gate: number;
+  clearedGates: number;
+  salvageOptions: SalvageOption[];
+  currentEncounter: StoryEncounter | null;
+  selectedChoiceLabel: string;
+  outcome: StoryOutcome | null;
+  seenEncounterIds: string[];
+  pendingThreats: PendingStoryThreat[];
+  fortuneMap: Record<string, string>;
+  history: string[];
+};
+
 const WEAPON_HALF_ARC = 28;
 const BATTLEFIELD_HALF = 20;
 const BATTLEFIELD_VERTICAL_HALF = 7;
@@ -83,9 +116,9 @@ const MODE_OPTIONS: Array<{
     id: "story",
     number: "01",
     label: "Story Mode",
-    category: "Campaign",
-    description: "Lead a persistent fleet through a branching war across the Kestrel systems.",
-    status: "Campaign framework",
+    category: "Escape campaign",
+    description: "Escape hostile territory through 10 warp gates, carrying every scar, upgrade, and difficult choice forward.",
+    status: "Campaign ready",
   },
   {
     id: "skirmish",
@@ -257,6 +290,49 @@ const INITIAL_SHIPS: Ship[] = [
   },
 ];
 
+type StoryEnemyKind = "raider" | "frigate" | "gunship";
+
+type StoryGateConfig = {
+  name: string;
+  region: string;
+  threat: string;
+  scale: number;
+  enemies: StoryEnemyKind[];
+};
+
+const STORY_GATE_CONFIGS: StoryGateConfig[] = [
+  { name: "Blacksite aperture", region: "Detention orbit", threat: "Light pursuit", scale: 0.72, enemies: ["raider"] },
+  { name: "Cinder passage", region: "Industrial exclusion", threat: "Fast interceptor", scale: 0.8, enemies: ["raider"] },
+  { name: "Broken compass", region: "Chartless fold", threat: "Twin contact", scale: 0.74, enemies: ["raider", "raider"] },
+  { name: "Authority line", region: "Customs perimeter", threat: "Mixed patrol", scale: 0.78, enemies: ["frigate", "raider"] },
+  { name: "Red lumen", region: "Corsair supply lane", threat: "Reinforced patrol", scale: 0.84, enemies: ["frigate", "raider"] },
+  { name: "Dead relay", region: "Fleet communications belt", threat: "Heavy response", scale: 0.88, enemies: ["frigate", "gunship"] },
+  { name: "Knife constellation", region: "Hunter cordon", threat: "Three-ship screen", scale: 0.84, enemies: ["frigate", "raider", "raider"] },
+  { name: "Narrow heaven", region: "Inner defence lattice", threat: "Strike formation", scale: 0.9, enemies: ["gunship", "frigate", "raider"] },
+  { name: "Last authority", region: "Territorial boundary", threat: "Elite blockade", scale: 0.97, enemies: ["gunship", "frigate", "frigate"] },
+  { name: "Open dark", region: "Outer escape vector", threat: "Gate warden", scale: 1.08, enemies: ["gunship", "gunship", "frigate"] },
+];
+
+const STORY_INITIAL_LOG = [
+  "Naval asset AX-14 stolen. Hostile command has sealed every registered exit.",
+  "Cross ten warp gates before the retrieval fleet closes the corridor.",
+];
+
+const STORY_PLAYER_SLOTS: Array<{ position: Vec3; rotation: Vec3 }> = [
+  { position: [-10, 0, 4], rotation: [0, 32, 0] },
+  { position: [-11, -3, -4], rotation: [6, 42, -6] },
+  { position: [-8, 3, -2], rotation: [-5, 38, 8] },
+  { position: [-12, 2, 7], rotation: [4, 28, -10] },
+];
+
+const STORY_ENEMY_SLOTS: Vec3[] = [
+  [9, 1, -6],
+  [10, -3, 3],
+  [7, 4, 7],
+  [12, 3, -1],
+  [8, -5, -7],
+];
+
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value));
 
@@ -395,6 +471,147 @@ const titleCase = (value: string) => value.charAt(0).toUpperCase() + value.slice
 
 function copyShips(ships: Ship[]) {
   return ships.map((ship) => ({ ...ship, armour: { ...ship.armour }, position: [...ship.position] as Vec3, rotation: [...ship.rotation] as Vec3 }));
+}
+
+function createStoryRun(): StoryRun {
+  return {
+    stage: "briefing",
+    gate: 1,
+    clearedGates: 0,
+    salvageOptions: [],
+    currentEncounter: null,
+    selectedChoiceLabel: "",
+    outcome: null,
+    seenEncounterIds: [],
+    pendingThreats: [],
+    fortuneMap: createFortuneMap(),
+    history: ["AX-14 removed from the Blacksite impound ring.", "Escape vector plotted: ten hostile gates."],
+  };
+}
+
+function createStoryStarter() {
+  const starter = copyShips([INITIAL_SHIPS[0]])[0];
+  return {
+    ...starter,
+    callsign: "UNREGISTERED",
+    className: "Stolen Halcyon frigate",
+    position: [...STORY_PLAYER_SLOTS[0].position] as Vec3,
+    rotation: [...STORY_PLAYER_SLOTS[0].rotation] as Vec3,
+  };
+}
+
+function createStoryEnemy(kind: StoryEnemyKind, gate: number, index: number, scale: number, threatId?: string) {
+  const templateIndex = kind === "raider" ? 4 : kind === "frigate" ? 3 : 5;
+  const template = copyShips([INITIAL_SHIPS[templateIndex]])[0];
+  const names: Record<StoryEnemyKind, string[]> = {
+    raider: ["Needle", "Shrike", "Talon", "Razor"],
+    frigate: ["Vandal", "Marshal", "Graven", "Palisade"],
+    gunship: ["Maraud", "Anvil", "Ruin", "Warden"],
+  };
+  const armour = Object.fromEntries(
+    ARMOUR_FACES.map((face) => [face, Math.max(12, Math.round(template.armour[face] * scale))]),
+  ) as Armour;
+  const hull = Math.max(42, Math.round(template.maxHull * scale));
+  const damageScale = 0.72 + scale * 0.25;
+  const slot = STORY_ENEMY_SLOTS[index % STORY_ENEMY_SLOTS.length];
+  const suffix = String(gate * 10 + index + 1).padStart(2, "0");
+  return {
+    ...template,
+    id: threatId ? `story-g${gate}-threat-${threatId}` : `story-g${gate}-${kind}-${index}`,
+    name: threatId ? `${names[kind][3]}-${suffix}` : `${names[kind][index % names[kind].length]}-${suffix}`,
+    callsign: threatId ? `PUR-${suffix}` : `WG-${suffix}`,
+    className: threatId ? `Pursuit ${template.className.toLowerCase()}` : template.className,
+    position: [...slot] as Vec3,
+    rotation: [index % 2 ? -5 : 3, -118 - index * 8, index % 2 ? 6 : -4] as Vec3,
+    armour,
+    hull,
+    maxHull: hull,
+    weaponDamage: Math.max(15, Math.round(template.weaponDamage * damageScale)),
+    weaponRange: Math.max(12, template.weaponRange - (scale < 0.8 ? 1 : 0)),
+  };
+}
+
+function createRecruitShip(kind: "scout" | "escort" | "gunboat", currentShips: Ship[]) {
+  const templateIndex = kind === "scout" ? 1 : kind === "escort" ? 2 : 5;
+  const template = copyShips([INITIAL_SHIPS[templateIndex]])[0];
+  const index = currentShips.filter((ship) => ship.id.startsWith(`recruit-${kind}`)).length + 1;
+  const names = { scout: "Morrow", escort: "Vesper", gunboat: "Bastion" } as const;
+  const colors = { scout: "#9af2ff", escort: "#67e7ca", gunboat: "#85c8ff" } as const;
+  const slot = STORY_PLAYER_SLOTS[Math.min(currentShips.filter((ship) => ship.team === "player").length, STORY_PLAYER_SLOTS.length - 1)];
+  return {
+    ...template,
+    id: `recruit-${kind}-${index}`,
+    name: `${names[kind]}-${index}`,
+    callsign: `VOL-${String(index).padStart(2, "0")}`,
+    className: `Volunteer ${template.className.toLowerCase()}`,
+    team: "player" as Team,
+    color: colors[kind],
+    position: [...slot.position] as Vec3,
+    rotation: [...slot.rotation] as Vec3,
+  };
+}
+
+function prepareStoryBattle(fleet: Ship[], gate: number, pendingThreats: PendingStoryThreat[]) {
+  const config = STORY_GATE_CONFIGS[gate - 1] ?? STORY_GATE_CONFIGS[STORY_GATE_CONFIGS.length - 1];
+  const playerFleet = copyShips(fleet)
+    .filter((ship) => ship.team === "player" && ship.hull > 0)
+    .map((ship, index) => {
+      const slot = STORY_PLAYER_SLOTS[index % STORY_PLAYER_SLOTS.length];
+      return { ...ship, position: [...slot.position] as Vec3, rotation: [...slot.rotation] as Vec3 };
+    });
+  const enemies = config.enemies.map((kind, index) => createStoryEnemy(kind, gate, index, config.scale));
+  const triggeredThreats = pendingThreats.filter((threat) => threat.triggerGate <= gate);
+  const remainingThreats = pendingThreats.filter((threat) => threat.triggerGate > gate);
+  const pursuitEnemies = triggeredThreats.map((threat, index) => {
+    const kind: StoryEnemyKind = threat.kind === "patrol" ? "raider" : threat.kind === "retrieval" ? "frigate" : "gunship";
+    return createStoryEnemy(kind, gate, enemies.length + index, Math.min(1, 0.72 + gate * 0.025), threat.id);
+  });
+  return { ships: [...playerFleet, ...enemies, ...pursuitEnemies], remainingThreats, triggeredThreats, config };
+}
+
+function applyStoryEffects(sourceShips: Ship[], effects: StoryEffect[], gate: number, source: string) {
+  const nextShips = copyShips(sourceShips).filter((ship) => ship.team !== "enemy");
+  const threats: PendingStoryThreat[] = [];
+  const flagship = () => nextShips.find((ship) => ship.team === "player" && ship.hull > 0) ?? nextShips.find((ship) => ship.team === "player");
+
+  effects.forEach((effect, effectIndex) => {
+    const ship = flagship();
+    if (effect.kind === "recruit") {
+      if (nextShips.filter((candidate) => candidate.team === "player" && candidate.hull > 0).length < 4) {
+        nextShips.push(createRecruitShip(effect.ship, nextShips));
+      } else if (ship) {
+        ARMOUR_FACES.forEach((face) => { ship.armour[face] = clamp(ship.armour[face] + 8, 0, 100); });
+      }
+      return;
+    }
+    if (effect.kind === "threat") {
+      threats.push({
+        id: `${source}-${effect.threat}-${gate}-${effectIndex}`,
+        kind: effect.threat,
+        triggerGate: Math.min(STORY_GATE_COUNT, gate + Math.max(1, effect.delay)),
+        source,
+      });
+      return;
+    }
+    if (!ship) return;
+    if (effect.kind === "armour") {
+      ARMOUR_FACES.forEach((face) => { ship.armour[face] = clamp(ship.armour[face] + effect.amount, 0, 100); });
+      return;
+    }
+    if (effect.kind === "hull") {
+      ship.hull = clamp(ship.hull + effect.amount, 0, ship.maxHull);
+      return;
+    }
+    if (effect.stat === "weaponDamage") ship.weaponDamage = clamp(ship.weaponDamage + effect.amount, 12, 72);
+    if (effect.stat === "weaponRange") ship.weaponRange = clamp(ship.weaponRange + effect.amount, 8, 30);
+    if (effect.stat === "maxMove") ship.maxMove = clamp(ship.maxMove + effect.amount, 3, 11);
+    if (effect.stat === "maxHull") {
+      ship.maxHull = clamp(ship.maxHull + effect.amount, 60, 240);
+      ship.hull = Math.min(ship.hull, ship.maxHull);
+    }
+  });
+
+  return { ships: nextShips, threats };
 }
 
 function makeLabel(text: string, color: string) {
@@ -1278,7 +1495,7 @@ function MainMenu({
           <span className="brand-mark" aria-hidden="true"><i /><i /></span>
           <div><strong>PARALLAX</strong><span>Fleet tactics command</span></div>
         </div>
-        <div className="menu-system-status"><i /><span>COMMAND LINK ONLINE</span><strong>BUILD 0.3.0</strong></div>
+        <div className="menu-system-status"><i /><span>COMMAND LINK ONLINE</span><strong>BUILD 0.4.0</strong></div>
       </header>
 
       <div className="menu-content">
@@ -1288,7 +1505,7 @@ function MainMenu({
           <p>Choose the rules of engagement, take command of your fleet, and commit every vector before the enemy does.</p>
           <div className="prototype-notice">
             <i />
-            <span><strong>TACTICAL PROTOTYPE</strong><small>Mode-specific progression will connect here as each ruleset is created.</small></span>
+            <span><strong>STORY CAMPAIGN ONLINE</strong><small>Escape hostile territory through 10 warp gates. Further rulesets remain in development.</small></span>
           </div>
         </section>
 
@@ -1304,6 +1521,9 @@ function MainMenu({
                 key={mode.id}
                 className={`mode-card ${selectedMode === mode.id ? "selected" : ""} ${mode.id === "hardcore" ? "hardcore" : ""}`}
                 aria-pressed={selectedMode === mode.id}
+                data-game-mode={mode.id}
+                data-mode-status={mode.id === "story" ? "ready" : "framework"}
+                data-story-gates={mode.id === "story" ? STORY_GATE_COUNT : undefined}
                 onClick={() => onSelectMode(mode.id)}
               >
                 <span className="mode-number">{mode.number}</span>
@@ -1320,7 +1540,7 @@ function MainMenu({
             <span><small>SELECTED · {selected.category.toUpperCase()}</small><strong>INITIALIZE {selected.label.toUpperCase()}</strong></span>
             <b aria-hidden="true">→</b>
           </button>
-          <p className="mode-footnote">All four entries currently launch the Kestrel Reach tactical encounter while their distinct rules are built.</p>
+          <p className="mode-footnote">Story Mode now runs a complete 10-gate escape. Skirmish, Endless, and Hardcore currently open the tactical prototype.</p>
         </section>
 
         <aside className="audio-panel" aria-labelledby="audio-title">
@@ -1357,10 +1577,205 @@ function MainMenu({
   );
 }
 
+function StoryCampaignScreen({
+  run,
+  ships,
+  onBeginGate,
+  onChooseSalvage,
+  onChooseEncounter,
+  onContinue,
+  onRestart,
+  onMenu,
+}: {
+  run: StoryRun;
+  ships: Ship[];
+  onBeginGate: () => void;
+  onChooseSalvage: (option: SalvageOption) => void;
+  onChooseEncounter: (choiceIndex: number) => void;
+  onContinue: () => void;
+  onRestart: () => void;
+  onMenu: () => void;
+}) {
+  const stageHeadingRef = useRef<HTMLHeadingElement>(null);
+  const config = STORY_GATE_CONFIGS[Math.min(run.gate - 1, STORY_GATE_CONFIGS.length - 1)];
+  const playerShips = ships.filter((ship) => ship.team === "player");
+  const livingShips = playerShips.filter((ship) => ship.hull > 0);
+  const flagship = livingShips[0] ?? playerShips[0];
+  const armourAverage = flagship
+    ? Math.round(ARMOUR_FACES.reduce((sum, face) => sum + flagship.armour[face], 0) / ARMOUR_FACES.length)
+    : 0;
+  const encounter = run.currentEncounter;
+  const outcome = run.outcome;
+  const isFinished = run.stage === "won" || run.stage === "lost";
+  const commandTransferred = Boolean(flagship && flagship.id !== "aegis");
+
+  useEffect(() => {
+    stageHeadingRef.current?.focus();
+  }, [run.stage]);
+
+  return (
+    <main className="story-shell" data-story-phase={run.stage} data-gate={run.gate} data-total-gates={STORY_GATE_COUNT}>
+      <div className="story-space" aria-hidden="true"><i /><i /><i /><span /></div>
+      <header className="story-header">
+        <div className="brand-lockup">
+          <span className="brand-mark" aria-hidden="true"><i /><i /></span>
+          <div><strong>PARALLAX</strong><span>Story campaign · Flight record AX-14</span></div>
+        </div>
+        <div className="story-header-progress" aria-label={`Warp gate ${run.gate} of ${STORY_GATE_COUNT}`}>
+          <span>ESCAPE VECTOR</span>
+          <strong>{String(run.clearedGates).padStart(2, "0")} / {STORY_GATE_COUNT} GATES CLEARED</strong>
+        </div>
+        <button type="button" className="quiet-button" onClick={onMenu}>Main menu</button>
+      </header>
+
+      <div className="story-layout">
+        <aside className="story-route-panel">
+          <span className="eyebrow">ROUTE · HOSTILE TERRITORY</span>
+          <h2>Ten folds<br /><em>to freedom</em></h2>
+          <p>Every gate closes behind you. Damage, recruits, and stolen improvements carry forward. If AX-14 falls, its flight core and command transfer to a surviving squadmate.</p>
+          <ol className="story-gate-route" aria-label="Campaign gate progress">
+            {STORY_GATE_CONFIGS.map((gate, index) => {
+              const number = index + 1;
+              const state = number <= run.clearedGates ? "cleared" : number === run.gate && !isFinished ? "active" : "locked";
+              return (
+                <li className={state} key={gate.name} aria-current={state === "active" ? "step" : undefined}>
+                  <i>{number <= run.clearedGates ? "✓" : String(number).padStart(2, "0")}</i>
+                  <span><strong>{gate.name}</strong><small>{gate.region}</small></span>
+                  <b>{state === "cleared" ? "CLEAR" : state === "active" ? "NEXT" : "LOCK"}</b>
+                </li>
+              );
+            })}
+          </ol>
+        </aside>
+
+        <section className="story-stage-panel" aria-live="polite">
+          {run.stage === "briefing" && (
+            <div className="story-briefing story-stage-content">
+              <span className="story-signal"><i /> BLACKSITE ALARM · PURSUIT ACTIVE</span>
+              <small className="story-step">CAMPAIGN BRIEF · GATE 01 / {STORY_GATE_COUNT}</small>
+              <h1 ref={stageHeadingRef} tabIndex={-1}>You stole their ship.<br /><em>Now outrun their fleet.</em></h1>
+              <p>AX-14 was waiting in a hostile impound ring with its registry unlocked. The nearest safe system lies ten warp gates away—and every gate is already being sealed.</p>
+              <div className="story-rules">
+                <div><b>01</b><span><strong>Break each blockade</strong><small>Enemy formations grow stronger along the route.</small></span></div>
+                <div><b>02</b><span><strong>Salvage the wrecks</strong><small>Choose one repair or permanent ship upgrade.</small></span></div>
+                <div><b>03</b><span><strong>Answer the signal</strong><small>Every choice has several possible consequences.</small></span></div>
+              </div>
+              <button type="button" className="story-primary-action" onClick={onBeginGate}><span><small>FIRST CONTACT · {config.threat.toUpperCase()}</small><strong>ENTER WARP GATE 01</strong></span><b>→</b></button>
+            </div>
+          )}
+
+          {run.stage === "salvage" && (
+            <div className="story-salvage story-stage-content">
+              <span className="story-signal clear"><i /> GATE {String(run.gate).padStart(2, "0")} BLOCKADE BROKEN</span>
+              <small className="story-step">SALVAGE PHASE · CHOOSE ONE</small>
+              <h1 ref={stageHeadingRef} tabIndex={-1}>Take what<br /><em>still works.</em></h1>
+              <p>The destroyed formation is falling into the gate wake. There is time to recover one system before the wreckage disappears.</p>
+              <div className="salvage-grid">
+                {run.salvageOptions.map((option, index) => (
+                  <button type="button" key={option.id} onClick={() => onChooseSalvage(option)}>
+                    <span className="salvage-index">0{index + 1}</span>
+                    <small>{option.category}</small>
+                    <strong>{option.label}</strong>
+                    <p>{option.description}</p>
+                    <b>{option.effectLabel}</b>
+                    <i aria-hidden="true">→</i>
+                  </button>
+                ))}
+              </div>
+              <p className="story-random-note"><i /> Salvage choices are drawn once from the wreck field and cannot be rerolled.</p>
+            </div>
+          )}
+
+          {run.stage === "encounter" && encounter && (
+            <div className="story-encounter story-stage-content" data-encounter-id={encounter.id}>
+              <span className="story-signal warning"><i /> {encounter.signal}</span>
+              <small className="story-step">GATE WAKE ENCOUNTER · DECISION REQUIRED</small>
+              <h1 ref={stageHeadingRef} tabIndex={-1}>{encounter.title}</h1>
+              <p>{encounter.description}</p>
+              <div className="story-choice-grid">
+                {encounter.choices.map((choice, index) => (
+                  <button type="button" key={choice.id} onClick={() => onChooseEncounter(index)} aria-label={`${choice.label}. ${choice.riskHint}`}>
+                    <span>OPTION 0{index + 1}</span>
+                    <strong>{choice.label}</strong>
+                    <p>{choice.description}</p>
+                    <small><i /> {choice.riskHint}</small>
+                    <b aria-hidden="true">COMMIT →</b>
+                  </button>
+                ))}
+              </div>
+              <p className="story-random-note"><i /> Outcomes are randomized when an order is committed. Both options can help—or hurt—the escape.</p>
+            </div>
+          )}
+
+          {run.stage === "outcome" && outcome && (
+            <div className={`story-outcome story-stage-content ${outcome.tone}`} role="status">
+              <span className={`story-signal ${outcome.tone === "favourable" ? "clear" : "warning"}`}><i /> DECISION RESOLVED · {run.selectedChoiceLabel.toUpperCase()}</span>
+              <small className="story-step">OUTCOME · {outcome.tone.toUpperCase()}</small>
+              <div className="outcome-glyph" aria-hidden="true"><i /><b /></div>
+              <h1 ref={stageHeadingRef} tabIndex={-1}>{outcome.title}</h1>
+              <p>{outcome.description}</p>
+              <div className="outcome-effect"><span>RUN EFFECT</span><strong>{outcome.effectLabel}</strong></div>
+              <button type="button" className="story-primary-action" onClick={onContinue}><span><small>NEXT · {STORY_GATE_CONFIGS[run.gate]?.threat.toUpperCase()}</small><strong>ENTER WARP GATE {String(run.gate + 1).padStart(2, "0")}</strong></span><b>→</b></button>
+            </div>
+          )}
+
+          {run.stage === "won" && (
+            <div className="story-finale story-stage-content won" role="status">
+              <span className="story-signal clear"><i /> TERRITORIAL BOUNDARY CROSSED</span>
+              <small className="story-step">CAMPAIGN COMPLETE · {STORY_GATE_COUNT} / {STORY_GATE_COUNT}</small>
+              <div className="finale-mark" aria-hidden="true"><i /><i /><b /></div>
+              <h1 ref={stageHeadingRef} tabIndex={-1}>Out of their reach.</h1>
+              <p>The last blockade collapses behind the surviving squadron. AX-14&apos;s stolen flight record reaches open space—aboard its original hull or the command ship that carried it onward.</p>
+              <div className="finale-stats"><span><small>GATES CLEARED</small><strong>{STORY_GATE_COUNT}</strong></span><span><small>SHIPS ESCAPED</small><strong>{livingShips.length}</strong></span><span><small>DECISIONS SURVIVED</small><strong>{run.seenEncounterIds.length}</strong></span></div>
+              <div className="story-final-actions"><button type="button" className="story-primary-action" onClick={onRestart}><span><small>NEW RANDOM ROUTE</small><strong>START ANOTHER ESCAPE</strong></span><b>↻</b></button><button type="button" className="story-secondary-action" onClick={onMenu}>Return to main menu</button></div>
+            </div>
+          )}
+
+          {run.stage === "lost" && (
+            <div className="story-finale story-stage-content lost" role="status">
+              <span className="story-signal danger"><i /> ESCAPE VECTOR TERMINATED</span>
+              <small className="story-step">CAMPAIGN LOST · GATE {String(run.gate).padStart(2, "0")}</small>
+              <div className="finale-mark" aria-hidden="true"><i /><i /><b /></div>
+              <h1 ref={stageHeadingRef} tabIndex={-1}>The dark closes in.</h1>
+              <p>{outcome?.description ?? "The stolen ship can no longer hold pressure. Hostile retrieval signals converge on the last known vector."}</p>
+              {outcome && <div className="outcome-effect"><span>FINAL EFFECT</span><strong>{outcome.effectLabel}</strong></div>}
+              <div className="story-final-actions"><button type="button" className="story-primary-action" onClick={onRestart}><span><small>RESET ALL UPGRADES</small><strong>START A NEW ESCAPE</strong></span><b>↻</b></button><button type="button" className="story-secondary-action" onClick={onMenu}>Return to main menu</button></div>
+            </div>
+          )}
+        </section>
+
+        <aside className="story-manifest-panel">
+          <div className="manifest-heading"><span>{commandTransferred ? "COMMAND TRANSFER" : "STOLEN ASSET"}</span><strong>{flagship?.callsign ?? "SIGNAL LOST"}</strong></div>
+          <div className="manifest-ship">
+            <span className="manifest-ship-mark" aria-hidden="true"><i /><i /><b /></span>
+            <div><small>COMMAND SHIP</small><strong>{flagship?.name ?? "AX-14 LOST"}</strong><span>{flagship?.className ?? "No surviving hull"}</span></div>
+          </div>
+          <div className="manifest-stats">
+            <div><span>HULL</span><strong>{Math.round(flagship?.hull ?? 0)}<small> / {flagship?.maxHull ?? 0}</small></strong></div>
+            <div><span>ARMOUR AVG</span><strong>{armourAverage}<small> / 100</small></strong></div>
+            <div><span>GUN POWER</span><strong>{flagship?.weaponDamage ?? 0}<small> DMG</small></strong></div>
+            <div><span>GUN RANGE</span><strong>{flagship?.weaponRange ?? 0}<small> KM</small></strong></div>
+            <div><span>MOVE RANGE</span><strong>{flagship?.maxMove ?? 0}<small> KM</small></strong></div>
+            <div><span>SQUADRON</span><strong>{livingShips.length}<small> SHIP{livingShips.length === 1 ? "" : "S"}</small></strong></div>
+          </div>
+          <div className="manifest-squad">
+            <span>SURVIVING SHIPS</span>
+            {playerShips.map((ship, index) => <div key={ship.id} className={ship.hull <= 0 ? "lost" : ""}><i>{String(index + 1).padStart(2, "0")}</i><p><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "LOST" : `${Math.round((ship.hull / ship.maxHull) * 100)}% HULL`}</small></p></div>)}
+          </div>
+          <div className={`manifest-pursuit ${run.pendingThreats.length ? "hot" : "clear"}`}><i /><span><small>SIGNALS IN YOUR WAKE</small><strong>{run.pendingThreats.length ? `${run.pendingThreats.length} UNRESOLVED` : "NO LOCK"}</strong></span></div>
+          <div className="manifest-log"><span>FLIGHT RECORD</span><ol>{run.history.slice(0, 4).map((entry, index) => <li key={`${entry}-${index}`}><i />{entry}</li>)}</ol></div>
+        </aside>
+      </div>
+      <footer className="story-footer"><span>RUN STATE · SESSION LOCAL</span><span>{config.region.toUpperCase()} · {config.threat.toUpperCase()}</span><span>OUTCOMES HIDDEN UNTIL COMMIT</span></footer>
+    </main>
+  );
+}
+
 export function SpaceGame() {
   const [screen, setScreen] = useState<GameScreen>("menu");
   const [selectedMode, setSelectedMode] = useState<GameMode>("skirmish");
   const [activeMode, setActiveMode] = useState<GameMode>("skirmish");
+  const [storyRun, setStoryRun] = useState<StoryRun | null>(null);
   const [audioSettings, setAudioSettings] = useState<AudioSettings>(DEFAULT_AUDIO_SETTINGS);
   const [audioSettingsHydrated, setAudioSettingsHydrated] = useState(false);
   const [ships, setShips] = useState<Ship[]>(() => copyShips(INITIAL_SHIPS));
@@ -1374,6 +1789,7 @@ export function SpaceGame() {
   const [combatFocus, setCombatFocus] = useState<CombatFocus | null>(null);
   const [cameraCommand, setCameraCommand] = useState<CameraCommand>({ kind: "reset", nonce: 0 });
   const [helpOpen, setHelpOpen] = useState(true);
+  const storyActionLockRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1408,6 +1824,10 @@ export function SpaceGame() {
       // Browsers may disable local storage; settings still work for this session.
     }
   }, [audioSettings, audioSettingsHydrated]);
+
+  useEffect(() => {
+    storyActionLockRef.current = false;
+  }, [storyRun?.stage]);
 
   const selectedShip = ships.find((ship) => ship.id === selectedShipId) ?? ships.find((ship) => ship.team === "player" && ship.hull > 0) ?? ships[0];
   const selectedDraft = selectedShip ? drafts[selectedShip.id] : undefined;
@@ -1550,6 +1970,16 @@ export function SpaceGame() {
 
     const enemyAlive = results.some((ship) => ship.team === "enemy" && ship.hull > 0);
     const playerAlive = results.some((ship) => ship.team === "player" && ship.hull > 0);
+    if (activeMode === "story" && !playerAlive) {
+      setPhase("defeat");
+      setStoryRun((current) => current ? {
+        ...current,
+        stage: "lost",
+        history: [`Fleet destroyed at Gate ${String(current.gate).padStart(2, "0")}.`, ...current.history].slice(0, 12),
+      } : current);
+      setScreen("story");
+      return;
+    }
     if (!enemyAlive) {
       setPhase("victory");
       return;
@@ -1565,33 +1995,161 @@ export function SpaceGame() {
     setDrafts(buildDrafts(results));
     const nextPlayer = results.find((ship) => ship.team === "player" && ship.hull > 0);
     if (nextPlayer) setSelectedShipId(nextPlayer.id);
-  }, []);
+  }, [activeMode]);
 
-  const resetGame = useCallback(() => {
-    const resetShips = copyShips(INITIAL_SHIPS);
-    setShips(resetShips);
-    setDrafts(buildDrafts(resetShips));
+  const loadCombatState = useCallback((nextShips: Ship[], nextLog: string[]) => {
+    const encounterShips = copyShips(nextShips);
+    const firstPlayer = encounterShips.find((ship) => ship.team === "player" && ship.hull > 0);
+    setShips(encounterShips);
+    setDrafts(buildDrafts(encounterShips));
     setStaged(new Set());
-    setSelectedShipId("aegis");
+    setSelectedShipId(firstPlayer?.id ?? "");
     setPhase("planning");
     setTurn(1);
-    setLog(INITIAL_LOG);
+    setLog(nextLog);
     setResolution(null);
     setCombatFocus(null);
     setCameraCommand({ kind: "reset", nonce: Date.now() });
   }, []);
 
+  const resetGame = useCallback(() => {
+    loadCombatState(INITIAL_SHIPS, INITIAL_LOG);
+  }, [loadCombatState]);
+
+  const startStoryCampaign = useCallback(() => {
+    const starter = createStoryStarter();
+    setStoryRun(createStoryRun());
+    loadCombatState([starter], STORY_INITIAL_LOG);
+    setActiveMode("story");
+    setSelectedMode("story");
+    setScreen("story");
+  }, [loadCombatState]);
+
+  const enterStoryGate = useCallback((gate: number) => {
+    if (!storyRun || storyActionLockRef.current || gate < 1 || gate > STORY_GATE_COUNT) return;
+    storyActionLockRef.current = true;
+    const prepared = prepareStoryBattle(ships, gate, storyRun.pendingThreats);
+    const pursuitLog = prepared.triggeredThreats.length
+      ? [`${prepared.triggeredThreats.length} delayed pursuit signal${prepared.triggeredThreats.length === 1 ? " has" : "s have"} resolved into hostile contacts.`]
+      : [];
+    loadCombatState(prepared.ships, [
+      `Warp Gate ${String(gate).padStart(2, "0")}: ${prepared.config.name}. ${prepared.config.threat}.`,
+      ...pursuitLog,
+      "Plot the squadron's destination and final orientation, then stage every ship.",
+    ]);
+    setStoryRun((current) => current ? {
+      ...current,
+      stage: "combat",
+      gate,
+      salvageOptions: [],
+      currentEncounter: null,
+      selectedChoiceLabel: "",
+      outcome: null,
+      pendingThreats: prepared.remainingThreats,
+      history: [
+        ...(prepared.triggeredThreats.length ? [`Pursuit caught the fleet at Gate ${String(gate).padStart(2, "0")}.`] : []),
+        `Entered Gate ${String(gate).padStart(2, "0")}: ${prepared.config.name}.`,
+        ...current.history,
+      ].slice(0, 12),
+    } : current);
+    setScreen("battle");
+  }, [loadCombatState, ships, storyRun]);
+
+  const completeStoryGate = useCallback(() => {
+    if (!storyRun || storyActionLockRef.current || activeMode !== "story" || phase !== "victory") return;
+    storyActionLockRef.current = true;
+    const fleet = copyShips(ships).filter((ship) => ship.team === "player");
+    setShips(fleet);
+    if (storyRun.gate >= STORY_GATE_COUNT) {
+      setStoryRun((current) => current ? {
+        ...current,
+        stage: "won",
+        clearedGates: STORY_GATE_COUNT,
+        history: ["Gate 10 broken. Safe-space vector acquired.", ...current.history].slice(0, 12),
+      } : current);
+      setScreen("story");
+      return;
+    }
+    const options = pickSalvageOptions();
+    setStoryRun((current) => current ? {
+      ...current,
+      stage: "salvage",
+      clearedGates: current.gate,
+      salvageOptions: options,
+      currentEncounter: null,
+      selectedChoiceLabel: "",
+      outcome: null,
+      history: [`Gate ${String(current.gate).padStart(2, "0")} blockade destroyed.`, ...current.history].slice(0, 12),
+    } : current);
+    setScreen("story");
+  }, [activeMode, phase, ships, storyRun]);
+
+  const chooseStorySalvage = useCallback((option: SalvageOption) => {
+    if (!storyRun || storyRun.stage !== "salvage" || storyActionLockRef.current) return;
+    storyActionLockRef.current = true;
+    const applied = applyStoryEffects(ships, option.effects, storyRun.gate, option.id);
+    const encounter = pickStoryEncounter(storyRun.seenEncounterIds);
+    setShips(applied.ships);
+    setStoryRun((current) => current ? {
+      ...current,
+      stage: "encounter",
+      currentEncounter: encounter,
+      seenEncounterIds: current.seenEncounterIds.includes(encounter.id) ? current.seenEncounterIds : [...current.seenEncounterIds, encounter.id],
+      pendingThreats: [...current.pendingThreats, ...applied.threats],
+      history: [`Salvaged ${option.label.toLowerCase()}: ${option.effectLabel}.`, ...current.history].slice(0, 12),
+    } : current);
+  }, [ships, storyRun]);
+
+  const chooseStoryEncounter = useCallback((choiceIndex: number) => {
+    if (!storyRun || storyRun.stage !== "encounter" || !storyRun.currentEncounter || storyActionLockRef.current) return;
+    const choice = storyRun.currentEncounter.choices[choiceIndex];
+    if (!choice) return;
+    storyActionLockRef.current = true;
+    const fortune = storyRun.fortuneMap[storyRun.currentEncounter.id] === choice.id ? 18 : -18;
+    const outcome = rollStoryOutcome(choice, Math.random, fortune);
+    const applied = applyStoryEffects(ships, outcome.effects, storyRun.gate, outcome.id);
+    const playerAlive = applied.ships.some((ship) => ship.team === "player" && ship.hull > 0);
+    setShips(applied.ships);
+    setStoryRun((current) => current ? {
+      ...current,
+      stage: playerAlive ? "outcome" : "lost",
+      selectedChoiceLabel: choice.label,
+      outcome,
+      pendingThreats: [...current.pendingThreats, ...applied.threats],
+      history: [`${outcome.title}: ${outcome.effectLabel}.`, ...current.history].slice(0, 12),
+    } : current);
+  }, [ships, storyRun]);
+
+  const continueStory = useCallback(() => {
+    if (!storyRun || storyRun.stage !== "outcome") return;
+    enterStoryGate(storyRun.gate + 1);
+  }, [enterStoryGate, storyRun]);
+
   const launchMode = useCallback((mode: GameMode) => {
-    resetGame();
     setSelectedMode(mode);
     setActiveMode(mode);
+    setStoryRun(null);
+    if (mode === "story") {
+      startStoryCampaign();
+      return;
+    }
+    resetGame();
     setScreen("battle");
-  }, [resetGame]);
+  }, [resetGame, startStoryCampaign]);
 
   const returnToMenu = useCallback(() => {
     resetGame();
+    setStoryRun(null);
     setScreen("menu");
   }, [resetGame]);
+
+  const restartActiveMode = useCallback(() => {
+    if (activeMode === "story") {
+      startStoryCampaign();
+      return;
+    }
+    resetGame();
+  }, [activeMode, resetGame, startStoryCampaign]);
 
   const selectShip = useCallback((id: string) => {
     const clicked = ships.find((ship) => ship.id === id);
@@ -1609,7 +2167,7 @@ export function SpaceGame() {
     if (screen !== "battle") return;
     const handleShortcuts = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target?.matches("input, select, textarea")) return;
+      if (target?.matches("input, select, textarea, button")) return;
       if (event.key.toLowerCase() === "f") {
         setCameraCommand({ kind: "focus", shipId: selectedShipId, nonce: Date.now() });
       }
@@ -1639,13 +2197,28 @@ export function SpaceGame() {
     );
   }
 
+  if (screen === "story" && storyRun) {
+    return (
+      <StoryCampaignScreen
+        run={storyRun}
+        ships={ships}
+        onBeginGate={() => enterStoryGate(storyRun.gate)}
+        onChooseSalvage={chooseStorySalvage}
+        onChooseEncounter={chooseStoryEncounter}
+        onContinue={continueStory}
+        onRestart={startStoryCampaign}
+        onMenu={returnToMenu}
+      />
+    );
+  }
+
   if (!selectedShip) return null;
   const activeModeInfo = MODE_OPTIONS.find((mode) => mode.id === activeMode) ?? MODE_OPTIONS[1];
   const controlsDisabled = phase !== "planning" || selectedShip.team !== "player" || selectedShip.hull <= 0;
   const hullPercent = (selectedShip.hull / selectedShip.maxHull) * 100;
 
   return (
-    <main className="game-shell">
+    <main className="game-shell" data-story-phase={activeMode === "story" ? "combat" : undefined} data-gate={activeMode === "story" ? storyRun?.gate : undefined} data-total-gates={activeMode === "story" ? STORY_GATE_COUNT : undefined}>
       <header className="topbar">
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true"><i /><i /></span>
@@ -1662,12 +2235,15 @@ export function SpaceGame() {
           </div>
         </div>
         <div className="mission-brief">
-          <small>{activeModeInfo.category.toUpperCase()} · KESTREL REACH</small>
-          <span>{activeModeInfo.label} · Prototype encounter</span>
+          {activeMode === "story" && storyRun ? (
+            <><small>STORY ESCAPE · WARP GATE {String(storyRun.gate).padStart(2, "0")} / {STORY_GATE_COUNT}</small><span>{STORY_GATE_CONFIGS[storyRun.gate - 1]?.name} · {STORY_GATE_CONFIGS[storyRun.gate - 1]?.threat}</span></>
+          ) : (
+            <><small>{activeModeInfo.category.toUpperCase()} · KESTREL REACH</small><span>{activeModeInfo.label} · Prototype encounter</span></>
+          )}
         </div>
         <div className="topbar-actions">
           <button className="quiet-button" type="button" onClick={returnToMenu}>Main menu</button>
-          <button className="quiet-button" type="button" onClick={resetGame}>Restart</button>
+          <button className="quiet-button" type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : "Restart"}</button>
         </div>
       </header>
 
@@ -1690,6 +2266,14 @@ export function SpaceGame() {
             <span>TACTICAL VOLUME</span>
             <strong>40 × 14 × 40 KM</strong>
           </div>
+
+          {activeMode === "story" && storyRun && (
+            <div className="story-combat-progress" aria-label={`Warp gate ${storyRun.gate} of ${STORY_GATE_COUNT}`}>
+              <span>ESCAPE ROUTE</span>
+              <ol>{Array.from({ length: STORY_GATE_COUNT }, (_, index) => <li key={index} className={index + 1 < storyRun.gate ? "cleared" : index + 1 === storyRun.gate ? "active" : ""}>{index + 1 < storyRun.gate ? "✓" : index + 1}</li>)}</ol>
+              <strong>{storyRun.pendingThreats.length ? `${storyRun.pendingThreats.length} SIGNAL${storyRun.pendingThreats.length === 1 ? "" : "S"} IN WAKE` : "WAKE CLEAR"}</strong>
+            </div>
+          )}
 
           {selectedShip.team === "player" && selectedDraft && phase === "planning" && (
             <div className={`weapon-envelope-readout ${!selectedDraft.fire ? "safe" : forecast?.valid ? "valid" : "warning"}`}>
@@ -1726,12 +2310,22 @@ export function SpaceGame() {
             </div>
           )}
 
-          {(phase === "victory" || phase === "defeat") && (
+          {(phase === "victory" || phase === "defeat") && activeMode !== "story" && (
             <div className="end-state">
               <small>SKIRMISH COMPLETE</small>
               <h2>{phase === "victory" ? "Formation broken" : "Command ships lost"}</h2>
               <p>{phase === "victory" ? "The Kestrel Reach is secure." : "Replot the engagement and try a new vector."}</p>
               <button type="button" onClick={resetGame}>Run another {activeModeInfo.label.toLowerCase()}</button>
+            </div>
+          )}
+
+          {(phase === "victory" || phase === "defeat") && activeMode === "story" && storyRun && (
+            <div className={`end-state story-battle-end ${phase}`}>
+              <small>{phase === "victory" ? `WARP GATE ${String(storyRun.gate).padStart(2, "0")} CLEARED` : "ESCAPE FORMATION LOST"}</small>
+              <h2>{phase === "victory" ? (storyRun.gate === STORY_GATE_COUNT ? "The final blockade breaks" : "The aperture is yours") : "Hostile retrieval complete"}</h2>
+              <p>{phase === "victory" ? (storyRun.gate === STORY_GATE_COUNT ? "Only open space remains beyond the gate." : "Salvage one system before the wrecks fall into the wake.") : `AX-14 was stopped at Gate ${String(storyRun.gate).padStart(2, "0")}. Every upgrade and recruit is lost with the run.`}</p>
+              <button type="button" onClick={phase === "victory" ? completeStoryGate : startStoryCampaign}>{phase === "victory" ? (storyRun.gate === STORY_GATE_COUNT ? "Cross into safe space" : "Claim salvage") : "Start a new escape"}</button>
+              {phase === "defeat" && <button type="button" className="end-state-secondary" onClick={returnToMenu}>Return to main menu</button>}
             </div>
           )}
 
@@ -1841,7 +2435,7 @@ export function SpaceGame() {
             <section className="npc-block">
               <span className="eyebrow">AUTONOMOUS COMMAND</span>
               <h2>{selectedShip.team === "enemy" ? "Hostile vector hidden" : "Orders after fleet commit"}</h2>
-              <p>{selectedShip.team === "enemy" ? "Predict its maneuver from current facing, range, and exposed armour." : "Sable-3 will choose an enemy after your command vectors are staged."}</p>
+              <p>{selectedShip.team === "enemy" ? "Predict its maneuver from current facing, range, and exposed armour." : `${selectedShip.name} will choose an enemy after your command vectors are staged.`}</p>
             </section>
           )}
 

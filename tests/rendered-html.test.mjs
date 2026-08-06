@@ -25,11 +25,17 @@ test("server-renders the Parallax main menu", async () => {
   assert.match(html, /SELECT/);
   assert.match(html, /OPERATION/);
   assert.match(html, /Story Mode/);
+  assert.match(html, /data-game-mode="story"/);
+  assert.match(html, /data-story-gates="10"/);
+  assert.match(html, /Escape campaign/i);
+  assert.match(html, /10 warp gates/i);
+  assert.match(html, /Campaign ready/i);
   assert.match(html, /Skirmish Mode/);
   assert.match(html, /Endless Mode/);
   assert.match(html, /Hardcore Mode/);
   assert.match(html, /Sound effects/);
   assert.match(html, /Music/);
   assert.match(html, /INITIALIZE\s*(?:<!-- -->)?SKIRMISH MODE/);
+  assert.doesNotMatch(html, /All four entries currently launch/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
