@@ -7,6 +7,7 @@ import {
   shieldFaceForHit,
   shieldFaceForOrigin,
   shotSolutionForWeapon,
+  weaponLocalOriginFor,
   weaponOriginFor,
   weaponProfilesFor,
   type CombatOrder,
@@ -35,6 +36,8 @@ const makeShip = (id: string, overrides: Partial<CombatShip> = {}): CombatShip =
   maxHull: 100,
   weaponRange: 20,
   weaponDamage: 10,
+  basicWeapon: "cannon",
+  modelScale: 1,
   eliteWeapons: [],
   ...overrides,
 });
@@ -68,6 +71,29 @@ test("weapon mounts preserve the designed damage, range, and arc ratios", () => 
     ],
   );
   assert.equal(profiles[0].color, "#ff5f7b");
+});
+
+test("ship basic-weapon kinds can change a hull's primary battery", () => {
+  const pulse = weaponProfilesFor(makeShip("pulse", { basicWeapon: "pulse" }))[0];
+  const torpedo = weaponProfilesFor(makeShip("torpedo", { basicWeapon: "torpedo" }))[0];
+
+  assert.deepEqual(
+    [pulse.name, pulse.damage, pulse.range, pulse.halfArc],
+    ["Pulse repeater", 7, 17, 48],
+  );
+  assert.deepEqual(
+    [torpedo.name, torpedo.damage, torpedo.range, torpedo.halfArc],
+    ["Torpedo rack", 16, 27, 14],
+  );
+});
+
+test("weapon origins follow per-hull visual scale", () => {
+  const ship = makeShip("scaled", { modelScale: 2, eliteWeapons: ["turret"] });
+  const [main, turret] = weaponProfilesFor(ship);
+
+  assert.deepEqual(weaponLocalOriginFor(ship, main).toArray(), [0, 0, -2.96]);
+  assert.deepEqual(weaponLocalOriginFor(ship, turret).toArray(), [0, 1.24, 0]);
+  assert.deepEqual(weaponOriginFor(ship, main).toArray(), [0, 0, -2.96]);
 });
 
 test("zero-distance targets are safe and count as inside the firing arc", () => {

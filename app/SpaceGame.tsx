@@ -24,6 +24,7 @@ import {
   SHIELD_FACES,
   resolveCombatTurn,
   shotSolutionForWeapon,
+  weaponLocalOriginFor,
   weaponOriginFor,
   weaponProfilesFor,
   type CombatShotEvent,
@@ -33,6 +34,7 @@ import {
   type Team,
   type Vec3,
 } from "./combatEngine";
+import { STORY_STARTER_ARCHETYPE, type BasicWeaponKind } from "./shipCatalog";
 
 type Phase = "planning" | "executing" | "victory" | "defeat";
 type GameScreen = "menu" | "battle" | "story";
@@ -65,6 +67,9 @@ type Ship = {
   maxRoll: number;
   weaponRange: number;
   weaponDamage: number;
+  archetypeId: string;
+  basicWeapon: BasicWeaponKind;
+  modelScale: number;
   eliteWeapons: EliteWeaponKind[];
 };
 
@@ -205,6 +210,9 @@ const INITIAL_SHIPS: Ship[] = [
     maxRoll: 90,
     weaponRange: 17,
     weaponDamage: 34,
+    archetypeId: "halcyon-frigate",
+    basicWeapon: "cannon",
+    modelScale: 1,
     eliteWeapons: [],
   },
   {
@@ -226,6 +234,9 @@ const INITIAL_SHIPS: Ship[] = [
     maxRoll: 180,
     weaponRange: 14,
     weaponDamage: 24,
+    archetypeId: "lancer-interceptor",
+    basicWeapon: "cannon",
+    modelScale: 1,
     eliteWeapons: [],
   },
   {
@@ -247,6 +258,9 @@ const INITIAL_SHIPS: Ship[] = [
     maxRoll: 135,
     weaponRange: 15,
     weaponDamage: 22,
+    archetypeId: "allied-escort",
+    basicWeapon: "cannon",
+    modelScale: 1,
     eliteWeapons: [],
   },
   {
@@ -268,6 +282,9 @@ const INITIAL_SHIPS: Ship[] = [
     maxRoll: 90,
     weaponRange: 16,
     weaponDamage: 30,
+    archetypeId: "corsair-frigate",
+    basicWeapon: "cannon",
+    modelScale: 1,
     eliteWeapons: [],
   },
   {
@@ -289,6 +306,9 @@ const INITIAL_SHIPS: Ship[] = [
     maxRoll: 180,
     weaponRange: 14,
     weaponDamage: 23,
+    archetypeId: "corsair-raider",
+    basicWeapon: "cannon",
+    modelScale: 1,
     eliteWeapons: [],
   },
   {
@@ -310,6 +330,9 @@ const INITIAL_SHIPS: Ship[] = [
     maxRoll: 120,
     weaponRange: 16,
     weaponDamage: 27,
+    archetypeId: "corsair-gunship",
+    basicWeapon: "cannon",
+    modelScale: 1,
     eliteWeapons: [],
   },
 ];
@@ -338,7 +361,7 @@ const STORY_GATE_CONFIGS: StoryGateConfig[] = [
 ];
 
 const STORY_INITIAL_LOG = [
-  "Naval asset AX-14 stolen. Hostile command has sealed every registered exit.",
+  "The Hammerhead, HM-01, is stolen. Hostile command has sealed every registered exit.",
   "Cross ten warp gates before the retrieval fleet closes the corridor.",
 ];
 
@@ -483,16 +506,33 @@ function createStoryRun(): StoryRun {
     pendingThreats: [],
     acquiredEliteIds: [],
     fortuneMap: createFortuneMap(),
-    history: ["AX-14 removed from the Blacksite impound ring.", "Escape vector plotted: ten hostile gates."],
+    history: ["The Hammerhead, HM-01, removed from the Blacksite impound ring.", "Escape vector plotted: ten hostile gates."],
   };
 }
 
 function createStoryStarter() {
   const starter = copyShips([INITIAL_SHIPS[0]])[0];
+  const archetype = STORY_STARTER_ARCHETYPE;
   return {
     ...starter,
-    callsign: "UNREGISTERED",
-    className: "Stolen Halcyon frigate",
+    id: archetype.id,
+    name: archetype.name,
+    callsign: archetype.callsign,
+    className: archetype.className,
+    color: archetype.color,
+    archetypeId: archetype.id,
+    basicWeapon: archetype.basicWeapon,
+    modelScale: archetype.modelScale,
+    shields: { ...archetype.shieldCapacity },
+    maxShields: { ...archetype.shieldCapacity },
+    hull: archetype.hull,
+    maxHull: archetype.hull,
+    maxMove: archetype.maxMove,
+    maxTurn: archetype.maxTurn,
+    maxPitch: archetype.maxPitch,
+    maxRoll: archetype.maxRoll,
+    weaponRange: archetype.weaponRange,
+    weaponDamage: archetype.weaponDamage,
     position: [...STORY_PLAYER_SLOTS[0].position] as Vec3,
     rotation: [...STORY_PLAYER_SLOTS[0].rotation] as Vec3,
   };
@@ -708,6 +748,7 @@ function shieldColor(value: number, maximum: number) {
 function createShipGroup(ship: Ship) {
   const root = new THREE.Group();
   root.userData.shipId = ship.id;
+  root.scale.setScalar(ship.modelScale);
 
   const bodyMaterial = new THREE.MeshStandardMaterial({
     color: ship.color,
@@ -867,7 +908,7 @@ function addWeaponEnvelope(
   weaponProfilesFor(end).forEach((weapon, index) => {
     const solution = target ? shotSolutionForWeapon(end, target, weapon) : null;
     const color = !armed ? "#456779" : solution?.valid ? "#62edbd" : weapon.color;
-    const origin = weapon.kind === "turret" ? new THREE.Vector3(0, 0.62, 0) : new THREE.Vector3(0, 0, -1.48);
+    const origin = weaponLocalOriginFor(end, weapon);
     if (weapon.halfArc >= 180) {
       const sphere = new THREE.Mesh(
         new THREE.SphereGeometry(weapon.range, 28, 18),
@@ -967,9 +1008,11 @@ function createWreck(ship: Ship, liveGroup?: THREE.Group) {
   if (liveGroup) {
     wreck.position.copy(liveGroup.position);
     wreck.quaternion.copy(liveGroup.quaternion);
+    wreck.scale.copy(liveGroup.scale);
   } else {
     wreck.position.set(...ship.position);
     wreck.quaternion.copy(quaternionFor(ship.rotation));
+    wreck.scale.setScalar(ship.modelScale);
   }
 
   const charred = new THREE.MeshStandardMaterial({
@@ -1379,6 +1422,7 @@ function TacticalScene({
         group.position.set(...ship.position);
         group.quaternion.copy(quaternionFor(ship.rotation));
       }
+      group.scale.setScalar(ship.modelScale);
       group.visible = ship.hull > 0 && !context.wrecks.has(ship.id);
       group.traverse((child) => {
         if (child.userData.selectionRing) child.visible = ship.id === selectedShipId;
@@ -1429,6 +1473,7 @@ function TacticalScene({
         const ghostRoot = new THREE.Group();
         ghostRoot.position.copy(endPoint);
         ghostRoot.quaternion.copy(quaternionFor(end.rotation));
+        ghostRoot.scale.setScalar(ship.modelScale);
         ghostRoot.add(ghost);
         context.planGroup.add(ghostRoot);
 
@@ -1888,7 +1933,7 @@ function StoryCampaignScreen({
   const encounter = run.currentEncounter;
   const outcome = run.outcome;
   const isFinished = run.stage === "won" || run.stage === "lost";
-  const commandTransferred = Boolean(flagship && flagship.id !== "aegis");
+  const commandTransferred = Boolean(flagship && flagship.id !== "hammerhead");
 
   useEffect(() => {
     stageHeadingRef.current?.focus();
@@ -1900,7 +1945,7 @@ function StoryCampaignScreen({
       <header className="story-header">
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true"><i /><i /></span>
-          <div><strong>PARALLAX</strong><span>Story campaign · Flight record AX-14</span></div>
+          <div><strong>PARALLAX</strong><span>Story campaign · Flight record HM-01</span></div>
         </div>
         <div className="story-header-progress" aria-label={`Warp gate ${run.gate} of ${STORY_GATE_COUNT}`}>
           <span>ESCAPE VECTOR</span>
@@ -1913,7 +1958,7 @@ function StoryCampaignScreen({
         <aside className="story-route-panel">
           <span className="eyebrow">ROUTE · HOSTILE TERRITORY</span>
           <h2>Ten folds<br /><em>to freedom</em></h2>
-          <p>Every gate closes behind you. Damage, recruits, and stolen improvements carry forward. If AX-14 falls, its flight core and command transfer to a surviving squadmate.</p>
+          <p>Every gate closes behind you. Damage, recruits, and stolen improvements carry forward. If the Hammerhead falls, its flight core and command transfer to a surviving squadmate.</p>
           <ol className="story-gate-route" aria-label="Campaign gate progress">
             {STORY_GATE_CONFIGS.map((gate, index) => {
               const number = index + 1;
@@ -1934,8 +1979,8 @@ function StoryCampaignScreen({
             <div className="story-briefing story-stage-content">
               <span className="story-signal"><i /> BLACKSITE ALARM · PURSUIT ACTIVE</span>
               <small className="story-step">CAMPAIGN BRIEF · GATE 01 / {STORY_GATE_COUNT}</small>
-              <h1 ref={stageHeadingRef} tabIndex={-1}>You stole their ship.<br /><em>Now outrun their fleet.</em></h1>
-              <p>AX-14 was waiting in a hostile impound ring with its registry unlocked. The nearest safe system lies ten warp gates away—and every gate is already being sealed.</p>
+              <h1 ref={stageHeadingRef} tabIndex={-1}>You stole the Hammerhead.<br /><em>Now outrun their fleet.</em></h1>
+              <p>HM-01—the Hammerhead—was waiting in a hostile impound ring with its registry unlocked. The nearest safe system lies ten warp gates away—and every gate is already being sealed.</p>
               <div className="story-rules">
                 <div><b>01</b><span><strong>Break each blockade</strong><small>Enemy formations grow stronger along the route.</small></span></div>
                 <div><b>02</b><span><strong>Salvage the wrecks</strong><small>Choose one repair or permanent ship upgrade.</small></span></div>
@@ -2004,7 +2049,7 @@ function StoryCampaignScreen({
               <small className="story-step">CAMPAIGN COMPLETE · {STORY_GATE_COUNT} / {STORY_GATE_COUNT}</small>
               <div className="finale-mark" aria-hidden="true"><i /><i /><b /></div>
               <h1 ref={stageHeadingRef} tabIndex={-1}>Out of their reach.</h1>
-              <p>The last blockade collapses behind the surviving squadron. AX-14&apos;s stolen flight record reaches open space—aboard its original hull or the command ship that carried it onward.</p>
+              <p>The last blockade collapses behind the surviving squadron. HM-01&apos;s flight record reaches open space—aboard the Hammerhead or the command ship that carried its core onward.</p>
               <div className="finale-stats"><span><small>GATES CLEARED</small><strong>{STORY_GATE_COUNT}</strong></span><span><small>SHIPS ESCAPED</small><strong>{livingShips.length}</strong></span><span><small>DECISIONS SURVIVED</small><strong>{run.seenEncounterIds.length}</strong></span></div>
               <div className="story-final-actions"><button type="button" className="story-primary-action" onClick={onRestart}><span><small>NEW RANDOM ROUTE</small><strong>START ANOTHER ESCAPE</strong></span><b>↻</b></button><button type="button" className="story-secondary-action" onClick={onMenu}>Return to main menu</button></div>
             </div>
@@ -2016,7 +2061,7 @@ function StoryCampaignScreen({
               <small className="story-step">CAMPAIGN LOST · GATE {String(run.gate).padStart(2, "0")}</small>
               <div className="finale-mark" aria-hidden="true"><i /><i /><b /></div>
               <h1 ref={stageHeadingRef} tabIndex={-1}>The dark closes in.</h1>
-              <p>{outcome?.description ?? "The stolen ship can no longer hold pressure. Hostile retrieval signals converge on the last known vector."}</p>
+              <p>{outcome?.description ?? "The Hammerhead can no longer hold pressure. Hostile retrieval signals converge on the last known vector."}</p>
               {outcome && <div className="outcome-effect"><span>FINAL EFFECT</span><strong>{outcome.effectLabel}</strong></div>}
               <div className="story-final-actions"><button type="button" className="story-primary-action" onClick={onRestart}><span><small>RESET ALL UPGRADES</small><strong>START A NEW ESCAPE</strong></span><b>↻</b></button><button type="button" className="story-secondary-action" onClick={onMenu}>Return to main menu</button></div>
             </div>
@@ -2027,7 +2072,7 @@ function StoryCampaignScreen({
           <div className="manifest-heading"><span>{commandTransferred ? "COMMAND TRANSFER" : "STOLEN ASSET"}</span><strong>{flagship?.callsign ?? "SIGNAL LOST"}</strong></div>
           <div className="manifest-ship">
             <span className="manifest-ship-mark" aria-hidden="true"><i /><i /><b /></span>
-            <div><small>COMMAND SHIP</small><strong>{flagship?.name ?? "AX-14 LOST"}</strong><span>{flagship?.className ?? "No surviving hull"}</span></div>
+            <div><small>COMMAND SHIP</small><strong>{flagship?.name ?? "HM-01 LOST"}</strong><span>{flagship?.className ?? "No surviving hull"}</span></div>
           </div>
           <div className="manifest-stats">
             <div><span>HULL</span><strong>{Math.round(flagship?.hull ?? 0)}<small> / {flagship?.maxHull ?? 0}</small></strong></div>
@@ -2115,6 +2160,7 @@ export function SpaceGame() {
   const livingPlayerShips = playerShips.filter((ship) => ship.hull > 0);
   const alliedNPC = ships.find((ship) => ship.team === "ally");
   const selectedTargetId = selectedDraft?.targetId ?? "";
+  const selectedTarget = ships.find((ship) => ship.id === selectedTargetId && ship.hull > 0);
   const readyCount = livingPlayerShips.filter((ship) => staged.has(ship.id)).length;
   const allDestinationsValid = livingPlayerShips.every((ship) => drafts[ship.id] && isDestinationValid(ship, drafts[ship.id].destination));
   const allReady = livingPlayerShips.length > 0 && readyCount === livingPlayerShips.length && allDestinationsValid;
@@ -2502,10 +2548,11 @@ export function SpaceGame() {
   if (!selectedShip) return null;
   const activeModeInfo = MODE_OPTIONS.find((mode) => mode.id === activeMode) ?? MODE_OPTIONS[1];
   const controlsDisabled = phase !== "planning" || selectedShip.team !== "player" || selectedShip.hull <= 0;
-  const hullPercent = (selectedShip.hull / selectedShip.maxHull) * 100;
   const selectedWeapons = weaponProfilesFor(selectedShip);
-  const maximumWeaponRange = Math.max(...selectedWeapons.map((weapon) => weapon.range));
   const totalVolleyDamage = selectedWeapons.reduce((sum, weapon) => sum + weapon.damage, 0);
+  const plannedTargetDistance = selectedTarget && selectedDraft
+    ? distanceBetween(selectedDraft.destination, selectedTarget.position)
+    : null;
 
   return (
     <main className="game-shell" data-story-phase={activeMode === "story" ? "combat" : undefined} data-gate={activeMode === "story" ? storyRun?.gate : undefined} data-total-gates={activeMode === "story" ? STORY_GATE_COUNT : undefined}>
@@ -2552,6 +2599,61 @@ export function SpaceGame() {
             onResolutionComplete={resolveCombat}
           />
 
+          <section className="tactical-telemetry" aria-label="Selected ship shielding and target details">
+            <div className="tactical-telemetry__ship">
+              <div className="telemetry-heading">
+                <span>SELECTED SHIP · DIRECTIONAL SHIELDING</span>
+                <strong>{selectedShip.name} · {Math.round(selectedShip.hull)} / {selectedShip.maxHull} HULL</strong>
+              </div>
+              <div className="shield-grid">
+                {SHIELD_FACES.map((face) => {
+                  const shieldRatio = selectedShip.shields[face] / Math.max(1, selectedShip.maxShields[face]);
+                  const faceLabel = face === "fore" ? "Front" : face === "aft" ? "Rear" : titleCase(face);
+                  return (
+                    <div key={face} className={`${face} ${selectedShip.shields[face] <= 0 ? "depleted" : shieldRatio < 0.38 ? "damaged" : ""}`}>
+                      <span>{faceLabel}</span><strong>{Math.round(selectedShip.shields[face])} / {Math.round(selectedShip.maxShields[face])}</strong>
+                      <i><b style={{ width: `${clamp(shieldRatio * 100, 0, 100)}%` }} /></i>
+                    </div>
+                  );
+                })}
+              </div>
+              <small className="shield-regen-note">SHIELD REGEN · +5 AFTER HIT · +10 WHEN CLEAR</small>
+            </div>
+
+            <div className="tactical-telemetry__target">
+              <div className="telemetry-heading">
+                <span>TARGET DETAILS</span>
+                <strong>{selectedTarget?.callsign ?? "NO ACTIVE LOCK"}</strong>
+              </div>
+              {selectedShip.team === "player" && selectedDraft ? (
+                <>
+                  <label className="target-select">
+                    <span>TARGET LOCK</span>
+                    <select value={selectedTarget ? selectedDraft.targetId : ""} disabled={controlsDisabled || enemies.length === 0} onChange={(event) => updateDraft({ targetId: event.target.value })}>
+                      {enemies.length === 0 && <option value="">NO ACTIVE TARGETS</option>}
+                      {enemies.map((enemy) => <option value={enemy.id} key={enemy.id}>{enemy.name} · {Math.round(distanceBetween(selectedDraft.destination, enemy.position))} km</option>)}
+                    </select>
+                  </label>
+                  {selectedTarget && (
+                    <div className="target-contact">
+                      <span><strong>{selectedTarget.name}</strong><small>{selectedTarget.className}</small></span>
+                      <b>{Math.round(selectedTarget.hull)} / {selectedTarget.maxHull} HULL · {plannedTargetDistance?.toFixed(1)} KM</b>
+                    </div>
+                  )}
+                  <div className={`forecast ${forecast?.valid ? "valid" : "warning"}`}>
+                    <i />
+                    <span>
+                      <strong>{!selectedTarget ? "NO ACTIVE TARGET" : !selectedDraft.fire ? "WEAPONS SAFE" : forecast?.valid ? `${forecast.validCount}/${forecast.total} MOUNTS LOCKED` : forecast?.inRange === false ? "OUTSIDE ALL RANGES" : "OUTSIDE FIRING ARCS"}</strong>
+                      <small>{forecast ? `${forecast.distance.toFixed(1)} km · ${Math.round(forecast.damage)} projected damage` : selectedTarget ? `${plannedTargetDistance?.toFixed(1)} km · no firing solution` : "No target selected"}</small>
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="target-empty"><strong>NO COMMAND LINK</strong><span>Select one of your ships to inspect and assign a target.</span></div>
+              )}
+            </div>
+          </section>
+
           <div className="viewport-heading">
             <span>TACTICAL VOLUME</span>
             <strong>40 × 14 × 40 KM</strong>
@@ -2562,14 +2664,6 @@ export function SpaceGame() {
               <span>ESCAPE ROUTE</span>
               <ol>{Array.from({ length: STORY_GATE_COUNT }, (_, index) => <li key={index} className={index + 1 < storyRun.gate ? "cleared" : index + 1 === storyRun.gate ? "active" : ""}>{index + 1 < storyRun.gate ? "✓" : index + 1}</li>)}</ol>
               <strong>{storyRun.pendingThreats.length ? `${storyRun.pendingThreats.length} SIGNAL${storyRun.pendingThreats.length === 1 ? "" : "S"} IN WAKE` : "WAKE CLEAR"}</strong>
-            </div>
-          )}
-
-          {selectedShip.team === "player" && selectedDraft && phase === "planning" && (
-            <div className={`weapon-envelope-readout ${!selectedDraft.fire ? "safe" : forecast?.valid ? "valid" : "warning"}`}>
-              <i />
-              <span>WEAPON ENVELOPES</span>
-              <strong>{selectedWeapons.length} MOUNT{selectedWeapons.length === 1 ? "" : "S"} · {maximumWeaponRange} KM MAX</strong>
             </div>
           )}
 
@@ -2613,7 +2707,7 @@ export function SpaceGame() {
             <div className={`end-state story-battle-end ${phase}`}>
               <small>{phase === "victory" ? `WARP GATE ${String(storyRun.gate).padStart(2, "0")} CLEARED` : "ESCAPE FORMATION LOST"}</small>
               <h2>{phase === "victory" ? (storyRun.gate === STORY_GATE_COUNT ? "The final blockade breaks" : "The aperture is yours") : "Hostile retrieval complete"}</h2>
-              <p>{phase === "victory" ? (storyRun.gate === STORY_GATE_COUNT ? "Only open space remains beyond the gate." : "Salvage one system before the wrecks fall into the wake.") : `AX-14 was stopped at Gate ${String(storyRun.gate).padStart(2, "0")}. Every upgrade and recruit is lost with the run.`}</p>
+              <p>{phase === "victory" ? (storyRun.gate === STORY_GATE_COUNT ? "Only open space remains beyond the gate." : "Salvage one system before the wrecks fall into the wake.") : `The Hammerhead was stopped at Gate ${String(storyRun.gate).padStart(2, "0")}. Every upgrade and recruit is lost with the run.`}</p>
               <button type="button" onClick={phase === "victory" ? completeStoryGate : startStoryCampaign}>{phase === "victory" ? (storyRun.gate === STORY_GATE_COUNT ? "Cross into safe space" : "Claim salvage") : "Start a new escape"}</button>
               {phase === "defeat" && <button type="button" className="end-state-secondary" onClick={returnToMenu}>Return to main menu</button>}
             </div>
@@ -2646,6 +2740,14 @@ export function SpaceGame() {
         </div>
 
         <aside className="command-panel">
+          {selectedShip.team === "player" && selectedDraft && (
+            <div className="command-confirmation">
+              <button className={`stage-button ${staged.has(selectedShip.id) ? "staged" : ""}`} type="button" disabled={controlsDisabled || !destinationValid} aria-describedby={`plot-status-${selectedShip.id}`} onClick={() => setStaged((current) => new Set(current).add(selectedShip.id))}>
+                <span>{!destinationValid ? "MOVE OUTSIDE RANGE" : staged.has(selectedShip.id) ? "ORDER CONFIRMED" : "CONFIRM SHIP ORDER"}</span><b>{staged.has(selectedShip.id) ? "✓" : "→"}</b>
+              </button>
+            </div>
+          )}
+
           <section className="ship-identity">
             <div>
               <span className="eyebrow">{TEAM_LABELS[selectedShip.team]} · {selectedShip.callsign}</span>
@@ -2655,28 +2757,11 @@ export function SpaceGame() {
             <span className={`team-glyph ${selectedShip.team}`} aria-hidden="true" />
           </section>
 
-          <section className="integrity-block">
-            <div className="section-heading"><span>HULL INTEGRITY</span><strong>{Math.round(selectedShip.hull)} / {selectedShip.maxHull}</strong></div>
-            <div className="integrity-track"><i style={{ width: `${hullPercent}%` }} /></div>
-            <div className="shield-heading"><span>DIRECTIONAL SHIELDS</span><strong>+5 HIT · +10 CLEAR / TURN</strong></div>
-            <div className="shield-grid">
-              {SHIELD_FACES.map((face) => {
-                const shieldRatio = selectedShip.shields[face] / Math.max(1, selectedShip.maxShields[face]);
-                return (
-                <div key={face} className={selectedShip.shields[face] <= 0 ? "depleted" : shieldRatio < 0.38 ? "damaged" : ""}>
-                  <span>{titleCase(face)}</span><strong>{Math.round(selectedShip.shields[face])} / {Math.round(selectedShip.maxShields[face])}</strong>
-                  <i><b style={{ width: `${clamp(shieldRatio * 100, 0, 100)}%` }} /></i>
-                </div>
-                );
-              })}
-            </div>
-          </section>
-
           {selectedShip.team === "player" && selectedDraft ? (
             <>
               <section className="orders-block location-block">
                 <div className="section-heading stepped"><span><b>01</b>TARGET LOCATION</span><strong>SHIP-RELATIVE</strong></div>
-                <div className={`plot-status ${destinationValid ? "valid" : "invalid"}`}>
+                <div id={`plot-status-${selectedShip.id}`} className={`plot-status ${destinationValid ? "valid" : "invalid"}`}>
                   <span>LOCAL VECTOR LENGTH</span>
                   <strong>{plottedDistance.toFixed(1)} / {selectedShip.maxMove} KM</strong>
                   <i><b style={{ width: `${Math.min(100, (plottedDistance / selectedShip.maxMove) * 100)}%` }} /></i>
@@ -2703,27 +2788,10 @@ export function SpaceGame() {
 
               <section className="weapon-block">
                 <div className="section-heading stepped"><span><b>03</b>WEAPON BATTERY</span><strong>{totalVolleyDamage} MAX VOLLEY · {selectedWeapons.length} MOUNT{selectedWeapons.length === 1 ? "" : "S"}</strong></div>
-                <label className="target-select">
-                  <span>TARGET LOCK</span>
-                  <select value={selectedDraft.targetId} disabled={controlsDisabled} onChange={(event) => updateDraft({ targetId: event.target.value })}>
-                    {enemies.map((enemy) => <option value={enemy.id} key={enemy.id}>{enemy.name} · {Math.round(distanceBetween(selectedDraft.destination, enemy.position))} km</option>)}
-                  </select>
-                </label>
                 <button type="button" className={`weapon-toggle ${selectedDraft.fire ? "armed" : ""}`} disabled={controlsDisabled} onClick={() => updateDraft({ fire: !selectedDraft.fire })}>
                   <i /> <span>{selectedDraft.fire ? `${selectedWeapons.length} GUN${selectedWeapons.length === 1 ? "" : "S"} ARMED` : "HOLD FIRE"}</span><b>{selectedDraft.fire ? "LIVE" : "SAFE"}</b>
                 </button>
-                <div className={`forecast ${forecast?.valid ? "valid" : "warning"}`}>
-                  <i />
-                  <span>
-                    <strong>{!selectedDraft.fire ? "WEAPONS SAFE" : forecast?.valid ? `${forecast.validCount}/${forecast.total} MOUNTS LOCKED` : forecast?.inRange === false ? "OUTSIDE ALL RANGES" : "OUTSIDE FIRING ARCS"}</strong>
-                    <small>{forecast ? `${forecast.distance.toFixed(1)} km · ${Math.round(forecast.damage)} projected damage` : "No firing solution plotted"}</small>
-                  </span>
-                </div>
               </section>
-
-              <button className={`stage-button ${staged.has(selectedShip.id) ? "staged" : ""}`} type="button" disabled={controlsDisabled || !destinationValid} onClick={() => setStaged((current) => new Set(current).add(selectedShip.id))}>
-                <span>{!destinationValid ? "TARGET OUTSIDE MOVE RANGE" : staged.has(selectedShip.id) ? "VECTOR STAGED" : "STAGE SHIP ORDER"}</span><b>{staged.has(selectedShip.id) ? "✓" : "→"}</b>
-              </button>
             </>
           ) : (
             <section className="npc-block">

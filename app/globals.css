@@ -838,6 +838,7 @@ input:focus-visible {
   position: relative;
   min-width: 0;
   min-height: 0;
+  container-type: inline-size;
   overflow: hidden;
   background:
     radial-gradient(ellipse at 40% 44%, rgba(15, 74, 101, 0.22), transparent 40%),
@@ -903,67 +904,186 @@ input:focus-visible {
   font-weight: 500;
 }
 
-.weapon-envelope-readout {
+.tactical-telemetry {
   position: absolute;
-  z-index: 4;
-  top: 47px;
+  z-index: 6;
+  top: 52px;
+  right: 14px;
   left: 18px;
   display: grid;
-  grid-template-columns: auto auto auto;
-  align-items: center;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
   gap: 8px;
-  padding: 7px 10px;
-  border: 1px solid rgba(255, 181, 95, 0.22);
-  background: rgba(6, 14, 23, 0.68);
-  backdrop-filter: blur(10px);
   pointer-events: none;
 }
 
-.weapon-envelope-readout > i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--amber);
-  box-shadow: 0 0 9px rgba(255, 184, 90, 0.48);
+[data-story-phase="combat"] .tactical-telemetry {
+  top: 86px;
 }
 
-.weapon-envelope-readout span,
-.weapon-envelope-readout strong {
+.tactical-telemetry > div {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(105, 223, 255, 0.18);
+  background: rgba(5, 13, 22, 0.8);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(12px);
+}
+
+.tactical-telemetry__ship {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tactical-telemetry__target {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 6px 8px;
+  pointer-events: auto;
+}
+
+.telemetry-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.11em;
+}
+
+.tactical-telemetry__target .telemetry-heading,
+.tactical-telemetry__target .forecast,
+.tactical-telemetry__target .target-empty {
+  grid-column: 1 / -1;
+}
+
+.telemetry-heading span {
+  color: #7d9cae;
+  font-size: var(--type-label);
+}
+
+.telemetry-heading strong {
+  overflow: hidden;
+  color: #c8e8f3;
+  font-size: var(--type-label);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tactical-telemetry .shield-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.tactical-telemetry .shield-grid > div {
+  padding: 5px 6px;
+  background: rgba(112, 187, 216, 0.04);
+}
+
+.tactical-telemetry .shield-grid > div.fore {
+  border-color: rgba(105, 223, 255, 0.32);
+  background: rgba(105, 223, 255, 0.07);
+}
+
+.tactical-telemetry .shield-grid > div.aft {
+  border-color: rgba(255, 184, 90, 0.2);
+}
+
+.tactical-telemetry .shield-grid > div.depleted {
+  border-color: rgba(255, 81, 101, 0.38);
+  background: rgba(255, 81, 101, 0.045);
+}
+
+.tactical-telemetry .shield-grid span,
+.tactical-telemetry .shield-grid strong {
+  font-size: var(--type-label);
+}
+
+.shield-regen-note {
+  align-self: flex-end;
+  color: #638699;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--type-meta);
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
 }
 
-.weapon-envelope-readout span {
-  color: #8aa2af;
+.tactical-telemetry .target-select {
+  min-width: 0;
 }
 
-.weapon-envelope-readout strong {
-  color: #d5b27c;
+.target-contact {
+  min-height: 34px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 109, 121, 0.2);
+  background: rgba(255, 109, 121, 0.035);
+  white-space: nowrap;
+}
+
+.target-contact span {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.target-contact strong,
+.target-contact b,
+.target-contact small,
+.target-empty strong,
+.target-empty span {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.target-contact strong {
+  color: #ffabb4;
+  font-size: var(--type-control);
+}
+
+.target-contact small {
+  overflow: hidden;
+  max-width: 130px;
+  color: #8c7781;
+  font-size: var(--type-meta);
+  text-overflow: ellipsis;
+}
+
+.target-contact b {
+  color: #b9cbd2;
+  font-size: var(--type-meta);
   font-weight: 500;
+  letter-spacing: 0.06em;
 }
 
-.weapon-envelope-readout.valid {
-  border-color: rgba(97, 233, 189, 0.24);
+.tactical-telemetry .forecast {
+  min-width: 0;
+  margin-top: 0;
+  padding: 7px 9px;
 }
 
-.weapon-envelope-readout.valid > i {
-  background: var(--mint);
-  box-shadow: 0 0 9px rgba(97, 233, 189, 0.5);
+.target-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px;
+  border: 1px solid rgba(116, 171, 195, 0.14);
+  background: rgba(255, 255, 255, 0.02);
 }
 
-.weapon-envelope-readout.valid strong {
-  color: #96dbc4;
+.target-empty strong {
+  color: #8da7b5;
+  font-size: var(--type-label);
+  letter-spacing: 0.1em;
 }
 
-.weapon-envelope-readout.safe {
-  border-color: rgba(103, 144, 165, 0.18);
-  opacity: 0.65;
-}
-
-.weapon-envelope-readout.safe > i {
-  background: #577487;
-  box-shadow: none;
+.target-empty span {
+  color: #637c8a;
+  font-size: var(--type-meta);
 }
 
 .camera-tools {
@@ -1881,6 +2001,16 @@ input[type="range"]::-moz-range-thumb {
   color: #89e9c9;
 }
 
+.command-confirmation {
+  position: sticky;
+  z-index: 8;
+  top: 0;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(5, 13, 22, 0.96);
+  backdrop-filter: blur(12px);
+}
+
 .stage-button {
   width: calc(100% - 36px);
   min-height: 43px;
@@ -1893,6 +2023,11 @@ input[type="range"]::-moz-range-thumb {
   background: linear-gradient(100deg, rgba(54, 179, 208, 0.17), rgba(49, 120, 142, 0.08));
   color: #d4f3fa;
   cursor: pointer;
+}
+
+.command-confirmation .stage-button {
+  width: 100%;
+  margin: 0;
 }
 
 .stage-button:hover:not(:disabled) {
@@ -2196,6 +2331,36 @@ input[type="range"]::-moz-range-thumb {
   }
 }
 
+@media (max-width: 1040px) {
+  [data-story-phase="combat"] .tactical-telemetry {
+    top: 52px;
+  }
+}
+
+@container (max-width: 700px) {
+  .tactical-telemetry {
+    grid-template-columns: 1fr;
+  }
+
+  .tactical-telemetry__target {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+@container (max-width: 480px) {
+  .tactical-telemetry .shield-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .tactical-telemetry__target {
+    grid-template-columns: 1fr;
+  }
+
+  .tactical-telemetry__target .target-contact {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 820px) {
   body {
     overflow: auto;
@@ -2268,16 +2433,14 @@ input[type="range"]::-moz-range-thumb {
   }
 
   .ship-identity,
-  .integrity-block,
-  .stage-button,
+  .command-confirmation,
   .combat-log,
   .npc-block {
     grid-column: 1 / -1;
   }
 
-  .stage-button {
-    width: calc(100% - 28px);
-    margin: 14px;
+  .command-confirmation {
+    top: 58px;
   }
 }
 
@@ -2307,15 +2470,20 @@ input[type="range"]::-moz-range-thumb {
     font-size: var(--type-label);
   }
 
+  .viewport-panel {
+    height: 78dvh;
+    min-height: 680px;
+  }
+
   .viewport-heading {
     top: 52px;
   }
 
-  .weapon-envelope-readout {
+  .tactical-telemetry,
+  [data-story-phase="combat"] .tactical-telemetry {
     top: 82px;
     right: 8px;
     left: 8px;
-    grid-template-columns: auto 1fr auto;
   }
 
   .camera-tools {

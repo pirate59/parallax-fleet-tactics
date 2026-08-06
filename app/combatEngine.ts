@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { shipQuaternionForRotation } from "./maneuverEngine.ts";
+import { BASIC_WEAPON_SYSTEMS, type BasicWeaponKind } from "./shipCatalog.ts";
 
 export type Vec3 = [number, number, number];
 export type Team = "player" | "ally" | "enemy";
@@ -19,6 +20,8 @@ export type CombatShip = {
   maxHull: number;
   weaponRange: number;
   weaponDamage: number;
+  basicWeapon: BasicWeaponKind;
+  modelScale: number;
   eliteWeapons: EliteWeaponKind[];
 };
 
@@ -70,7 +73,7 @@ export type CombatTurnResult<T extends CombatShip> = {
 };
 
 export const SHIELD_FACES: ShieldFace[] = ["fore", "aft", "port", "starboard", "dorsal", "ventral"];
-export const BASE_WEAPON_HALF_ARC = 28;
+export const BASE_WEAPON_HALF_ARC = BASIC_WEAPON_SYSTEMS.cannon.halfArc;
 export const SHIELD_REGEN_HIT = 5;
 export const SHIELD_REGEN_CLEAR = 10;
 
@@ -88,12 +91,13 @@ const cloneShip = <T extends CombatShip>(ship: T): T => ({
 }) as T;
 
 export function weaponProfilesFor(ship: CombatShip): WeaponProfile[] {
+  const basicWeapon = BASIC_WEAPON_SYSTEMS[ship.basicWeapon];
   const profiles: WeaponProfile[] = [{
     kind: "main",
-    name: "Forward cannon",
-    damage: ship.weaponDamage,
-    range: ship.weaponRange,
-    halfArc: BASE_WEAPON_HALF_ARC,
+    name: basicWeapon.name,
+    damage: Math.round(ship.weaponDamage * basicWeapon.damageMultiplier),
+    range: ship.weaponRange * basicWeapon.rangeMultiplier,
+    halfArc: basicWeapon.halfArc,
     color: ship.team === "enemy" ? "#ff5f7b" : "#71ebff",
   }];
 
@@ -133,11 +137,15 @@ export function weaponProfilesFor(ship: CombatShip): WeaponProfile[] {
   return profiles;
 }
 
-export function weaponOriginFor(ship: CombatShip, weapon: WeaponProfile) {
-  const localOrigin = weapon.kind === "turret"
+export function weaponLocalOriginFor(ship: CombatShip, weapon: WeaponProfile) {
+  return (weapon.kind === "turret"
     ? new THREE.Vector3(0, 0.62, 0)
-    : new THREE.Vector3(0, 0, -1.48);
-  return localOrigin
+    : new THREE.Vector3(0, 0, -1.48))
+    .multiplyScalar(ship.modelScale);
+}
+
+export function weaponOriginFor(ship: CombatShip, weapon: WeaponProfile) {
+  return weaponLocalOriginFor(ship, weapon)
     .applyQuaternion(shipQuaternionForRotation(ship.rotation))
     .add(new THREE.Vector3(...ship.position));
 }
