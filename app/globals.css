@@ -1040,6 +1040,30 @@ input:focus-visible {
   color: #94e5c9;
 }
 
+.stance-chip.ai {
+  border-color: rgba(97, 233, 189, 0.36);
+  background: rgba(97, 233, 189, 0.08);
+  color: #9aebd0;
+}
+
+.stance-chip.ai[data-doctrine="aggressive"] {
+  border-color: rgba(255, 184, 90, 0.4);
+  background: rgba(255, 184, 90, 0.08);
+  color: #ffd09a;
+}
+
+.stance-chip.ai[data-doctrine="defensive"] {
+  border-color: rgba(105, 223, 255, 0.38);
+  background: rgba(105, 223, 255, 0.08);
+  color: #a9e9f7;
+}
+
+.stance-chip.hostile {
+  border-color: rgba(255, 109, 121, 0.32);
+  background: rgba(255, 109, 121, 0.07);
+  color: #e9a1a9;
+}
+
 .tactical-telemetry .target-select {
   min-width: 0;
 }
@@ -2294,6 +2318,153 @@ input[type="range"]::-moz-range-thumb {
   color: #748f9f;
   font-size: var(--type-small);
   line-height: 1.55;
+}
+
+.doctrine-block {
+  background: linear-gradient(145deg, rgba(97, 233, 189, 0.045), rgba(105, 223, 255, 0.018));
+}
+
+.doctrine-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 15px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.doctrine-options legend {
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 0;
+  color: #607d8d;
+  font-size: var(--type-meta);
+  letter-spacing: 0.08em;
+}
+
+.doctrine-option {
+  position: relative;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.doctrine-option > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.doctrine-option > span {
+  min-height: 58px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 6px;
+  border: 1px solid rgba(116, 171, 195, 0.18);
+  background: rgba(255, 255, 255, 0.02);
+  text-align: center;
+}
+
+.doctrine-option strong,
+.doctrine-option small,
+.doctrine-status strong,
+.doctrine-status b,
+.doctrine-status small {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.doctrine-option strong {
+  color: #9db8c5;
+  font-size: var(--type-control);
+  letter-spacing: 0.05em;
+}
+
+.doctrine-option small {
+  color: #617d8c;
+  font-size: var(--type-meta);
+  letter-spacing: 0.05em;
+}
+
+.doctrine-option > input:focus-visible + span {
+  outline: 2px solid var(--cyan-strong);
+  outline-offset: 2px;
+}
+
+.doctrine-option > input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.doctrine-option[data-doctrine="aggressive"] > input:checked + span {
+  border-color: rgba(255, 184, 90, 0.52);
+  background: rgba(255, 184, 90, 0.09);
+}
+
+.doctrine-option[data-doctrine="standard"] > input:checked + span {
+  border-color: rgba(97, 233, 189, 0.5);
+  background: rgba(97, 233, 189, 0.08);
+}
+
+.doctrine-option[data-doctrine="defensive"] > input:checked + span {
+  border-color: rgba(105, 223, 255, 0.5);
+  background: rgba(105, 223, 255, 0.09);
+}
+
+.doctrine-option > input:checked + span strong {
+  color: #eefcff;
+}
+
+.doctrine-status {
+  margin-top: 10px;
+  padding: 10px;
+  border-left: 2px solid var(--mint);
+  background: rgba(97, 233, 189, 0.04);
+}
+
+.doctrine-status > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.doctrine-status strong {
+  color: #b6edda;
+  font-size: var(--type-control);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.doctrine-status b {
+  color: #7eaa9d;
+  font-size: var(--type-meta);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+
+.doctrine-status p {
+  margin-top: 8px;
+}
+
+.doctrine-status small {
+  display: block;
+  margin-top: 9px;
+  color: #6f9f90;
+  font-size: var(--type-meta);
+  letter-spacing: 0.08em;
+}
+
+.doctrine-status[data-doctrine="aggressive"] {
+  border-left-color: var(--amber);
+  background: rgba(255, 184, 90, 0.04);
+}
+
+.doctrine-status[data-doctrine="defensive"] {
+  border-left-color: var(--cyan);
+  background: rgba(105, 223, 255, 0.04);
 }
 
 .combat-log ol {

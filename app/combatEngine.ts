@@ -214,11 +214,16 @@ export function resolveCombatTurn<T extends CombatShip>(sourceShips: T[], orders
     face: ShieldFace | null;
   };
 
-  // Freeze all firing eligibility and geometry before applying any damage.
-  // This guarantees that a ship destroyed earlier in presentation order still
-  // releases every mount it had queued at the beginning of the volley.
-  const volley: PendingShot[] = [];
-  startingShips
+  type WeaponActivation = {
+    shooter: T;
+    target: T;
+    shots: PendingShot[];
+  };
+
+  // Movement has already resolved simultaneously before this function runs.
+  // Weapon geometry is therefore frozen at those final positions, while each
+  // ship's survival is checked when its ordered activation begins.
+  const activations: WeaponActivation[] = startingShips
     .filter((shooter) => shooter.hull > 0 && salvosForOrder(orders[shooter.id]) > 0 && orders[shooter.id]?.targetId)
     .sort((left, right) => {
       const teamDifference = teamPriority[left.team] - teamPriority[right.team];
@@ -226,17 +231,18 @@ export function resolveCombatTurn<T extends CombatShip>(sourceShips: T[], orders
       const indexDifference = (sourceIndex.get(left.id) ?? 0) - (sourceIndex.get(right.id) ?? 0);
       return indexDifference !== 0 ? indexDifference : left.id.localeCompare(right.id);
     })
-    .forEach((shooter) => {
+    .flatMap((shooter) => {
       const target = startingById.get(orders[shooter.id].targetId);
-      if (!target || target.hull <= 0) return;
+      if (!target || target.hull <= 0) return [];
 
       const weapons = weaponProfilesFor(shooter);
       const salvoCount = salvosForOrder(orders[shooter.id]);
+      const pendingShots: PendingShot[] = [];
       for (let salvoIndex = 0; salvoIndex < salvoCount; salvoIndex += 1) {
         weapons.forEach((weapon, mountIndex) => {
           const origin = weaponOriginFor(shooter, weapon);
           const solution = shotSolutionForWeapon(shooter, target, weapon);
-          volley.push({
+          pendingShots.push({
             shooter,
             target,
             weapon,
@@ -248,62 +254,80 @@ export function resolveCombatTurn<T extends CombatShip>(sourceShips: T[], orders
           });
         });
       }
+      return [{ shooter, target, shots: pendingShots }];
     });
 
-  volley.forEach((pending, sequence) => {
-    const { shooter, target: targetAtFire, weapon, salvoIndex, mountIndex, origin, solution, face } = pending;
-    const target = resultById.get(targetAtFire.id);
-    if (!target) return;
-
-    const eventBase = {
-      id: `${shooter.id}:${salvoIndex}:${mountIndex}:${weapon.kind}:${target.id}`,
-      sequence,
-      salvoIndex,
-      mountIndex,
-      shooterId: shooter.id,
-      targetId: target.id,
-      weapon,
-      origin: [origin.x, origin.y, origin.z] as Vec3,
-      distance: solution.distance,
-    };
-    if (!solution.valid || !face) {
-      shots.push({
-        ...eventBase,
-        valid: false,
-        missReason: solution.inRange ? "arc" : "range",
-        face: null,
-        shieldBefore: 0,
-        shieldAfter: 0,
-        hullBefore: target.hull,
-        hullAfter: target.hull,
-        destroyed: false,
-      });
+  const suppressedActivations: string[] = [];
+  activations.forEach((activation) => {
+    const liveShooter = resultById.get(activation.shooter.id);
+    if (!liveShooter || liveShooter.hull <= 0) {
+      suppressedActivations.push(`${activation.shooter.name} destroyed before weapon activation — ordered fire cancelled.`);
+      return;
+    }
+    const liveTarget = resultById.get(activation.target.id);
+    if (!liveTarget || liveTarget.hull <= 0) {
+      suppressedActivations.push(`${activation.shooter.name} held fire — assigned target already destroyed.`);
       return;
     }
 
-    const shieldBefore = Math.max(0, target.shields[face]);
-    const hullBefore = Math.max(0, target.hull);
-    const damage = Math.max(0, weapon.damage);
-    const absorbed = Math.min(shieldBefore, damage);
-    const overflow = damage - absorbed;
-    target.shields[face] = Math.max(0, shieldBefore - damage);
-    target.hull = Math.max(0, hullBefore - overflow);
-    const faces = hitFaces.get(target.id) ?? new Set<ShieldFace>();
-    faces.add(face);
-    hitFaces.set(target.id, faces);
+    // Once an activation begins, every installed mount and Focus Fire salvo is
+    // committed even if an earlier shot in that same activation destroys the target.
+    activation.shots.forEach((pending) => {
+      const { shooter, target: targetAtFire, weapon, salvoIndex, mountIndex, origin, solution, face } = pending;
+      const target = resultById.get(targetAtFire.id);
+      if (!target) return;
+      const sequence = shots.length;
 
-    const destroyed = !destroyedByShot.has(target.id) && hullBefore > 0 && target.hull <= 0;
-    if (destroyed) destroyedByShot.add(target.id);
-    shots.push({
-      ...eventBase,
-      valid: true,
-      missReason: null,
-      face,
-      shieldBefore,
-      shieldAfter: target.shields[face],
-      hullBefore,
-      hullAfter: target.hull,
-      destroyed,
+      const eventBase = {
+        id: `${shooter.id}:${salvoIndex}:${mountIndex}:${weapon.kind}:${target.id}`,
+        sequence,
+        salvoIndex,
+        mountIndex,
+        shooterId: shooter.id,
+        targetId: target.id,
+        weapon,
+        origin: [origin.x, origin.y, origin.z] as Vec3,
+        distance: solution.distance,
+      };
+      if (!solution.valid || !face) {
+        shots.push({
+          ...eventBase,
+          valid: false,
+          missReason: solution.inRange ? "arc" : "range",
+          face: null,
+          shieldBefore: 0,
+          shieldAfter: 0,
+          hullBefore: target.hull,
+          hullAfter: target.hull,
+          destroyed: false,
+        });
+        return;
+      }
+
+      const shieldBefore = Math.max(0, target.shields[face]);
+      const hullBefore = Math.max(0, target.hull);
+      const damage = Math.max(0, weapon.damage);
+      const absorbed = Math.min(shieldBefore, damage);
+      const overflow = damage - absorbed;
+      target.shields[face] = Math.max(0, shieldBefore - damage);
+      target.hull = Math.max(0, hullBefore - overflow);
+      const faces = hitFaces.get(target.id) ?? new Set<ShieldFace>();
+      faces.add(face);
+      hitFaces.set(target.id, faces);
+
+      const destroyed = !destroyedByShot.has(target.id) && hullBefore > 0 && target.hull <= 0;
+      if (destroyed) destroyedByShot.add(target.id);
+      shots.push({
+        ...eventBase,
+        valid: true,
+        missReason: null,
+        face,
+        shieldBefore,
+        shieldAfter: target.shields[face],
+        hullBefore,
+        hullAfter: target.hull,
+        destroyed,
+      });
     });
   });
 
@@ -333,6 +357,7 @@ export function resolveCombatTurn<T extends CombatShip>(sourceShips: T[], orders
     const ship = startingShips.find((candidate) => candidate.id === id);
     if (ship) outcomes.unshift(`${ship.name} destroyed — wreck on tactical grid.`);
   });
+  outcomes.push(...suppressedActivations);
   outcomes.push(`Shield cycle complete: +${SHIELD_REGEN_HIT} struck facings, +${SHIELD_REGEN_CLEAR} clear facings.`);
 
   return { ships: results, shots, outcomes, destroyedIds };

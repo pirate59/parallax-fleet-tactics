@@ -44,6 +44,20 @@ import {
   type Vec3,
 } from "./combatEngine";
 import { STORY_STARTER_ARCHETYPE, type BasicWeaponKind } from "./shipCatalog";
+import {
+  AI_DOCTRINE_ORDER,
+  AI_DOCTRINE_RULES,
+  generateAiCommandOrder,
+  shipConditionScore,
+  type AiDoctrine,
+} from "./aiCommandEngine";
+import {
+  AI_RECRUIT_CONTROL,
+  isDirectCommandShip,
+  isFleetCommitReady,
+  retainStoryPlayerFleet,
+  type ShipController,
+} from "./fleetControl";
 
 type Phase = "planning" | "executing" | "victory" | "defeat";
 type GameScreen = "menu" | "battle" | "story";
@@ -63,6 +77,8 @@ type Ship = {
   callsign: string;
   className: string;
   team: Team;
+  controller: ShipController;
+  aiDoctrine?: AiDoctrine;
   color: string;
   position: Vec3;
   rotation: Vec3;
@@ -207,6 +223,7 @@ const INITIAL_SHIPS: Ship[] = [
     callsign: "AX-14",
     className: "Halcyon frigate",
     team: "player",
+    controller: "player",
     color: "#68d8ff",
     position: [-9, 0, 5],
     rotation: [0, 36, 0],
@@ -231,6 +248,7 @@ const INITIAL_SHIPS: Ship[] = [
     callsign: "RK-02",
     className: "Lancer interceptor",
     team: "player",
+    controller: "player",
     color: "#9af2ff",
     position: [-10, -3, -4],
     rotation: [8, 50, -8],
@@ -255,6 +273,8 @@ const INITIAL_SHIPS: Ship[] = [
     callsign: "NPC-A",
     className: "Allied escort",
     team: "ally",
+    controller: "ai",
+    aiDoctrine: "standard",
     color: "#58f0c2",
     position: [-6, 3, 0],
     rotation: [-5, 42, 6],
@@ -279,6 +299,7 @@ const INITIAL_SHIPS: Ship[] = [
     callsign: "CR-11",
     className: "Corsair frigate",
     team: "enemy",
+    controller: "ai",
     color: "#ff6f70",
     position: [8, 1, -7],
     rotation: [0, -118, 0],
@@ -303,6 +324,7 @@ const INITIAL_SHIPS: Ship[] = [
     callsign: "CR-06",
     className: "Corsair raider",
     team: "enemy",
+    controller: "ai",
     color: "#ff9a73",
     position: [10, -2, 3],
     rotation: [-4, -108, 7],
@@ -327,6 +349,7 @@ const INITIAL_SHIPS: Ship[] = [
     callsign: "CR-24",
     className: "Corsair gunship",
     team: "enemy",
+    controller: "ai",
     color: "#ff5a88",
     position: [7, 5, 8],
     rotation: [7, -138, -5],
@@ -475,7 +498,7 @@ const defaultOrderFor = (ship: Ship, ships: Ship[]): Order => {
 const buildDrafts = (ships: Ship[]) =>
   Object.fromEntries(
     ships
-      .filter((ship) => ship.team === "player" && ship.hull > 0)
+      .filter((ship) => isDirectCommandShip(ship) && ship.hull > 0)
       .map((ship) => [ship.id, defaultOrderFor(ship, ships)]),
   ) as Record<string, Order>;
 
@@ -573,6 +596,7 @@ function createStoryEnemy(kind: StoryEnemyKind, gate: number, index: number, sca
     name: threatId ? `${names[kind][3]}-${suffix}` : `${names[kind][index % names[kind].length]}-${suffix}`,
     callsign: threatId ? `PUR-${suffix}` : `WG-${suffix}`,
     className: threatId ? `Pursuit ${template.className.toLowerCase()}` : template.className,
+    controller: "ai" as const,
     position: [...slot] as Vec3,
     rotation: [index % 2 ? -5 : 3, -118 - index * 8, index % 2 ? 6 : -4] as Vec3,
     shields,
@@ -599,6 +623,7 @@ function createRecruitShip(kind: "scout" | "escort" | "gunboat", currentShips: S
     callsign: `VOL-${String(index).padStart(2, "0")}`,
     className: `Volunteer ${template.className.toLowerCase()}`,
     team: "player" as Team,
+    ...AI_RECRUIT_CONTROL,
     color: colors[kind],
     position: [...slot.position] as Vec3,
     rotation: [...slot.rotation] as Vec3,
@@ -607,8 +632,8 @@ function createRecruitShip(kind: "scout" | "escort" | "gunboat", currentShips: S
 
 function prepareStoryBattle(fleet: Ship[], gate: number, pendingThreats: PendingStoryThreat[]) {
   const config = STORY_GATE_CONFIGS[gate - 1] ?? STORY_GATE_CONFIGS[STORY_GATE_CONFIGS.length - 1];
-  const playerFleet = copyShips(fleet)
-    .filter((ship) => ship.team === "player" && ship.hull > 0)
+  const playerFleet = retainStoryPlayerFleet(copyShips(fleet))
+    .filter((ship) => ship.hull > 0)
     .map((ship, index) => {
       const slot = STORY_PLAYER_SLOTS[index % STORY_PLAYER_SLOTS.length];
       return { ...ship, position: [...slot.position] as Vec3, rotation: [...slot.rotation] as Vec3 };
@@ -1458,7 +1483,7 @@ function TacticalScene({
     if (resolution) return;
 
     ships
-      .filter((ship) => ship.team === "player" && ship.hull > 0 && drafts[ship.id])
+      .filter((ship) => ship.controller === "player" && ship.hull > 0 && drafts[ship.id])
       .forEach((ship) => {
         const order = drafts[ship.id];
         const end = endStateFor(ship, order);
@@ -1913,7 +1938,7 @@ function MainMenu({
 
       <footer className="menu-footer">
         <span>PARALLAX COMMAND OS</span>
-        <span>SIMULTANEOUS-TURN COMBAT SYSTEM</span>
+        <span>SIMULTANEOUS MOVEMENT · ORDERED FIRE</span>
         <span>LOCAL AUDIO PROFILE ACTIVE</span>
       </footer>
     </main>
@@ -2104,7 +2129,7 @@ function StoryCampaignScreen({
           </div>
           <div className="manifest-squad">
             <span>SURVIVING SHIPS</span>
-            {playerShips.map((ship, index) => <div key={ship.id} className={ship.hull <= 0 ? "lost" : ""}><i>{String(index + 1).padStart(2, "0")}</i><p><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "LOST" : `${Math.round((ship.hull / ship.maxHull) * 100)}% HULL`}</small></p></div>)}
+            {playerShips.map((ship, index) => <div key={ship.id} className={ship.hull <= 0 ? "lost" : ""}><i>{String(index + 1).padStart(2, "0")}</i><p><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "LOST" : `${ship.controller === "ai" ? `AI ${AI_DOCTRINE_RULES[ship.aiDoctrine ?? "standard"].label.toUpperCase()} · ` : ""}${Math.round((ship.hull / ship.maxHull) * 100)}% HULL`}</small></p></div>)}
           </div>
           <div className={`manifest-pursuit ${run.pendingThreats.length ? "hot" : "clear"}`}><i /><span><small>SIGNALS IN YOUR WAKE</small><strong>{run.pendingThreats.length ? `${run.pendingThreats.length} UNRESOLVED` : "NO LOCK"}</strong></span></div>
           <div className="manifest-log"><span>FLIGHT RECORD</span><ol>{run.history.slice(0, 4).map((entry, index) => <li key={`${entry}-${index}`}><i />{entry}</li>)}</ol></div>
@@ -2173,21 +2198,26 @@ export function SpaceGame() {
     storyActionLockRef.current = false;
   }, [storyRun?.stage]);
 
-  const selectedShip = ships.find((ship) => ship.id === selectedShipId) ?? ships.find((ship) => ship.team === "player" && ship.hull > 0) ?? ships[0];
+  const selectedShip = ships.find((ship) => ship.id === selectedShipId)
+    ?? ships.find((ship) => ship.controller === "player" && ship.hull > 0)
+    ?? ships.find((ship) => ship.team === "player" && ship.hull > 0)
+    ?? ships[0];
   const selectedDraft = selectedShip ? drafts[selectedShip.id] : undefined;
   const enemies = ships.filter((ship) => ship.team === "enemy" && ship.hull > 0);
   const playerShips = ships.filter((ship) => ship.team === "player");
-  const livingPlayerShips = playerShips.filter((ship) => ship.hull > 0);
-  const alliedNPC = ships.find((ship) => ship.team === "ally");
+  const commandShips = ships.filter(isDirectCommandShip);
+  const livingCommandShips = commandShips.filter((ship) => ship.hull > 0);
+  const alliedNPCs = ships.filter((ship) => ship.controller === "ai" && ship.team !== "enemy" && ship.hull > 0);
   const selectedTargetId = selectedDraft?.targetId ?? "";
   const selectedTarget = ships.find((ship) => ship.id === selectedTargetId && ship.team === "enemy" && ship.hull > 0);
-  const readyCount = livingPlayerShips.filter((ship) => staged.has(ship.id)).length;
-  const allOrdersValid = livingPlayerShips.every((ship) => {
+  const readyCount = livingCommandShips.filter((ship) => staged.has(ship.id)).length;
+  const isCommandOrderValid = (ship: Ship) => {
     const order = drafts[ship.id];
     if (!order || !isDestinationValid(ship, order.destination, order.mode)) return false;
     return order.mode !== "focus-fire" || ships.some((candidate) => candidate.id === order.targetId && candidate.team === "enemy" && candidate.hull > 0);
-  });
-  const allReady = livingPlayerShips.length > 0 && readyCount === livingPlayerShips.length && allOrdersValid;
+  };
+  const allOrdersValid = livingCommandShips.every(isCommandOrderValid);
+  const allReady = isFleetCommitReady(ships, staged, isCommandOrderValid);
   const plottedDistance = selectedShip && selectedDraft ? distanceBetween(selectedShip.position, selectedDraft.destination) : 0;
   const movementLimit = selectedShip && selectedDraft ? movementLimitFor(selectedShip.maxMove, selectedDraft.mode) : 0;
   const destinationValid = selectedShip && selectedDraft ? isDestinationValid(selectedShip, selectedDraft.destination, selectedDraft.mode) : false;
@@ -2224,7 +2254,7 @@ export function SpaceGame() {
   }, [selectedShip, selectedDraft, ships]);
 
   const updateDraft = useCallback((patch: Partial<Order>) => {
-    if (!selectedShip || selectedShip.team !== "player" || phase !== "planning") return;
+    if (!selectedShip || selectedShip.controller !== "player" || phase !== "planning") return;
     setDrafts((current) => ({
       ...current,
       [selectedShip.id]: { ...current[selectedShip.id], ...patch },
@@ -2234,6 +2264,11 @@ export function SpaceGame() {
       next.delete(selectedShip.id);
       return next;
     });
+  }, [selectedShip, phase]);
+
+  const updateAiDoctrine = useCallback((doctrine: AiDoctrine) => {
+    if (!selectedShip || selectedShip.controller !== "ai" || selectedShip.team === "enemy" || phase !== "planning") return;
+    setShips((current) => current.map((ship) => ship.id === selectedShip.id ? { ...ship, aiDoctrine: doctrine } : ship));
   }, [selectedShip, phase]);
 
   const updateRelativeMovement = useCallback((axis: keyof ShipRelativeMovement, value: number) => {
@@ -2281,36 +2316,10 @@ export function SpaceGame() {
   const generateNpcOrders = useCallback((currentShips: Ship[]) => {
     const orders: Record<string, Order> = {};
     currentShips
-      .filter((ship) => ship.team !== "player" && ship.hull > 0)
+      .filter((ship) => ship.controller === "ai" && ship.hull > 0)
       .forEach((ship) => {
-        const targets = currentShips.filter((candidate) =>
-          candidate.hull > 0 && (ship.team === "enemy" ? candidate.team !== "enemy" : candidate.team === "enemy"),
-        );
-        const target = targets.sort((a, b) => distanceBetween(ship.position, a.position) - distanceBetween(ship.position, b.position))[0];
-        if (!target) return;
-        const delta = new THREE.Vector3(...target.position).sub(new THREE.Vector3(...ship.position));
-        const distance = delta.length();
-        const maximumWeaponRange = Math.max(...weaponProfilesFor(ship).map((weapon) => weapon.range));
-        const moveDistance = distance > maximumWeaponRange * 0.72 ? ship.maxMove * 0.68 : ship.maxMove * 0.22;
-        const destinationPoint = new THREE.Vector3(...ship.position).addScaledVector(delta.clone().normalize(), moveDistance);
-        const destination = clampDestination(ship, [destinationPoint.x, destinationPoint.y, destinationPoint.z], "normal");
-        const aimDelta = new THREE.Vector3(...target.position).sub(new THREE.Vector3(...destination));
-        const desiredTurn = THREE.MathUtils.radToDeg(Math.atan2(aimDelta.x, -aimDelta.z));
-        const desiredPitch = THREE.MathUtils.radToDeg(Math.atan2(aimDelta.y, Math.hypot(aimDelta.x, aimDelta.z)));
-        const turn = clamp(normalizeAngle(desiredTurn - ship.rotation[1]), -ship.maxTurn, ship.maxTurn);
-        const pitch = clamp(desiredPitch - ship.rotation[0], -ship.maxPitch, ship.maxPitch);
-        const roll = ship.team === "enemy"
-          ? clamp(turn * -0.38, -ship.maxRoll, ship.maxRoll)
-          : clamp(turn * 0.28, -ship.maxRoll, ship.maxRoll);
-        orders[ship.id] = {
-          destination,
-          turn,
-          pitch,
-          roll,
-          targetId: target.id,
-          fire: true,
-          mode: "normal",
-        };
+        const order = generateAiCommandOrder(ship, currentShips, ship.aiDoctrine ?? "standard", BATTLEFIELD_HALF, BATTLEFIELD_VERTICAL_HALF);
+        if (order) orders[ship.id] = order;
       });
     return orders;
   }, []);
@@ -2325,7 +2334,7 @@ export function SpaceGame() {
     });
     const combat = resolveCombatTurn(endShips, allOrders);
     setPhase("executing");
-    setLog((current) => [`Turn ${turn}: all vectors locked. Resolving simultaneously…`, ...current].slice(0, 8));
+    setLog((current) => [`Turn ${turn}: vectors move simultaneously; weapons resolve by activation order.`, ...current].slice(0, 8));
     setResolution({
       token: Date.now(),
       endShips,
@@ -2410,7 +2419,7 @@ export function SpaceGame() {
     loadCombatState(prepared.ships, [
       `Warp Gate ${String(gate).padStart(2, "0")}: ${prepared.config.name}. ${prepared.config.threat}.`,
       ...pursuitLog,
-      "Plot the squadron's destination and final orientation, then stage every ship.",
+      "Stage each directly controlled ship. AI wingmates calculate their doctrine orders when the turn commits.",
     ]);
     setStoryRun((current) => current ? {
       ...current,
@@ -2433,7 +2442,7 @@ export function SpaceGame() {
   const completeStoryGate = useCallback(() => {
     if (!storyRun || storyActionLockRef.current || activeMode !== "story" || phase !== "victory") return;
     storyActionLockRef.current = true;
-    const fleet = copyShips(ships).filter((ship) => ship.team === "player");
+    const fleet = retainStoryPlayerFleet(copyShips(ships));
     setShips(fleet);
     if (storyRun.gate >= STORY_GATE_COUNT) {
       setStoryRun((current) => current ? {
@@ -2532,11 +2541,11 @@ export function SpaceGame() {
   const selectShip = useCallback((id: string) => {
     const clicked = ships.find((ship) => ship.id === id);
     if (!clicked) return;
-    if (clicked.team === "player" && clicked.hull > 0) {
+    if (clicked.team !== "enemy" && clicked.hull > 0) {
       setSelectedShipId(id);
       return;
     }
-    if (selectedShip?.team === "player" && clicked.team === "enemy" && clicked.hull > 0) {
+    if (selectedShip?.controller === "player" && clicked.team === "enemy" && clicked.hull > 0) {
       updateDraft({ targetId: id });
     }
   }, [ships, selectedShip, updateDraft]);
@@ -2550,7 +2559,7 @@ export function SpaceGame() {
         setCameraCommand({ kind: "focus", shipId: selectedShipId, nonce: Date.now() });
       }
       if (phase !== "executing" && event.key === "1") setCameraCommand({ kind: "reset", nonce: Date.now() });
-      if (event.key === "Escape" && selectedShip?.team === "player" && phase === "planning") {
+      if (event.key === "Escape" && selectedShip?.controller === "player" && phase === "planning") {
         setDrafts((current) => ({ ...current, [selectedShip.id]: defaultOrderFor(selectedShip, ships) }));
         setStaged((current) => {
           const next = new Set(current);
@@ -2592,9 +2601,12 @@ export function SpaceGame() {
 
   if (!selectedShip) return null;
   const activeModeInfo = MODE_OPTIONS.find((mode) => mode.id === activeMode) ?? MODE_OPTIONS[1];
-  const controlsDisabled = phase !== "planning" || selectedShip.team !== "player" || selectedShip.hull <= 0;
+  const controlsDisabled = phase !== "planning" || selectedShip.controller !== "player" || selectedShip.hull <= 0;
   const selectedFlightMode = selectedDraft?.mode ?? "normal";
   const selectedFlightRule = FLIGHT_MODE_RULES[selectedFlightMode];
+  const selectedAiDoctrine = selectedShip.aiDoctrine ?? "standard";
+  const selectedAiRule = AI_DOCTRINE_RULES[selectedAiDoctrine];
+  const selectedAiCondition = shipConditionScore(selectedShip);
   const translationDisabled = controlsDisabled || selectedFlightMode === "focus-fire";
   const weaponControlDisabled = controlsDisabled || selectedFlightMode !== "normal";
   const selectedWeapons = weaponProfilesFor(selectedShip);
@@ -2619,7 +2631,7 @@ export function SpaceGame() {
           <span className={`phase-dot ${phase}`} />
           <div>
             <small>TURN {String(turn).padStart(2, "0")}</small>
-            <strong>{phase === "executing" ? "SIMULTANEOUS RESOLUTION" : phase.toUpperCase()}</strong>
+            <strong>{phase === "executing" ? "MOVEMENT + ACTIVATIONS" : phase.toUpperCase()}</strong>
           </div>
         </div>
         <div className="mission-brief">
@@ -2669,7 +2681,13 @@ export function SpaceGame() {
                 })}
               </div>
               <div className="telemetry-footer">
-                <span className="stance-chip" data-stance={selectedFlightMode}>{selectedFlightRule.label} · {selectedFlightRule.shortRule}</span>
+                {selectedShip.controller === "player" ? (
+                  <span className="stance-chip" data-stance={selectedFlightMode}>{selectedFlightRule.label} · {selectedFlightRule.shortRule}</span>
+                ) : selectedShip.team !== "enemy" ? (
+                  <span className="stance-chip ai" data-doctrine={selectedAiDoctrine}>AI {selectedAiRule.label} · {selectedAiRule.shortRule}</span>
+                ) : (
+                  <span className="stance-chip hostile">HOSTILE AI · DOCTRINE HIDDEN</span>
+                )}
                 <small className="shield-regen-note">SHIELD REGEN · +5 AFTER HIT · +10 WHEN CLEAR</small>
               </div>
             </div>
@@ -2679,7 +2697,7 @@ export function SpaceGame() {
                 <span>TARGET DETAILS</span>
                 <strong>{selectedTarget?.callsign ?? "NO ACTIVE LOCK"}</strong>
               </div>
-              {selectedShip.team === "player" && selectedDraft ? (
+              {selectedShip.controller === "player" && selectedDraft ? (
                 <>
                   <label className="target-select">
                     <span>TARGET LOCK</span>
@@ -2702,8 +2720,10 @@ export function SpaceGame() {
                     </span>
                   </div>
                 </>
+              ) : selectedShip.team !== "enemy" ? (
+                <div className="target-empty"><strong>AUTONOMOUS TARGETING · {selectedAiRule.label.toUpperCase()}</strong><span>Target, vector, facing, and weapon stance are calculated when the turn is committed.</span></div>
               ) : (
-                <div className="target-empty"><strong>NO COMMAND LINK</strong><span>Select one of your ships to inspect and assign a target.</span></div>
+                <div className="target-empty"><strong>HOSTILE ORDERS HIDDEN</strong><span>Predict its maneuver from range, facing, and exposed shielding.</span></div>
               )}
             </div>
           </section>
@@ -2770,7 +2790,7 @@ export function SpaceGame() {
           <div className="fleet-dock" aria-label="Player fleet orders">
             <div className="dock-title">
               <small>COMMAND WING</small>
-              <strong>{readyCount}/{livingPlayerShips.length} VECTORS STAGED</strong>
+              <strong>{livingCommandShips.length ? `${readyCount}/${livingCommandShips.length} VECTORS STAGED` : "AI WING AUTONOMOUS"}</strong>
             </div>
             <div className="ship-tabs">
               {playerShips.map((ship, index) => (
@@ -2781,20 +2801,20 @@ export function SpaceGame() {
                   onClick={() => ship.hull > 0 && setSelectedShipId(ship.id)}
                 >
                   <span className="ship-index">0{index + 1}</span>
-                  <span><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "DESTROYED" : staged.has(ship.id) ? "ORDER READY" : "DRAFT VECTOR"}</small></span>
-                  <i className={staged.has(ship.id) ? "ready" : ""} />
+                  <span><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "DESTROYED" : ship.controller === "ai" ? `AI · ${AI_DOCTRINE_RULES[ship.aiDoctrine ?? "standard"].label.toUpperCase()}` : staged.has(ship.id) ? "ORDER READY" : "DRAFT VECTOR"}</small></span>
+                  <i className={ship.hull > 0 && (ship.controller === "ai" || staged.has(ship.id)) ? "ready" : ""} />
                 </button>
               ))}
             </div>
             <button className="execute-button" type="button" disabled={!allReady || phase !== "planning"} onClick={executeTurn}>
-              <span>{phase === "executing" ? "RESOLVING" : allReady ? "EXECUTE TURN" : `${livingPlayerShips.length - readyCount} ORDER${livingPlayerShips.length - readyCount === 1 ? "" : "S"} NEEDED`}</span>
+              <span>{phase === "executing" ? "RESOLVING" : allReady ? (livingCommandShips.length ? "EXECUTE TURN" : "EXECUTE AI TURN") : `${livingCommandShips.length - readyCount} ORDER${livingCommandShips.length - readyCount === 1 ? "" : "S"} NEEDED`}</span>
               <b aria-hidden="true">→</b>
             </button>
           </div>
         </div>
 
         <aside className="command-panel">
-          {selectedShip.team === "player" && selectedDraft && (
+          {selectedShip.controller === "player" && selectedDraft && (
             <div className="command-confirmation">
               <button className={`stage-button ${staged.has(selectedShip.id) ? "staged" : ""}`} type="button" disabled={controlsDisabled || !orderReady} aria-describedby={`stance-status-${selectedShip.id} plot-status-${selectedShip.id}`} onClick={() => setStaged((current) => new Set(current).add(selectedShip.id))}>
                 <span>{!destinationValid ? "MOVE OUTSIDE RANGE" : selectedFlightMode === "focus-fire" && !selectedTarget ? "FOCUS TARGET REQUIRED" : staged.has(selectedShip.id) ? "ORDER CONFIRMED" : `CONFIRM ${selectedFlightRule.label.toUpperCase()} ORDER`}</span><b>{staged.has(selectedShip.id) ? "✓" : "→"}</b>
@@ -2811,7 +2831,7 @@ export function SpaceGame() {
             <span className={`team-glyph ${selectedShip.team}`} aria-hidden="true" />
           </section>
 
-          {selectedShip.team === "player" && selectedDraft ? (
+          {selectedShip.controller === "player" && selectedDraft ? (
             <>
               <section className="stance-block">
                 <div className="section-heading stepped"><span><b>01</b>TURN STANCE</span><strong>CHOOSE TRADE-OFF</strong></div>
@@ -2872,11 +2892,35 @@ export function SpaceGame() {
                 </button>
               </section>
             </>
+          ) : selectedShip.controller === "ai" && selectedShip.team !== "enemy" ? (
+            <section className="npc-block doctrine-block">
+              <span className="eyebrow">AI WINGMATE · AUTONOMOUS COMMAND</span>
+              <h2>Set tactical doctrine</h2>
+              <p>You set intent; {selectedShip.name} weighs its own hull and shielding against enemy condition before choosing movement, orientation, target, and weapon stance.</p>
+              <fieldset className="doctrine-options">
+                <legend>Choose the wingmate&apos;s standing order</legend>
+                {AI_DOCTRINE_ORDER.map((doctrine) => {
+                  const rule = AI_DOCTRINE_RULES[doctrine];
+                  const inputId = `doctrine-${selectedShip.id}-${doctrine}`;
+                  return (
+                    <label className="doctrine-option" data-doctrine={doctrine} key={doctrine} htmlFor={inputId} aria-label={`${rule.label}: ${rule.description}`}>
+                      <input id={inputId} type="radio" name={`doctrine-${selectedShip.id}`} checked={selectedAiDoctrine === doctrine} disabled={phase !== "planning" || selectedShip.hull <= 0} aria-label={rule.label} onChange={() => updateAiDoctrine(doctrine)} />
+                      <span><strong>{rule.label}</strong><small>{rule.shortRule}</small></span>
+                    </label>
+                  );
+                })}
+              </fieldset>
+              <div className="doctrine-status" data-doctrine={selectedAiDoctrine} role="status" aria-live="polite">
+                <span><strong>{selectedAiRule.label} doctrine</strong><b>{Math.round(selectedAiCondition * 100)}% COMBAT CONDITION</b></span>
+                <p>{selectedAiRule.description}</p>
+                <small>AI READY · ORDER CALCULATED ON COMMIT</small>
+              </div>
+            </section>
           ) : (
             <section className="npc-block">
               <span className="eyebrow">AUTONOMOUS COMMAND</span>
-              <h2>{selectedShip.team === "enemy" ? "Hostile vector hidden" : "Orders after fleet commit"}</h2>
-              <p>{selectedShip.team === "enemy" ? "Predict its maneuver from current facing, range, and exposed shielding." : `${selectedShip.name} will choose an enemy after your command vectors are staged.`}</p>
+              <h2>Hostile vector hidden</h2>
+              <p>Predict its maneuver from current facing, range, and exposed shielding.</p>
             </section>
           )}
 
@@ -2885,7 +2929,7 @@ export function SpaceGame() {
             <ol>
               {log.slice(0, 4).map((entry, index) => <li key={`${entry}-${index}`}><span>{String(turn).padStart(2, "0")}.{String(index + 1).padStart(2, "0")}</span><p>{entry}</p></li>)}
             </ol>
-            {alliedNPC && <div className="ally-status"><i /><span>ALLIED NPC · {alliedNPC.name}</span><strong>{Math.round((alliedNPC.hull / alliedNPC.maxHull) * 100)}%</strong></div>}
+            {alliedNPCs.length > 0 && <div className="ally-status"><i /><span>AI WING · {alliedNPCs.length} AUTONOMOUS</span><strong>{Math.round((alliedNPCs.reduce((sum, ship) => sum + shipConditionScore(ship), 0) / alliedNPCs.length) * 100)}%</strong></div>}
           </section>
         </aside>
       </section>

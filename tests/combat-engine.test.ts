@@ -251,7 +251,7 @@ test("dead shooters, dead starting targets, and missing targets never enter the 
   assert.equal(result.shots.length, 0);
 });
 
-test("mutual kills resolve simultaneously, so a destroyed shooter still fires", () => {
+test("a ship destroyed before its weapon activation does not fire", () => {
   const player = makeShip("player", {
     hull: 10,
     maxHull: 10,
@@ -270,15 +270,16 @@ test("mutual kills resolve simultaneously, so a destroyed shooter still fires", 
     ordersFor([[enemy.id, player.id], [player.id, enemy.id]]),
   );
 
-  assert.deepEqual(result.shots.map((shot) => shot.shooterId), [player.id, enemy.id]);
-  assert.ok(result.shots.every((shot) => shot.valid));
-  assert.ok(result.shots.every((shot) => shot.destroyed));
-  assert.equal(findShip(result.ships, player.id).hull, 0);
+  assert.deepEqual(result.shots.map((shot) => shot.shooterId), [player.id]);
+  assert.equal(result.shots[0].valid, true);
+  assert.equal(result.shots[0].destroyed, true);
+  assert.equal(findShip(result.ships, player.id).hull, 10);
   assert.equal(findShip(result.ships, enemy.id).hull, 0);
-  assert.deepEqual(result.destroyedIds, [player.id, enemy.id]);
+  assert.deepEqual(result.destroyedIds, [enemy.id]);
+  assert.ok(result.outcomes.some((outcome) => outcome.includes("destroyed before weapon activation")));
 });
 
-test("a ship destroyed first in presentation order still releases every queued mount", () => {
+test("a later destroyed ship loses every queued mount and salvo", () => {
   const player = makeShip("player", {
     hull: 100,
     maxHull: 100,
@@ -295,16 +296,39 @@ test("a ship destroyed first in presentation order still releases every queued m
   });
   const result = resolveCombatTurn(
     [player, enemy],
-    ordersFor([[enemy.id, player.id], [player.id, enemy.id]]),
+    {
+      [enemy.id]: { targetId: player.id, fire: true, mode: "focus-fire" },
+      [player.id]: { targetId: enemy.id, fire: true, mode: "normal" },
+    },
   );
   const enemyShots = result.shots.filter((shot) => shot.shooterId === enemy.id);
 
   assert.equal(result.shots[0].shooterId, player.id);
   assert.equal(result.shots[0].destroyed, true);
-  assert.equal(enemyShots.length, 4);
-  assert.ok(enemyShots.every((shot) => shot.valid));
-  assert.deepEqual(enemyShots.map((shot) => shot.weapon.kind), ["main", "railgun", "turret", "flak"]);
-  assert.equal(findShip(result.ships, player.id).hull, 68);
+  assert.equal(enemyShots.length, 0);
+  assert.equal(findShip(result.ships, player.id).hull, 100);
+});
+
+test("a living ship wastes its activation when an earlier ship destroys its assigned target", () => {
+  const killer = makeShip("killer", { weaponDamage: 20 });
+  const follower = makeShip("follower", { position: [1, 0, 0] });
+  const laterShooter = makeShip("later-shooter", { position: [-1, 0, 0] });
+  const target = makeShip("target", {
+    team: "enemy",
+    position: [0, 0, -5],
+    hull: 10,
+    maxHull: 10,
+  });
+  const secondTarget = makeShip("second-target", { team: "enemy", position: [0, 0, -6] });
+  const result = resolveCombatTurn(
+    [killer, follower, laterShooter, target, secondTarget],
+    ordersFor([[killer.id, target.id], [follower.id, target.id], [laterShooter.id, secondTarget.id]]),
+  );
+
+  assert.deepEqual(result.shots.map((shot) => shot.shooterId), [killer.id, laterShooter.id]);
+  assert.deepEqual(result.shots.map((shot) => shot.sequence), [0, 1]);
+  assert.equal(findShip(result.ships, target.id).hull, 0);
+  assert.ok(result.outcomes.some((outcome) => outcome.includes("assigned target already destroyed")));
 });
 
 test("multiple mounts produce one event each and exactly one fatal event per target", () => {
