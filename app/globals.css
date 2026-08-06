@@ -282,6 +282,69 @@ input:focus-visible {
   font-weight: 500;
 }
 
+.weapon-envelope-readout {
+  position: absolute;
+  z-index: 4;
+  top: 47px;
+  left: 18px;
+  display: grid;
+  grid-template-columns: auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 181, 95, 0.22);
+  background: rgba(6, 14, 23, 0.68);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.weapon-envelope-readout > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 9px rgba(255, 184, 90, 0.48);
+}
+
+.weapon-envelope-readout span,
+.weapon-envelope-readout strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 7px;
+  letter-spacing: 0.12em;
+}
+
+.weapon-envelope-readout span {
+  color: #8aa2af;
+}
+
+.weapon-envelope-readout strong {
+  color: #d5b27c;
+  font-weight: 500;
+}
+
+.weapon-envelope-readout.valid {
+  border-color: rgba(97, 233, 189, 0.24);
+}
+
+.weapon-envelope-readout.valid > i {
+  background: var(--mint);
+  box-shadow: 0 0 9px rgba(97, 233, 189, 0.5);
+}
+
+.weapon-envelope-readout.valid strong {
+  color: #96dbc4;
+}
+
+.weapon-envelope-readout.safe {
+  border-color: rgba(103, 144, 165, 0.18);
+  opacity: 0.65;
+}
+
+.weapon-envelope-readout.safe > i {
+  background: #577487;
+  box-shadow: none;
+}
+
 .camera-tools {
   position: absolute;
   z-index: 5;
@@ -390,6 +453,42 @@ kbd {
   border-top-color: var(--amber);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
+}
+
+.resolution-banner.firing {
+  min-width: 300px;
+  border-color: rgba(105, 223, 255, 0.48);
+  background: rgba(5, 15, 24, 0.9);
+  box-shadow: 0 0 100px rgba(94, 225, 255, 0.14);
+}
+
+.resolution-banner.firing > span {
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(105, 223, 255, 0.62);
+  border-radius: 0;
+  background: rgba(105, 223, 255, 0.18);
+  box-shadow: 0 0 18px rgba(105, 223, 255, 0.42);
+  animation: pulse 0.42s infinite alternate;
+}
+
+.resolution-banner.firing small {
+  color: var(--cyan);
+}
+
+.resolution-banner.firing.enemy {
+  border-color: rgba(255, 109, 121, 0.5);
+  box-shadow: 0 0 100px rgba(255, 77, 105, 0.14);
+}
+
+.resolution-banner.firing.enemy > span {
+  border-color: rgba(255, 109, 121, 0.68);
+  background: rgba(255, 109, 121, 0.18);
+  box-shadow: 0 0 18px rgba(255, 109, 121, 0.42);
+}
+
+.resolution-banner.firing.enemy small {
+  color: var(--coral);
 }
 
 .resolution-banner div {
@@ -739,6 +838,83 @@ kbd {
   font-weight: 500;
 }
 
+.section-heading.stepped > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-heading.stepped > span > b {
+  display: inline-grid;
+  width: 22px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid rgba(105, 223, 255, 0.25);
+  background: rgba(105, 223, 255, 0.06);
+  color: var(--cyan);
+  font-size: 7px;
+  font-weight: 600;
+}
+
+.location-block {
+  background: linear-gradient(130deg, rgba(105, 223, 255, 0.025), transparent 54%);
+}
+
+.orientation-block {
+  background: linear-gradient(130deg, rgba(97, 233, 189, 0.018), transparent 54%);
+}
+
+.plot-status {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 10px;
+  margin-bottom: 7px;
+  padding: 8px 9px;
+  border: 1px solid rgba(97, 233, 189, 0.16);
+  background: rgba(97, 233, 189, 0.025);
+}
+
+.plot-status span,
+.plot-status strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 7px;
+  letter-spacing: 0.11em;
+}
+
+.plot-status span {
+  color: #718c9c;
+}
+
+.plot-status strong {
+  color: #8fd6bf;
+  font-weight: 500;
+}
+
+.plot-status > i {
+  grid-column: 1 / -1;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.plot-status > i > b {
+  display: block;
+  height: 100%;
+  background: var(--mint);
+}
+
+.plot-status.invalid {
+  border-color: rgba(255, 109, 121, 0.26);
+  background: rgba(255, 109, 121, 0.035);
+}
+
+.plot-status.invalid strong {
+  color: #ff8995;
+}
+
+.plot-status.invalid > i > b {
+  background: var(--coral);
+}
+
 .integrity-track {
   height: 4px;
   margin-bottom: 12px;
@@ -823,6 +999,24 @@ kbd {
   font-size: 9px;
 }
 
+.slider-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.slider-name > b {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border: 1px solid rgba(113, 179, 205, 0.2);
+  color: #8fb4c5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 7px;
+  font-weight: 500;
+}
+
 .slider-control output {
   color: #d6eff7;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -839,6 +1033,16 @@ kbd {
 .slider-control input:disabled {
   cursor: not-allowed;
   opacity: 0.42;
+}
+
+.slider-directions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: -2px;
+  color: #4f6b7a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 6px;
+  letter-spacing: 0.12em;
 }
 
 input[type="range"] {
@@ -1288,6 +1492,13 @@ input[type="range"]::-moz-range-thumb {
 
   .viewport-heading {
     top: 52px;
+  }
+
+  .weapon-envelope-readout {
+    top: 82px;
+    right: 8px;
+    left: 8px;
+    grid-template-columns: auto 1fr auto;
   }
 
   .camera-tools {

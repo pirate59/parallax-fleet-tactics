@@ -23,6 +23,10 @@ test("server-renders the Parallax game shell", async () => {
   assert.match(html, /PARALLAX/);
   assert.match(html, /Fleet tactics simulator/);
   assert.match(html, /TACTICAL VOLUME/);
+  assert.match(html, /TARGET LOCATION/);
+  assert.match(html, /FINAL ORIENTATION/);
+  assert.match(html, /Turn left \/ right/);
+  assert.match(html, /FORWARD GUN ENVELOPE/);
   assert.match(html, /STAGE SHIP ORDER/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });

@@ -24,15 +24,16 @@ type Ship = {
   hull: number;
   maxHull: number;
   maxMove: number;
-  maxYaw: number;
+  maxTurn: number;
   maxPitch: number;
+  maxRoll: number;
   weaponRange: number;
   weaponDamage: number;
 };
 
 type Order = {
-  thrust: number;
-  yaw: number;
+  destination: Vec3;
+  turn: number;
   pitch: number;
   roll: number;
   targetId: string;
@@ -51,6 +52,16 @@ type CameraCommand = {
   shipId?: string;
 };
 
+type CombatFocus = {
+  shooter: string;
+  target: string;
+  team: Team;
+};
+
+const WEAPON_HALF_ARC = 28;
+const BATTLEFIELD_HALF = 20;
+const BATTLEFIELD_VERTICAL_HALF = 7;
+
 const ARMOUR_FACES: ArmourFace[] = [
   "fore",
   "aft",
@@ -68,7 +79,7 @@ const TEAM_LABELS: Record<Team, string> = {
 
 const INITIAL_LOG = [
   "Corsair formation detected inside the Kestrel Reach.",
-  "Stage an order for both command ships, then execute the turn.",
+  "Plot a grid endpoint, set final orientation, then stage both command ships.",
 ];
 
 const INITIAL_SHIPS: Ship[] = [
@@ -85,8 +96,9 @@ const INITIAL_SHIPS: Ship[] = [
     hull: 120,
     maxHull: 120,
     maxMove: 5,
-    maxYaw: 55,
+    maxTurn: 55,
     maxPitch: 40,
+    maxRoll: 90,
     weaponRange: 17,
     weaponDamage: 34,
   },
@@ -103,8 +115,9 @@ const INITIAL_SHIPS: Ship[] = [
     hull: 82,
     maxHull: 82,
     maxMove: 8,
-    maxYaw: 90,
+    maxTurn: 90,
     maxPitch: 65,
+    maxRoll: 180,
     weaponRange: 14,
     weaponDamage: 24,
   },
@@ -121,8 +134,9 @@ const INITIAL_SHIPS: Ship[] = [
     hull: 88,
     maxHull: 88,
     maxMove: 6,
-    maxYaw: 70,
+    maxTurn: 70,
     maxPitch: 50,
+    maxRoll: 135,
     weaponRange: 15,
     weaponDamage: 22,
   },
@@ -139,8 +153,9 @@ const INITIAL_SHIPS: Ship[] = [
     hull: 108,
     maxHull: 108,
     maxMove: 5,
-    maxYaw: 58,
+    maxTurn: 58,
     maxPitch: 42,
+    maxRoll: 90,
     weaponRange: 16,
     weaponDamage: 30,
   },
@@ -157,8 +172,9 @@ const INITIAL_SHIPS: Ship[] = [
     hull: 76,
     maxHull: 76,
     maxMove: 8,
-    maxYaw: 90,
+    maxTurn: 90,
     maxPitch: 65,
+    maxRoll: 180,
     weaponRange: 14,
     weaponDamage: 23,
   },
@@ -175,8 +191,9 @@ const INITIAL_SHIPS: Ship[] = [
     hull: 96,
     maxHull: 96,
     maxMove: 6,
-    maxYaw: 66,
+    maxTurn: 66,
     maxPitch: 48,
+    maxRoll: 120,
     weaponRange: 16,
     weaponDamage: 27,
   },
@@ -196,27 +213,67 @@ const degrees = (value: number) => THREE.MathUtils.degToRad(value);
 
 const forwardVector = (rotation: Vec3) => {
   const pitch = degrees(rotation[0]);
-  const yaw = degrees(rotation[1]);
+  const turnAngle = degrees(rotation[1]);
   return new THREE.Vector3(
-    Math.sin(yaw) * Math.cos(pitch),
+    Math.sin(turnAngle) * Math.cos(pitch),
     Math.sin(pitch),
-    -Math.cos(yaw) * Math.cos(pitch),
+    -Math.cos(turnAngle) * Math.cos(pitch),
   ).normalize();
 };
 
 const quaternionFor = (rotation: Vec3) =>
   new THREE.Quaternion().setFromEuler(
-    new THREE.Euler(degrees(rotation[0]), degrees(rotation[1]), degrees(rotation[2]), "YXZ"),
+    // Ships face local -Z: positive turn rotates the cone nose toward local starboard.
+    new THREE.Euler(degrees(rotation[0]), degrees(-rotation[1]), degrees(rotation[2]), "YXZ"),
   );
 
 const distanceBetween = (a: Vec3, b: Vec3) =>
   new THREE.Vector3(...a).distanceTo(new THREE.Vector3(...b));
 
+const clampDestination = (ship: Ship, destination: Vec3): Vec3 => {
+  const origin = new THREE.Vector3(...ship.position);
+  const target = new THREE.Vector3(
+    clamp(destination[0], -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
+    clamp(destination[1], -BATTLEFIELD_VERTICAL_HALF, BATTLEFIELD_VERTICAL_HALF),
+    clamp(destination[2], -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
+  );
+  const offset = target.sub(origin);
+  if (offset.length() > ship.maxMove) offset.setLength(ship.maxMove);
+  const result = origin.add(offset);
+  return [result.x, result.y, result.z];
+};
+
+const isDestinationValid = (ship: Ship, destination: Vec3) =>
+  distanceBetween(ship.position, destination) <= ship.maxMove + 0.01 &&
+  Math.abs(destination[0]) <= BATTLEFIELD_HALF &&
+  Math.abs(destination[1]) <= BATTLEFIELD_VERTICAL_HALF &&
+  Math.abs(destination[2]) <= BATTLEFIELD_HALF;
+
+const destinationFromManeuver = (
+  ship: Ship,
+  distance: number,
+  turn: number,
+  pitch: number,
+  roll: number,
+) => {
+  const finalRotation: Vec3 = [
+    clamp(ship.rotation[0] + clamp(pitch, -ship.maxPitch, ship.maxPitch), -85, 85),
+    normalizeAngle(ship.rotation[1] + clamp(turn, -ship.maxTurn, ship.maxTurn)),
+    normalizeAngle(ship.rotation[2] + clamp(roll, -ship.maxRoll, ship.maxRoll)),
+  ];
+  const destination = new THREE.Vector3(...ship.position).addScaledVector(
+    forwardVector(finalRotation),
+    clamp(distance, 0, ship.maxMove),
+  );
+  return clampDestination(ship, [destination.x, destination.y, destination.z]);
+};
+
 const defaultOrderFor = (ship: Ship, ships: Ship[]): Order => {
   const firstEnemy = ships.find((candidate) => candidate.team === "enemy" && candidate.hull > 0);
+  const defaultDistance = Math.min(ship.maxMove, ship.team === "player" ? 3 : ship.maxMove * 0.55);
   return {
-    thrust: Math.min(ship.maxMove, ship.team === "player" ? 3 : ship.maxMove * 0.55),
-    yaw: 0,
+    destination: destinationFromManeuver(ship, defaultDistance, 0, 0, 0),
+    turn: 0,
     pitch: 0,
     roll: 0,
     targetId: firstEnemy?.id ?? "",
@@ -233,19 +290,33 @@ const buildDrafts = (ships: Ship[]) =>
 
 const endStateFor = (ship: Ship, order: Order): Ship => {
   const finalRotation: Vec3 = [
-    clamp(ship.rotation[0] + order.pitch, -85, 85),
-    normalizeAngle(ship.rotation[1] + order.yaw),
-    normalizeAngle(ship.rotation[2] + order.roll),
+    clamp(ship.rotation[0] + clamp(order.pitch, -ship.maxPitch, ship.maxPitch), -85, 85),
+    normalizeAngle(ship.rotation[1] + clamp(order.turn, -ship.maxTurn, ship.maxTurn)),
+    normalizeAngle(ship.rotation[2] + clamp(order.roll, -ship.maxRoll, ship.maxRoll)),
   ];
-  const destination = new THREE.Vector3(...ship.position).addScaledVector(
-    forwardVector(finalRotation),
-    clamp(order.thrust, 0, ship.maxMove),
-  );
+  const destination = clampDestination(ship, order.destination);
 
   return {
     ...ship,
-    position: [destination.x, destination.y, destination.z],
+    position: destination,
     rotation: finalRotation,
+  };
+};
+
+const nosePositionFor = (ship: Ship) =>
+  new THREE.Vector3(0, 0, -1.48)
+    .applyQuaternion(quaternionFor(ship.rotation))
+    .add(new THREE.Vector3(...ship.position));
+
+const shotSolution = (shooter: Ship, target: Ship) => {
+  const toTarget = new THREE.Vector3(...target.position).sub(nosePositionFor(shooter));
+  const distance = toTarget.length();
+  const inArc = forwardVector(shooter.rotation).dot(toTarget.normalize()) >= Math.cos(degrees(WEAPON_HALF_ARC));
+  return {
+    distance,
+    inRange: distance <= shooter.weaponRange,
+    inArc,
+    valid: distance <= shooter.weaponRange && inArc,
   };
 };
 
@@ -338,6 +409,14 @@ function createShipGroup(ship: Ship) {
   cockpit.position.set(0, 0.34, -0.58);
   root.add(cockpit);
 
+  const muzzle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.045, 0.09, 0.28, 10),
+    new THREE.MeshBasicMaterial({ color: ship.team === "enemy" ? "#ff8594" : "#bdf7ff" }),
+  );
+  muzzle.rotation.x = -Math.PI / 2;
+  muzzle.position.z = -1.5;
+  root.add(muzzle);
+
   [-0.48, 0.48].forEach((x) => {
     const engine = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.25, 0.65, 10), darkMaterial);
     engine.rotation.x = Math.PI / 2;
@@ -419,6 +498,120 @@ function clearGroup(group: THREE.Group) {
   });
 }
 
+function addWeaponEnvelope(
+  parent: THREE.Group,
+  ship: Ship,
+  end: Ship,
+  target: Ship | undefined,
+  armed: boolean,
+) {
+  const solution = target ? shotSolution(end, target) : null;
+  const color = !armed ? "#456779" : solution?.valid ? "#62edbd" : "#ffb55f";
+  const halfArc = degrees(WEAPON_HALF_ARC);
+  const coneHeight = ship.weaponRange * Math.cos(halfArc);
+  const coneRadius = ship.weaponRange * Math.sin(halfArc);
+  const coneGeometry = new THREE.ConeGeometry(coneRadius, coneHeight, 40, 1, true);
+  const cone = new THREE.Mesh(
+    coneGeometry,
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: armed ? 0.055 : 0.025,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  );
+  cone.rotation.x = Math.PI / 2;
+  cone.position.z = -1.48 - coneHeight / 2;
+
+  const wire = new THREE.Mesh(
+    coneGeometry.clone(),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: armed ? 0.28 : 0.1,
+      wireframe: true,
+      depthWrite: false,
+    }),
+  );
+  wire.rotation.copy(cone.rotation);
+  wire.position.copy(cone.position);
+
+  const rangeCap = new THREE.Mesh(
+    new THREE.SphereGeometry(ship.weaponRange, 40, 8, 0, Math.PI * 2, 0, halfArc),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: armed ? 0.2 : 0.07,
+      wireframe: true,
+      depthWrite: false,
+    }),
+  );
+  rangeCap.rotation.x = -Math.PI / 2;
+  rangeCap.position.z = -1.48;
+
+  const centerline = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, -1.48),
+      new THREE.Vector3(0, 0, -1.48 - ship.weaponRange),
+    ]),
+    new THREE.LineDashedMaterial({ color, dashSize: 0.42, gapSize: 0.3, transparent: true, opacity: armed ? 0.72 : 0.2 }),
+  );
+  centerline.computeLineDistances();
+
+  const envelopeRoot = new THREE.Group();
+  envelopeRoot.position.set(...end.position);
+  envelopeRoot.quaternion.copy(quaternionFor(end.rotation));
+  envelopeRoot.add(cone, wire, rangeCap, centerline);
+  parent.add(envelopeRoot);
+}
+
+function addCinematicBeam(group: THREE.Group, shooter: Ship, target: Ship) {
+  const start = nosePositionFor(shooter);
+  const end = new THREE.Vector3(...target.position);
+  const vector = end.clone().sub(start);
+  const length = vector.length();
+  const direction = vector.clone().normalize();
+  const midpoint = start.clone().addScaledVector(direction, length / 2);
+  const beamColor = shooter.team === "enemy" ? "#ff4f75" : "#7df4ff";
+  const rotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+
+  const outer = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.14, 0.14, 1, 10),
+    new THREE.MeshBasicMaterial({ color: beamColor, transparent: true, opacity: 0.2, depthWrite: false }),
+  );
+  outer.position.copy(start);
+  outer.quaternion.copy(rotation);
+  outer.scale.y = 0.001;
+  group.add(outer);
+
+  const core = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.035, 0.06, 1, 8),
+    new THREE.MeshBasicMaterial({ color: "#f5fdff", transparent: true, opacity: 0.98 }),
+  );
+  core.position.copy(start);
+  core.quaternion.copy(rotation);
+  core.scale.y = 0.001;
+  group.add(core);
+
+  const muzzleFlash = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.34, 1),
+    new THREE.MeshBasicMaterial({ color: beamColor, transparent: true, opacity: 0.92 }),
+  );
+  muzzleFlash.position.copy(start);
+  group.add(muzzleFlash);
+
+  const impact = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.55, 1),
+    new THREE.MeshBasicMaterial({ color: "#fff0cf", transparent: true, opacity: 0.94 }),
+  );
+  impact.position.copy(end);
+  impact.visible = false;
+  group.add(impact);
+
+  return { outer, core, muzzleFlash, impact, start, midpoint, direction, length };
+}
+
 type SceneContext = {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
@@ -439,6 +632,7 @@ function TacticalScene({
   resolution,
   cameraCommand,
   onSelect,
+  onCombatFocus,
   onResolutionComplete,
 }: {
   ships: Ship[];
@@ -449,17 +643,20 @@ function TacticalScene({
   resolution: Resolution | null;
   cameraCommand: CameraCommand;
   onSelect: (id: string) => void;
+  onCombatFocus: (focus: CombatFocus | null) => void;
   onResolutionComplete: (resolution: Resolution) => void;
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const contextRef = useRef<SceneContext | null>(null);
   const selectRef = useRef(onSelect);
+  const focusRef = useRef(onCombatFocus);
   const completeRef = useRef(onResolutionComplete);
 
   useEffect(() => {
     selectRef.current = onSelect;
+    focusRef.current = onCombatFocus;
     completeRef.current = onResolutionComplete;
-  }, [onSelect, onResolutionComplete]);
+  }, [onSelect, onCombatFocus, onResolutionComplete]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -603,7 +800,7 @@ function TacticalScene({
     resizeObserver.observe(mount);
 
     const render = () => {
-      controls.update();
+      if (controls.enabled) controls.update();
       renderer.render(scene, camera);
       context.frame = requestAnimationFrame(render);
     };
@@ -698,17 +895,18 @@ function TacticalScene({
 
         if (ship.id === selectedShipId) {
           const envelope = new THREE.Mesh(
-            new THREE.TorusGeometry(ship.maxMove, 0.025, 6, 96),
-            new THREE.MeshBasicMaterial({ color: "#4b8ba8", transparent: true, opacity: 0.42 }),
+            new THREE.SphereGeometry(ship.maxMove, 18, 12),
+            new THREE.MeshBasicMaterial({ color: "#4b8ba8", transparent: true, opacity: 0.1, wireframe: true, depthWrite: false }),
           );
           envelope.position.copy(startPoint);
-          envelope.rotation.x = Math.PI / 2;
           context.planGroup.add(envelope);
 
           const target = ships.find((candidate) => candidate.id === order.targetId && candidate.hull > 0);
+          addWeaponEnvelope(context.planGroup, ship, end, target, order.fire);
           if (target && order.fire) {
+            const plannedMuzzle = nosePositionFor(end);
             const lock = new THREE.Line(
-              new THREE.BufferGeometry().setFromPoints([endPoint, new THREE.Vector3(...target.position)]),
+              new THREE.BufferGeometry().setFromPoints([plannedMuzzle, new THREE.Vector3(...target.position)]),
               new THREE.LineDashedMaterial({ color: "#ff6e7e", dashSize: 0.22, gapSize: 0.18, transparent: true, opacity: 0.7 }),
             );
             lock.computeLineDistances();
@@ -740,9 +938,12 @@ function TacticalScene({
     const context = contextRef.current;
     if (!context || !resolution) return;
     let cancelled = false;
-    let laserTimer: ReturnType<typeof setTimeout> | undefined;
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const tacticalPosition = context.camera.position.clone();
+    const tacticalTarget = context.controls.target.clone();
+    const tacticalFov = context.camera.fov;
     const started = performance.now();
-    const duration = 1750;
+    const duration = 1550;
     const starts = new Map(
       ships.map((ship) => [
         ship.id,
@@ -753,7 +954,124 @@ function TacticalScene({
       ]),
     );
 
-    const animate = (time: number) => {
+    const delay = (milliseconds: number) => new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        resolve();
+      }, milliseconds);
+      timers.add(timer);
+    });
+
+    const tweenCamera = (position: THREE.Vector3, lookAt: THREE.Vector3, milliseconds: number) => {
+      const fromPosition = context.camera.position.clone();
+      const fromLook = context.controls.target.clone();
+      const tweenStarted = performance.now();
+      return new Promise<void>((resolve) => {
+        const step = (time: number) => {
+          if (cancelled) {
+            resolve();
+            return;
+          }
+          const raw = clamp((time - tweenStarted) / milliseconds, 0, 1);
+          const eased = raw * raw * (3 - 2 * raw);
+          context.camera.position.lerpVectors(fromPosition, position, eased);
+          const currentLook = fromLook.clone().lerp(lookAt, eased);
+          context.camera.lookAt(currentLook);
+          context.controls.target.copy(currentLook);
+          if (raw < 1) requestAnimationFrame(step);
+          else resolve();
+        };
+        requestAnimationFrame(step);
+      });
+    };
+
+    const growBeam = (beam: ReturnType<typeof addCinematicBeam>, milliseconds: number) => {
+      const beamStarted = performance.now();
+      return new Promise<void>((resolve) => {
+        const step = (time: number) => {
+          if (cancelled) {
+            resolve();
+            return;
+          }
+          const raw = clamp((time - beamStarted) / milliseconds, 0, 1);
+          const eased = 1 - Math.pow(1 - raw, 3);
+          const currentLength = Math.max(0.001, beam.length * eased);
+          const currentMidpoint = beam.start.clone().addScaledVector(beam.direction, currentLength / 2);
+          beam.outer.scale.y = currentLength;
+          beam.core.scale.y = currentLength;
+          beam.outer.position.copy(currentMidpoint);
+          beam.core.position.copy(currentMidpoint);
+          beam.muzzleFlash.scale.setScalar(1 + Math.sin(raw * Math.PI) * 0.9);
+          beam.impact.visible = raw > 0.78;
+          if (beam.impact.visible) beam.impact.scale.setScalar(0.7 + (raw - 0.78) * 2.2);
+          if (raw < 1) requestAnimationFrame(step);
+          else resolve();
+        };
+        requestAnimationFrame(step);
+      });
+    };
+
+    const playSalvos = async () => {
+      const teamPriority: Record<Team, number> = { player: 0, ally: 1, enemy: 2 };
+      const shots = Object.entries(resolution.orders)
+        .map(([shipId, order]) => {
+          const shooter = resolution.endShips.find((ship) => ship.id === shipId && ship.hull > 0);
+          const target = resolution.endShips.find((ship) => ship.id === order.targetId && ship.hull > 0);
+          return order.fire && shooter && target && shotSolution(shooter, target).valid ? { shooter, target } : null;
+        })
+        .filter((shot): shot is { shooter: Ship; target: Ship } => Boolean(shot))
+        .sort((a, b) => teamPriority[a.shooter.team] - teamPriority[b.shooter.team]);
+
+      if (!shots.length) {
+        await delay(420);
+        if (!cancelled) completeRef.current(resolution);
+        return;
+      }
+
+      context.controls.enabled = false;
+      context.camera.fov = 42;
+      context.camera.updateProjectionMatrix();
+
+      for (const { shooter, target } of shots) {
+        if (cancelled) return;
+        const muzzle = nosePositionFor(shooter);
+        const targetPoint = new THREE.Vector3(...target.position);
+        const direction = targetPoint.clone().sub(muzzle).normalize();
+        const upReference = Math.abs(direction.dot(new THREE.Vector3(0, 1, 0))) > 0.92
+          ? new THREE.Vector3(0, 0, 1)
+          : new THREE.Vector3(0, 1, 0);
+        const side = new THREE.Vector3().crossVectors(direction, upReference).normalize();
+        const lift = new THREE.Vector3().crossVectors(side, direction).normalize();
+        const cameraPosition = muzzle
+          .clone()
+          .addScaledVector(direction, -4.8)
+          .addScaledVector(side, shooter.team === "enemy" ? -2.3 : 2.3)
+          .addScaledVector(lift, 1.65);
+        const lookAt = muzzle.clone().lerp(targetPoint, 0.48);
+
+        focusRef.current({ shooter: shooter.name, target: target.name, team: shooter.team });
+        await tweenCamera(cameraPosition, lookAt, 430);
+        if (cancelled) return;
+        clearGroup(context.laserGroup);
+        const beam = addCinematicBeam(context.laserGroup, shooter, target);
+        await growBeam(beam, 240);
+        await delay(540);
+        clearGroup(context.laserGroup);
+        await delay(120);
+      }
+
+      if (cancelled) return;
+      focusRef.current(null);
+      await tweenCamera(tacticalPosition, tacticalTarget, 520);
+      context.camera.fov = tacticalFov;
+      context.camera.updateProjectionMatrix();
+      context.controls.target.copy(tacticalTarget);
+      context.controls.enabled = true;
+      context.controls.update();
+      if (!cancelled) completeRef.current(resolution);
+    };
+
+    const animateMovement = (time: number) => {
       if (cancelled) return;
       const raw = clamp((time - started) / duration, 0, 1);
       const eased = raw < 0.5 ? 4 * raw * raw * raw : 1 - Math.pow(-2 * raw + 2, 3) / 2;
@@ -766,40 +1084,24 @@ function TacticalScene({
       });
 
       if (raw < 1) {
-        requestAnimationFrame(animate);
+        requestAnimationFrame(animateMovement);
         return;
       }
-
-      clearGroup(context.laserGroup);
-      Object.entries(resolution.orders).forEach(([shipId, order]) => {
-        if (!order.fire || !order.targetId) return;
-        const shooter = resolution.endShips.find((ship) => ship.id === shipId && ship.hull > 0);
-        const target = resolution.endShips.find((ship) => ship.id === order.targetId && ship.hull > 0);
-        if (!shooter || !target) return;
-        const beam = new THREE.Line(
-          new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...shooter.position), new THREE.Vector3(...target.position)]),
-          new THREE.LineBasicMaterial({ color: shooter.team === "enemy" ? "#ff496f" : "#75f3ff", transparent: true, opacity: 0.96 }),
-        );
-        context.laserGroup.add(beam);
-        const impact = new THREE.Mesh(
-          new THREE.IcosahedronGeometry(0.36, 1),
-          new THREE.MeshBasicMaterial({ color: "#fff4d6", transparent: true, opacity: 0.9 }),
-        );
-        impact.position.set(...target.position);
-        context.laserGroup.add(impact);
-      });
-      laserTimer = setTimeout(() => {
-        if (cancelled) return;
-        clearGroup(context.laserGroup);
-        completeRef.current(resolution);
-      }, 620);
+      void playSalvos();
     };
-    requestAnimationFrame(animate);
+    requestAnimationFrame(animateMovement);
 
     return () => {
       cancelled = true;
-      if (laserTimer) clearTimeout(laserTimer);
+      timers.forEach((timer) => clearTimeout(timer));
+      focusRef.current(null);
       clearGroup(context.laserGroup);
+      context.controls.enabled = true;
+      context.camera.position.copy(tacticalPosition);
+      context.controls.target.copy(tacticalTarget);
+      context.camera.fov = tacticalFov;
+      context.camera.updateProjectionMatrix();
+      context.controls.update();
     };
   }, [resolution, ships]);
 
@@ -814,6 +1116,11 @@ function SliderControl({
   suffix,
   onChange,
   disabled,
+  step = 1,
+  decimals = 0,
+  axis,
+  lowLabel,
+  highLabel,
 }: {
   label: string;
   value: number;
@@ -822,22 +1129,29 @@ function SliderControl({
   suffix: string;
   onChange: (value: number) => void;
   disabled: boolean;
+  step?: number;
+  decimals?: number;
+  axis?: string;
+  lowLabel?: string;
+  highLabel?: string;
 }) {
+  const formattedValue = decimals > 0 ? value.toFixed(decimals) : String(Math.round(value));
   return (
     <label className="slider-control">
       <span>
-        {label}
-        <output>{value > 0 && min < 0 ? "+" : ""}{Math.round(value)}{suffix}</output>
+        <span className="slider-name">{axis && <b>{axis}</b>}{label}</span>
+        <output>{value > 0 && min < 0 ? "+" : ""}{formattedValue}{suffix}</output>
       </span>
       <input
         type="range"
         min={min}
         max={max}
-        step={1}
+        step={step}
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(Number(event.target.value))}
       />
+      {lowLabel && highLabel && <small className="slider-directions"><span>{lowLabel}</span><span>{highLabel}</span></small>}
     </label>
   );
 }
@@ -851,6 +1165,7 @@ export function SpaceGame() {
   const [turn, setTurn] = useState(1);
   const [log, setLog] = useState(INITIAL_LOG);
   const [resolution, setResolution] = useState<Resolution | null>(null);
+  const [combatFocus, setCombatFocus] = useState<CombatFocus | null>(null);
   const [cameraCommand, setCameraCommand] = useState<CameraCommand>({ kind: "reset", nonce: 0 });
   const [helpOpen, setHelpOpen] = useState(true);
 
@@ -862,18 +1177,17 @@ export function SpaceGame() {
   const alliedNPC = ships.find((ship) => ship.team === "ally");
   const selectedTargetId = selectedDraft?.targetId ?? "";
   const readyCount = livingPlayerShips.filter((ship) => staged.has(ship.id)).length;
-  const allReady = livingPlayerShips.length > 0 && readyCount === livingPlayerShips.length;
+  const allDestinationsValid = livingPlayerShips.every((ship) => drafts[ship.id] && isDestinationValid(ship, drafts[ship.id].destination));
+  const allReady = livingPlayerShips.length > 0 && readyCount === livingPlayerShips.length && allDestinationsValid;
+  const plottedDistance = selectedShip && selectedDraft ? distanceBetween(selectedShip.position, selectedDraft.destination) : 0;
+  const destinationValid = selectedShip && selectedDraft ? isDestinationValid(selectedShip, selectedDraft.destination) : false;
 
   const forecast = useMemo(() => {
     if (!selectedShip || !selectedDraft) return null;
     const target = ships.find((ship) => ship.id === selectedDraft.targetId && ship.hull > 0);
     if (!target || !selectedDraft.fire) return null;
     const predicted = endStateFor(selectedShip, selectedDraft);
-    const toTarget = new THREE.Vector3(...target.position).sub(new THREE.Vector3(...predicted.position));
-    const distance = toTarget.length();
-    const arc = forwardVector(predicted.rotation).dot(toTarget.normalize());
-    const valid = distance <= selectedShip.weaponRange && arc >= Math.cos(degrees(65));
-    return { distance, valid, inRange: distance <= selectedShip.weaponRange, inArc: arc >= Math.cos(degrees(65)) };
+    return shotSolution(predicted, target);
   }, [selectedShip, selectedDraft, ships]);
 
   const updateDraft = useCallback((patch: Partial<Order>) => {
@@ -889,16 +1203,23 @@ export function SpaceGame() {
     });
   }, [selectedShip, phase]);
 
+  const updateDestinationAxis = useCallback((axis: 0 | 1 | 2, value: number) => {
+    if (!selectedDraft) return;
+    const destination = [...selectedDraft.destination] as Vec3;
+    destination[axis] = value;
+    updateDraft({ destination });
+  }, [selectedDraft, updateDraft]);
+
   const faceTarget = useCallback(() => {
     if (!selectedShip || !selectedDraft) return;
     const target = ships.find((ship) => ship.id === selectedDraft.targetId);
     if (!target) return;
-    const delta = new THREE.Vector3(...target.position).sub(new THREE.Vector3(...selectedShip.position));
+    const delta = new THREE.Vector3(...target.position).sub(new THREE.Vector3(...selectedDraft.destination));
     const flat = Math.hypot(delta.x, delta.z);
-    const desiredYaw = THREE.MathUtils.radToDeg(Math.atan2(delta.x, -delta.z));
+    const desiredTurn = THREE.MathUtils.radToDeg(Math.atan2(delta.x, -delta.z));
     const desiredPitch = THREE.MathUtils.radToDeg(Math.atan2(delta.y, flat));
     updateDraft({
-      yaw: clamp(normalizeAngle(desiredYaw - selectedShip.rotation[1]), -selectedShip.maxYaw, selectedShip.maxYaw),
+      turn: clamp(normalizeAngle(desiredTurn - selectedShip.rotation[1]), -selectedShip.maxTurn, selectedShip.maxTurn),
       pitch: clamp(desiredPitch - selectedShip.rotation[0], -selectedShip.maxPitch, selectedShip.maxPitch),
     });
   }, [selectedShip, selectedDraft, ships, updateDraft]);
@@ -915,15 +1236,22 @@ export function SpaceGame() {
         if (!target) return;
         const delta = new THREE.Vector3(...target.position).sub(new THREE.Vector3(...ship.position));
         const distance = delta.length();
-        const desiredYaw = THREE.MathUtils.radToDeg(Math.atan2(delta.x, -delta.z));
-        const desiredPitch = THREE.MathUtils.radToDeg(Math.atan2(delta.y, Math.hypot(delta.x, delta.z)));
-        const yaw = clamp(normalizeAngle(desiredYaw - ship.rotation[1]), -ship.maxYaw, ship.maxYaw);
+        const moveDistance = distance > ship.weaponRange * 0.72 ? ship.maxMove * 0.68 : ship.maxMove * 0.22;
+        const destinationPoint = new THREE.Vector3(...ship.position).addScaledVector(delta.clone().normalize(), moveDistance);
+        const destination = clampDestination(ship, [destinationPoint.x, destinationPoint.y, destinationPoint.z]);
+        const aimDelta = new THREE.Vector3(...target.position).sub(new THREE.Vector3(...destination));
+        const desiredTurn = THREE.MathUtils.radToDeg(Math.atan2(aimDelta.x, -aimDelta.z));
+        const desiredPitch = THREE.MathUtils.radToDeg(Math.atan2(aimDelta.y, Math.hypot(aimDelta.x, aimDelta.z)));
+        const turn = clamp(normalizeAngle(desiredTurn - ship.rotation[1]), -ship.maxTurn, ship.maxTurn);
         const pitch = clamp(desiredPitch - ship.rotation[0], -ship.maxPitch, ship.maxPitch);
+        const roll = ship.team === "enemy"
+          ? clamp(turn * -0.38, -ship.maxRoll, ship.maxRoll)
+          : clamp(turn * 0.28, -ship.maxRoll, ship.maxRoll);
         orders[ship.id] = {
-          thrust: distance > ship.weaponRange * 0.72 ? ship.maxMove * 0.68 : ship.maxMove * 0.22,
-          yaw,
+          destination,
+          turn,
           pitch,
-          roll: ship.team === "enemy" ? clamp(yaw * -0.38, -55, 55) : clamp(yaw * 0.28, -40, 40),
+          roll,
           targetId: target.id,
           fire: true,
         };
@@ -931,8 +1259,8 @@ export function SpaceGame() {
     return orders;
   }, []);
 
-  const executeTurn = useCallback(() => {
-    if (!allReady || phase !== "planning") return;
+  const executeTurn = () => {
+    if (!allReady || !allDestinationsValid || phase !== "planning") return;
     const npcOrders = generateNpcOrders(ships);
     const allOrders: Record<string, Order> = { ...drafts, ...npcOrders };
     const endShips = ships.map((ship) => {
@@ -942,7 +1270,7 @@ export function SpaceGame() {
     setPhase("executing");
     setLog((current) => [`Turn ${turn}: all vectors locked. Resolving simultaneously…`, ...current].slice(0, 8));
     setResolution({ token: Date.now(), endShips, orders: allOrders });
-  }, [allReady, phase, generateNpcOrders, ships, drafts, turn]);
+  };
 
   const resolveCombat = useCallback((finished: Resolution) => {
     const results = copyShips(finished.endShips);
@@ -954,11 +1282,9 @@ export function SpaceGame() {
       const targetBeforeDamage = finished.endShips.find((ship) => ship.id === order.targetId && ship.hull > 0);
       const target = results.find((ship) => ship.id === order.targetId);
       if (!shooter || !targetBeforeDamage || !target) return;
-      const toTarget = new THREE.Vector3(...targetBeforeDamage.position).sub(new THREE.Vector3(...shooter.position));
-      const distance = toTarget.length();
-      const inArc = forwardVector(shooter.rotation).dot(toTarget.normalize()) >= Math.cos(degrees(65));
-      if (distance > shooter.weaponRange || !inArc) {
-        outcomes.push(`${shooter.name}: shot lost — target escaped ${distance > shooter.weaponRange ? "range" : "firing arc"}.`);
+      const solution = shotSolution(shooter, targetBeforeDamage);
+      if (!solution.valid) {
+        outcomes.push(`${shooter.name}: shot lost — target escaped ${!solution.inRange ? "range" : "firing arc"}.`);
         return;
       }
       const face = armourFaceForHit(targetBeforeDamage, shooter);
@@ -1007,6 +1333,7 @@ export function SpaceGame() {
     setTurn(1);
     setLog(INITIAL_LOG);
     setResolution(null);
+    setCombatFocus(null);
     setCameraCommand({ kind: "reset", nonce: Date.now() });
   }, []);
 
@@ -1082,6 +1409,7 @@ export function SpaceGame() {
             resolution={resolution}
             cameraCommand={cameraCommand}
             onSelect={selectShip}
+            onCombatFocus={setCombatFocus}
             onResolutionComplete={resolveCombat}
           />
 
@@ -1089,6 +1417,14 @@ export function SpaceGame() {
             <span>TACTICAL VOLUME</span>
             <strong>40 × 14 × 40 KM</strong>
           </div>
+
+          {selectedShip.team === "player" && selectedDraft && phase === "planning" && (
+            <div className={`weapon-envelope-readout ${!selectedDraft.fire ? "safe" : forecast?.valid ? "valid" : "warning"}`}>
+              <i />
+              <span>FORWARD GUN ENVELOPE</span>
+              <strong>{selectedShip.weaponRange} KM · {WEAPON_HALF_ARC * 2}° ARC</strong>
+            </div>
+          )}
 
           <div className="camera-tools" aria-label="Camera controls">
             <button type="button" onClick={() => setCameraCommand({ kind: "focus", shipId: selectedShipId, nonce: Date.now() })}>Focus <kbd>F</kbd></button>
@@ -1103,13 +1439,17 @@ export function SpaceGame() {
               <span><b>Drag</b> orbit · <b>Right drag</b> pan</span>
               <span><b>Wheel / pinch</b> zoom · <b>WASD</b> pan</span>
               <span><b>Click ship</b> select or target</span>
+              <span><b>Cone tip</b> bow and cannon origin</span>
             </div>
           )}
 
           {phase === "executing" && (
-            <div className="resolution-banner" role="status">
+            <div className={`resolution-banner ${combatFocus ? `firing ${combatFocus.team}` : "moving"}`} role="status">
               <span />
-              <div><small>ORDERS RELEASED</small><strong>Resolving all vectors</strong></div>
+              <div>
+                <small>{combatFocus ? "WEAPON DISCHARGE" : "ORDERS RELEASED"}</small>
+                <strong>{combatFocus ? `${combatFocus.shooter} → ${combatFocus.target}` : "Resolving all vectors"}</strong>
+              </div>
             </div>
           )}
 
@@ -1173,26 +1513,39 @@ export function SpaceGame() {
 
           {selectedShip.team === "player" && selectedDraft ? (
             <>
-              <section className="orders-block">
-                <div className="section-heading"><span>MANEUVER VECTOR</span><strong>MAX {selectedShip.maxMove} KM</strong></div>
-                <SliderControl label="Thrust" value={selectedDraft.thrust} min={0} max={selectedShip.maxMove} suffix=" km" disabled={controlsDisabled} onChange={(thrust) => updateDraft({ thrust })} />
-                <div className="attitude-row">
-                  <SliderControl label="Yaw" value={selectedDraft.yaw} min={-selectedShip.maxYaw} max={selectedShip.maxYaw} suffix="°" disabled={controlsDisabled} onChange={(yaw) => updateDraft({ yaw })} />
-                  <SliderControl label="Pitch" value={selectedDraft.pitch} min={-selectedShip.maxPitch} max={selectedShip.maxPitch} suffix="°" disabled={controlsDisabled} onChange={(pitch) => updateDraft({ pitch })} />
+              <section className="orders-block location-block">
+                <div className="section-heading stepped"><span><b>01</b>TARGET LOCATION</span><strong>GRID ENDPOINT</strong></div>
+                <div className={`plot-status ${destinationValid ? "valid" : "invalid"}`}>
+                  <span>VECTOR LENGTH</span>
+                  <strong>{plottedDistance.toFixed(1)} / {selectedShip.maxMove} KM</strong>
+                  <i><b style={{ width: `${Math.min(100, (plottedDistance / selectedShip.maxMove) * 100)}%` }} /></i>
                 </div>
-                <SliderControl label="Roll" value={selectedDraft.roll} min={-180} max={180} suffix="°" disabled={controlsDisabled} onChange={(roll) => updateDraft({ roll })} />
+                <SliderControl label="Grid X" axis="X" value={selectedDraft.destination[0]} min={Math.max(-BATTLEFIELD_HALF, selectedShip.position[0] - selectedShip.maxMove)} max={Math.min(BATTLEFIELD_HALF, selectedShip.position[0] + selectedShip.maxMove)} suffix=" km" step={0.5} decimals={1} disabled={controlsDisabled} onChange={(value) => updateDestinationAxis(0, value)} />
+                <SliderControl label="Altitude" axis="Y" value={selectedDraft.destination[1]} min={Math.max(-BATTLEFIELD_VERTICAL_HALF, selectedShip.position[1] - selectedShip.maxMove)} max={Math.min(BATTLEFIELD_VERTICAL_HALF, selectedShip.position[1] + selectedShip.maxMove)} suffix=" km" step={0.5} decimals={1} disabled={controlsDisabled} onChange={(value) => updateDestinationAxis(1, value)} />
+                <SliderControl label="Grid Z" axis="Z" value={selectedDraft.destination[2]} min={Math.max(-BATTLEFIELD_HALF, selectedShip.position[2] - selectedShip.maxMove)} max={Math.min(BATTLEFIELD_HALF, selectedShip.position[2] + selectedShip.maxMove)} suffix=" km" step={0.5} decimals={1} disabled={controlsDisabled} onChange={(value) => updateDestinationAxis(2, value)} />
+                <div className="quick-actions">
+                  <button type="button" disabled={controlsDisabled} onClick={() => updateDraft({ destination: [...selectedShip.position] as Vec3 })}>Hold position</button>
+                  <button type="button" disabled={controlsDisabled} onClick={() => updateDraft({ destination: destinationFromManeuver(selectedShip, selectedShip.maxMove * 0.6, 0, 0, 0) })}>Forward 60%</button>
+                </div>
+              </section>
+
+              <section className="orders-block orientation-block">
+                <div className="section-heading stepped"><span><b>02</b>FINAL ORIENTATION</span><strong>3-AXIS ATTITUDE</strong></div>
+                <SliderControl label="Turn left / right" axis="Y" value={selectedDraft.turn} min={-selectedShip.maxTurn} max={selectedShip.maxTurn} suffix="°" lowLabel="LEFT" highLabel="RIGHT" disabled={controlsDisabled} onChange={(turnValue) => updateDraft({ turn: turnValue })} />
+                <SliderControl label="Nose down / up" axis="X" value={selectedDraft.pitch} min={-selectedShip.maxPitch} max={selectedShip.maxPitch} suffix="°" lowLabel="DOWN" highLabel="UP" disabled={controlsDisabled} onChange={(pitch) => updateDraft({ pitch })} />
+                <SliderControl label="Roll left / right" axis="Z" value={selectedDraft.roll} min={-selectedShip.maxRoll} max={selectedShip.maxRoll} suffix="°" lowLabel="LEFT" highLabel="RIGHT" disabled={controlsDisabled} onChange={(roll) => updateDraft({ roll })} />
                 <div className="quick-actions">
                   <button type="button" disabled={controlsDisabled || !selectedDraft.targetId} onClick={faceTarget}>Face target</button>
-                  <button type="button" disabled={controlsDisabled} onClick={() => updateDraft({ yaw: 0, pitch: 0, roll: 0 })}>Hold attitude</button>
+                  <button type="button" disabled={controlsDisabled} onClick={() => updateDraft({ turn: 0, pitch: 0, roll: 0 })}>Hold orientation</button>
                 </div>
               </section>
 
               <section className="weapon-block">
-                <div className="section-heading"><span>FORWARD CANNON</span><strong>{selectedShip.weaponDamage} DMG · {selectedShip.weaponRange} KM</strong></div>
+                <div className="section-heading stepped"><span><b>03</b>FORWARD CANNON</span><strong>{selectedShip.weaponDamage} DMG · {selectedShip.weaponRange} KM</strong></div>
                 <label className="target-select">
                   <span>TARGET LOCK</span>
                   <select value={selectedDraft.targetId} disabled={controlsDisabled} onChange={(event) => updateDraft({ targetId: event.target.value })}>
-                    {enemies.map((enemy) => <option value={enemy.id} key={enemy.id}>{enemy.name} · {Math.round(distanceBetween(selectedShip.position, enemy.position))} km</option>)}
+                    {enemies.map((enemy) => <option value={enemy.id} key={enemy.id}>{enemy.name} · {Math.round(distanceBetween(selectedDraft.destination, enemy.position))} km</option>)}
                   </select>
                 </label>
                 <button type="button" className={`weapon-toggle ${selectedDraft.fire ? "armed" : ""}`} disabled={controlsDisabled} onClick={() => updateDraft({ fire: !selectedDraft.fire })}>
@@ -1207,8 +1560,8 @@ export function SpaceGame() {
                 </div>
               </section>
 
-              <button className={`stage-button ${staged.has(selectedShip.id) ? "staged" : ""}`} type="button" disabled={controlsDisabled} onClick={() => setStaged((current) => new Set(current).add(selectedShip.id))}>
-                <span>{staged.has(selectedShip.id) ? "VECTOR STAGED" : "STAGE SHIP ORDER"}</span><b>{staged.has(selectedShip.id) ? "✓" : "→"}</b>
+              <button className={`stage-button ${staged.has(selectedShip.id) ? "staged" : ""}`} type="button" disabled={controlsDisabled || !destinationValid} onClick={() => setStaged((current) => new Set(current).add(selectedShip.id))}>
+                <span>{!destinationValid ? "TARGET OUTSIDE MOVE RANGE" : staged.has(selectedShip.id) ? "VECTOR STAGED" : "STAGE SHIP ORDER"}</span><b>{staged.has(selectedShip.id) ? "✓" : "→"}</b>
               </button>
             </>
           ) : (
