@@ -19,6 +19,9 @@ test("story campaign exposes a varied, mixed-risk encounter deck", () => {
   for (const encounter of STORY_ENCOUNTERS) {
     assert.equal(encounter.choices.length, 2);
     for (const choice of encounter.choices) {
+      assert.equal(Object.hasOwn(choice, "riskHint"), false);
+      assert.ok(choice.label.trim().length > 0);
+      assert.ok(choice.description.trim().length > 0);
       assert.ok(choice.outcomes.length >= 3);
       assert.ok(choice.outcomes.some((outcome) => outcome.tone === "favourable"));
       assert.ok(choice.outcomes.some((outcome) => outcome.tone !== "favourable"));

@@ -616,33 +616,74 @@ function applyStoryEffects(sourceShips: Ship[], effects: StoryEffect[], gate: nu
   return { ships: nextShips, threats };
 }
 
-function makeLabel(text: string, color: string) {
+type ShipHudHandle = {
+  sprite: THREE.Sprite;
+  texture: THREE.CanvasTexture;
+  context: CanvasRenderingContext2D;
+  lastKey: string;
+};
+
+function hullHealthColor(ratio: number) {
+  if (ratio <= 0.3) return "#ff6d79";
+  if (ratio <= 0.6) return "#ffb85a";
+  return "#61e9bd";
+}
+
+function updateShipHud(handle: ShipHudHandle, ship: Ship) {
+  const key = `${ship.name}|${ship.color}|${ship.hull}|${ship.maxHull}`;
+  if (handle.lastKey === key) return;
+  handle.lastKey = key;
+
+  const { context } = handle;
+  const ratio = clamp(ship.hull / Math.max(1, ship.maxHull), 0, 1);
+  const percentage = Math.round(ratio * 100);
+  context.clearRect(0, 0, 384, 112);
+
+  context.fillStyle = "rgba(5, 11, 19, 0.9)";
+  context.beginPath();
+  context.roundRect(8, 6, 368, 50, 11);
+  context.fill();
+  context.strokeStyle = ship.color;
+  context.lineWidth = 2;
+  context.stroke();
+  context.fillStyle = "#eff9ff";
+  context.font = "600 27px ui-monospace, monospace";
+  context.textAlign = "center";
+  context.fillText(ship.name.toUpperCase(), 192, 40);
+
+  context.fillStyle = "rgba(5, 11, 19, 0.92)";
+  context.fillRect(12, 66, 360, 18);
+  context.fillStyle = hullHealthColor(ratio);
+  context.fillRect(12, 66, 360 * ratio, 18);
+  context.strokeStyle = "rgba(223, 244, 252, 0.46)";
+  context.lineWidth = 2;
+  context.strokeRect(12, 66, 360, 18);
+
+  context.font = "600 17px ui-monospace, monospace";
+  context.textAlign = "left";
+  context.fillStyle = "#9eb8c5";
+  context.fillText("HULL", 12, 105);
+  context.textAlign = "right";
+  context.fillStyle = "#edf8fc";
+  context.fillText(`${Math.round(ship.hull)} / ${ship.maxHull} · ${percentage}%`, 372, 105);
+  handle.texture.needsUpdate = true;
+}
+
+function createShipHud(ship: Ship) {
   const canvas = document.createElement("canvas");
-  canvas.width = 320;
-  canvas.height = 72;
+  canvas.width = 384;
+  canvas.height = 112;
   const context = canvas.getContext("2d");
-  if (context) {
-    context.fillStyle = "rgba(5, 11, 19, 0.86)";
-    context.beginPath();
-    context.roundRect(8, 8, 304, 52, 12);
-    context.fill();
-    context.strokeStyle = color;
-    context.lineWidth = 2;
-    context.stroke();
-    context.fillStyle = "#eff9ff";
-    context.font = "600 25px ui-monospace, monospace";
-    context.textAlign = "center";
-    context.fillText(text.toUpperCase(), 160, 43);
-  }
+  if (!context) return null;
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }),
+    new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false }),
   );
-  sprite.position.set(0, 2.15, 0);
-  sprite.scale.set(4, 0.9, 1);
-  sprite.renderOrder = 20;
-  return sprite;
+  sprite.renderOrder = 30;
+  const handle: ShipHudHandle = { sprite, texture, context, lastKey: "" };
+  updateShipHud(handle, ship);
+  return handle;
 }
 
 function armourColor(value: number) {
@@ -749,7 +790,6 @@ function createShipGroup(ship: Ship) {
   targetRing.visible = false;
   root.add(targetRing);
 
-  root.add(makeLabel(ship.name, ship.color));
   root.userData.armourMaterials = armourMaterials;
   root.userData.bodyMaterial = bodyMaterial;
   return root;
@@ -895,6 +935,7 @@ type SceneContext = {
   renderer: THREE.WebGLRenderer;
   controls: OrbitControls;
   shipGroups: Map<string, THREE.Group>;
+  shipHuds: Map<string, ShipHudHandle>;
   planGroup: THREE.Group;
   laserGroup: THREE.Group;
   frame: number;
@@ -1008,7 +1049,8 @@ function TacticalScene({
     scene.add(planGroup, laserGroup);
 
     const shipGroups = new Map<string, THREE.Group>();
-    const context: SceneContext = { scene, camera, renderer, controls, shipGroups, planGroup, laserGroup, frame: 0 };
+    const shipHuds = new Map<string, ShipHudHandle>();
+    const context: SceneContext = { scene, camera, renderer, controls, shipGroups, shipHuds, planGroup, laserGroup, frame: 0 };
     contextRef.current = context;
 
     const pointerStart = new THREE.Vector2();
@@ -1076,8 +1118,22 @@ function TacticalScene({
     });
     resizeObserver.observe(mount);
 
+    const hudCameraUp = new THREE.Vector3();
     const render = () => {
       if (controls.enabled) controls.update();
+      const viewportHeight = Math.max(1, mount.clientHeight);
+      hudCameraUp.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+      shipHuds.forEach((hud, id) => {
+        const group = shipGroups.get(id);
+        hud.sprite.visible = Boolean(group?.visible);
+        if (!group?.visible) return;
+        const distance = camera.position.distanceTo(group.position);
+        const worldPerPixel = 2 * distance * Math.tan(degrees(camera.fov) / 2) / viewportHeight;
+        const worldHeight = clamp(worldPerPixel * 46, 0.36, 6.2);
+        const screenUpOffset = clamp(worldPerPixel * 62, 1.65, 7.5);
+        hud.sprite.position.copy(group.position).addScaledVector(hudCameraUp, screenUpOffset);
+        hud.sprite.scale.set(worldHeight * (384 / 112), worldHeight, 1);
+      });
       renderer.render(scene, camera);
       context.frame = requestAnimationFrame(render);
     };
@@ -1108,6 +1164,12 @@ function TacticalScene({
         context.scene.remove(group);
         disposeObject(group);
         context.shipGroups.delete(id);
+        const hud = context.shipHuds.get(id);
+        if (hud) {
+          context.scene.remove(hud.sprite);
+          disposeObject(hud.sprite);
+          context.shipHuds.delete(id);
+        }
       }
     });
 
@@ -1117,6 +1179,18 @@ function TacticalScene({
         group = createShipGroup(ship);
         context.shipGroups.set(ship.id, group);
         context.scene.add(group);
+      }
+      let hud = context.shipHuds.get(ship.id);
+      if (!hud) {
+        hud = createShipHud(ship) ?? undefined;
+        if (hud) {
+          context.shipHuds.set(ship.id, hud);
+          context.scene.add(hud.sprite);
+        }
+      }
+      if (hud) {
+        updateShipHud(hud, ship);
+        hud.sprite.visible = ship.hull > 0;
       }
       if (!resolution) {
         group.position.set(...ship.position);
@@ -1497,7 +1571,7 @@ function MainMenu({
           <span className="brand-mark" aria-hidden="true"><i /><i /></span>
           <div><strong>PARALLAX</strong><span>Fleet tactics command</span></div>
         </div>
-        <div className="menu-system-status"><i /><span>COMMAND LINK ONLINE</span><strong>BUILD 0.4.0</strong></div>
+        <div className="menu-system-status"><i /><span>COMMAND LINK ONLINE</span><strong>BUILD 0.5.0</strong></div>
       </header>
 
       <div className="menu-content">
@@ -1660,7 +1734,7 @@ function StoryCampaignScreen({
               <div className="story-rules">
                 <div><b>01</b><span><strong>Break each blockade</strong><small>Enemy formations grow stronger along the route.</small></span></div>
                 <div><b>02</b><span><strong>Salvage the wrecks</strong><small>Choose one repair or permanent ship upgrade.</small></span></div>
-                <div><b>03</b><span><strong>Answer the signal</strong><small>Every choice has several possible consequences.</small></span></div>
+                <div><b>03</b><span><strong>Answer the signal</strong><small>Commit to one response after every cleared gate.</small></span></div>
               </div>
               <button type="button" className="story-primary-action" onClick={onBeginGate}><span><small>FIRST CONTACT · {config.threat.toUpperCase()}</small><strong>ENTER WARP GATE 01</strong></span><b>→</b></button>
             </div>
@@ -1696,16 +1770,14 @@ function StoryCampaignScreen({
               <p>{encounter.description}</p>
               <div className="story-choice-grid">
                 {encounter.choices.map((choice, index) => (
-                  <button type="button" key={choice.id} onClick={() => onChooseEncounter(index)} aria-label={`${choice.label}. ${choice.riskHint}`}>
-                    <span>OPTION 0{index + 1}</span>
-                    <strong>{choice.label}</strong>
-                    <p>{choice.description}</p>
-                    <small><i /> {choice.riskHint}</small>
+                  <button type="button" key={choice.id} onClick={() => onChooseEncounter(index)} aria-labelledby={`choice-${encounter.id}-${choice.id}-label`} aria-describedby={`choice-${encounter.id}-${choice.id}-description`}>
+                    <span aria-hidden="true">OPTION 0{index + 1}</span>
+                    <strong id={`choice-${encounter.id}-${choice.id}-label`}>{choice.label}</strong>
+                    <p id={`choice-${encounter.id}-${choice.id}-description`}>{choice.description}</p>
                     <b aria-hidden="true">COMMIT →</b>
                   </button>
                 ))}
               </div>
-              <p className="story-random-note"><i /> Outcomes are randomized when an order is committed. Both options can help—or hurt—the escape.</p>
             </div>
           )}
 
@@ -1768,7 +1840,7 @@ function StoryCampaignScreen({
           <div className="manifest-log"><span>FLIGHT RECORD</span><ol>{run.history.slice(0, 4).map((entry, index) => <li key={`${entry}-${index}`}><i />{entry}</li>)}</ol></div>
         </aside>
       </div>
-      <footer className="story-footer"><span>RUN STATE · SESSION LOCAL</span><span>{config.region.toUpperCase()} · {config.threat.toUpperCase()}</span><span>OUTCOMES HIDDEN UNTIL COMMIT</span></footer>
+      <footer className="story-footer"><span>RUN STATE · SESSION LOCAL</span><span>{config.region.toUpperCase()} · {config.threat.toUpperCase()}</span><span>FLIGHT RECORD · ENCRYPTED</span></footer>
     </main>
   );
 }

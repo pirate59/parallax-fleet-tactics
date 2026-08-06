@@ -23,7 +23,6 @@ export type StoryChoice = {
   id: string;
   label: string;
   description: string;
-  riskHint: string;
   outcomes: StoryOutcome[];
 };
 
@@ -111,7 +110,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "dock-help",
         label: "Dock and render aid",
         description: "Open the stolen ship to strangers and share your dwindling repair stores.",
-        riskHint: "Possible recruit · sabotage risk",
         outcomes: [
           { id: "courier-joins", title: "A debt repaid", description: "The courier captain refuses to be left behind and brings their nimble ship under your command.", effectLabel: "Scout joins the squad", tone: "favourable", weight: 24, effects: [{ kind: "recruit", ship: "scout" }] },
           { id: "courier-repairs", title: "Field engineers", description: "The survivors seal several hull fractures before casting off toward a safer lane.", effectLabel: "+16 hull repair", tone: "favourable", weight: 46, effects: [{ kind: "hull", amount: 16 }] },
@@ -122,7 +120,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "strip-wreck",
         label: "Refuse and strip the wreck",
         description: "Keep the airlocks sealed and take whatever can be recovered at range.",
-        riskHint: "Weapons salvage · volatile wreck",
         outcomes: [
           { id: "courier-coils", title: "Smuggler coils", description: "A concealed weapons crate contains pristine accelerator coils.", effectLabel: "+4 gun damage", tone: "favourable", weight: 44, effects: [{ kind: "stat", stat: "weaponDamage", amount: 4 }] },
           { id: "courier-explosion", title: "Reactor flash", description: "The wreck breaks apart as the tractor beam bites, hammering your bow with debris.", effectLabel: "−18 hull", tone: "danger", weight: 31, effects: [{ kind: "hull", amount: -18 }] },
@@ -141,7 +138,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "transmit-codes",
         label: "Transmit the stolen codes",
         description: "Risk the old credentials and let the relay inspect your drive signature.",
-        riskHint: "Navigation data · trace risk",
         outcomes: [
           { id: "relay-route", title: "Priority corridor", description: "The codes still hold. The relay uploads a military-grade route through the next fold.", effectLabel: "+0.75 km movement", tone: "favourable", weight: 44, effects: [{ kind: "stat", stat: "maxMove", amount: 0.75 }] },
           { id: "relay-calibration", title: "Range tables", description: "A forgotten maintenance packet sharpens your long-range solution.", effectLabel: "+1.5 km gun range", tone: "favourable", weight: 30, effects: [{ kind: "stat", stat: "weaponRange", amount: 1.5 }] },
@@ -152,7 +148,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "destroy-relay",
         label: "Destroy the relay",
         description: "Erase the checkpoint before it can finish its challenge-response cycle.",
-        riskHint: "Armour salvage · anti-tamper charge",
         outcomes: [
           { id: "relay-plating", title: "Authority plating", description: "The shattered node yields dense panels rated for military debris fields.", effectLabel: "+9 all armour", tone: "favourable", weight: 43, effects: [{ kind: "armour", amount: 9 }] },
           { id: "relay-power", title: "Charged emitter", description: "Its defence capacitor slots neatly into the cannon bus.", effectLabel: "+4 gun damage", tone: "favourable", weight: 27, effects: [{ kind: "stat", stat: "weaponDamage", amount: 4 }] },
@@ -171,7 +166,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "thaw-occupants",
         label: "Thaw the occupants",
         description: "Spend power and trust whoever wakes inside the sealed craft.",
-        riskHint: "Possible escort · medical danger",
         outcomes: [
           { id: "cryo-escort", title: "Veteran watch", description: "The sleeper in the command capsule is a patrol officer with a hidden escort craft keyed to their biometrics.", effectLabel: "Escort joins the squad", tone: "favourable", weight: 22, effects: [{ kind: "recruit", ship: "escort" }] },
           { id: "cryo-repair", title: "Damage-control crew", description: "The revived engineers repay the rescue by sealing your most dangerous breaches.", effectLabel: "+17 hull repair", tone: "favourable", weight: 48, effects: [{ kind: "hull", amount: 17 }] },
@@ -182,7 +176,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "drain-cells",
         label: "Drain the power cells",
         description: "Leave the capsules sealed and take the reserve power for your escape.",
-        riskHint: "Range gain · faction reprisal",
         outcomes: [
           { id: "cryo-range", title: "Clean reserve cells", description: "The stable cells extend cannon coherence far beyond factory tolerances.", effectLabel: "+1.5 km gun range", tone: "favourable", weight: 46, effects: [{ kind: "stat", stat: "weaponRange", amount: 1.5 }] },
           { id: "cryo-corrosion", title: "Contaminated coolant", description: "Ancient coolant eats through a drive actuator before you can vent it.", effectLabel: "−0.75 km movement", tone: "danger", weight: 29, effects: [{ kind: "stat", stat: "maxMove", amount: -0.75 }] },
@@ -201,7 +194,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "reboot-ai",
         label: "Reboot the combat AI",
         description: "Restore the intelligence and hope its last allegiance has decayed.",
-        riskHint: "Possible gunboat · defence risk",
         outcomes: [
           { id: "ai-joins", title: "Command accepted", description: "The intelligence marks your stolen ship as fleet command and falls into formation.", effectLabel: "Gunboat joins the squad", tone: "favourable", weight: 21, effects: [{ kind: "recruit", ship: "gunboat" }] },
           { id: "ai-tuning", title: "Machine precision", description: "The AI refuses to leave but transmits a ruthless firing calibration.", effectLabel: "+5 gun damage", tone: "favourable", weight: 46, effects: [{ kind: "stat", stat: "weaponDamage", amount: 5 }] },
@@ -212,7 +204,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "extract-core",
         label: "Extract its targeting core",
         description: "Keep the intelligence asleep and cut out the hardware you need.",
-        riskHint: "Damage gain · dormant hunter",
         outcomes: [
           { id: "core-damage", title: "Predictive targeting", description: "The intact core anticipates target drift and tightens every burst.", effectLabel: "+5 gun damage", tone: "favourable", weight: 45, effects: [{ kind: "stat", stat: "weaponDamage", amount: 5 }] },
           { id: "core-damaged", title: "Corrupt geometry", description: "The core installs cleanly, then collapses the long-range solution table.", effectLabel: "−1.5 km gun range", tone: "danger", weight: 29, effects: [{ kind: "stat", stat: "weaponRange", amount: -1.5 }] },
@@ -231,7 +222,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "honour-ritual",
         label: "Honour the trade ritual",
         description: "Power down the cannon and exchange parts under their rules.",
-        riskHint: "Repairs · counterfeit parts",
         outcomes: [
           { id: "shrine-armour", title: "Clan-forged plates", description: "The salvagers fit layered impact plates while singing the names of their previous owners.", effectLabel: "+10 all armour", tone: "favourable", weight: 43, effects: [{ kind: "armour", amount: 10 }] },
           { id: "shrine-repair", title: "Honest mechanics", description: "Their crew restores pressure to compartments you had written off.", effectLabel: "+18 hull repair", tone: "favourable", weight: 31, effects: [{ kind: "hull", amount: 18 }] },
@@ -242,7 +232,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "take-by-force",
         label: "Claim the field by force",
         description: "Charge the cannon and make the salvagers abandon their claim.",
-        riskHint: "Strong salvage · guild reprisal",
         outcomes: [
           { id: "shrine-weapons", title: "Prime salvage", description: "The clan flees before you fire, leaving a tuned accelerator assembly behind.", effectLabel: "+5 gun damage", tone: "favourable", weight: 41, effects: [{ kind: "stat", stat: "weaponDamage", amount: 5 }] },
           { id: "shrine-drive", title: "Racing thrusters", description: "A stripped courier drive makes the stolen ship faster than its registry claims.", effectLabel: "+0.75 km movement", tone: "favourable", weight: 31, effects: [{ kind: "stat", stat: "maxMove", amount: 0.75 }] },
@@ -261,7 +250,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "follow-echo",
         label: "Follow the duplicate",
         description: "Mirror its vector through the anomaly and trust the path it survived.",
-        riskHint: "Drive insight · spatial shear",
         outcomes: [
           { id: "echo-drive", title: "Future maneuver", description: "You copy a drive sequence your own systems had never calculated.", effectLabel: "+0.75 km movement", tone: "favourable", weight: 43, effects: [{ kind: "stat", stat: "maxMove", amount: 0.75 }] },
           { id: "echo-range", title: "Impossible telemetry", description: "The duplicate leaves behind firing data measured from the other side of the gate.", effectLabel: "+1.5 km gun range", tone: "favourable", weight: 31, effects: [{ kind: "stat", stat: "weaponRange", amount: 1.5 }] },
@@ -272,7 +260,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "fire-echo",
         label: "Fire on the duplicate",
         description: "Refuse the paradox and destroy it before it can replace you.",
-        riskHint: "Weapon resonance · reflected fire",
         outcomes: [
           { id: "echo-resonance", title: "Resonant cannon", description: "The shot returns as clean harmonic data that amplifies the next discharge.", effectLabel: "+5 gun damage", tone: "favourable", weight: 44, effects: [{ kind: "stat", stat: "weaponDamage", amount: 5 }] },
           { id: "echo-reflection", title: "Same firing solution", description: "The duplicate fires at the same instant, stripping armour from every exposed surface.", effectLabel: "−11 all armour", tone: "danger", weight: 31, effects: [{ kind: "armour", amount: -11 }] },
@@ -291,7 +278,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "escort-cutter",
         label: "Escort the cutter",
         description: "Slow your escape long enough to hide the refugees in your wake.",
-        riskHint: "Possible recruit · pursuer risk",
         outcomes: [
           { id: "cutter-scout", title: "Volunteer wing", description: "A refugee pilot launches their armed scout and pledges it to your escape.", effectLabel: "Scout joins the squad", tone: "favourable", weight: 23, effects: [{ kind: "recruit", ship: "scout" }] },
           { id: "cutter-armour", title: "Cargo plating", description: "The cutter transfers hull panels it can no longer carry safely.", effectLabel: "+9 all armour", tone: "favourable", weight: 48, effects: [{ kind: "armour", amount: 9 }] },
@@ -302,7 +288,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "send-away",
         label: "Send them another route",
         description: "Share coordinates, then jump before the pursuers can resolve your hull.",
-        riskHint: "Parting supplies · false route",
         outcomes: [
           { id: "cutter-supplies", title: "Parting stores", description: "The refugees transfer sealant and medicine before turning away.", effectLabel: "+16 hull repair", tone: "favourable", weight: 44, effects: [{ kind: "hull", amount: 16 }] },
           { id: "cutter-false-route", title: "Bad ephemeris", description: "Their route packet carries a corrupt drive model that damages your gimbals.", effectLabel: "−0.75 km movement", tone: "danger", weight: 31, effects: [{ kind: "stat", stat: "maxMove", amount: -0.75 }] },
@@ -321,7 +306,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "bring-aboard",
         label: "Bring the crates aboard",
         description: "Race the thermal alarms and integrate whatever still works.",
-        riskHint: "Weapon upgrade · detonation risk",
         outcomes: [
           { id: "cache-damage", title: "Military penetrators", description: "The crates hold dense penetrators compatible with your accelerator.", effectLabel: "+5 gun damage", tone: "favourable", weight: 46, effects: [{ kind: "stat", stat: "weaponDamage", amount: 5 }] },
           { id: "cache-range", title: "Coherent charges", description: "A sealed rack of shaped charges extends the cannon's stable envelope.", effectLabel: "+1.5 km gun range", tone: "favourable", weight: 29, effects: [{ kind: "stat", stat: "weaponRange", amount: 1.5 }] },
@@ -332,7 +316,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "remote-detonate",
         label: "Detonate them remotely",
         description: "Clear the lane with a cannon pulse before the crates drift closer.",
-        riskHint: "Clear route · defence response",
         outcomes: [
           { id: "cache-clear", title: "Open vector", description: "The controlled blast clears a path that lets the drive run at full authority.", effectLabel: "+0.75 km movement", tone: "favourable", weight: 44, effects: [{ kind: "stat", stat: "maxMove", amount: 0.75 }] },
           { id: "cache-shockwave", title: "Fragment storm", description: "The blast wave catches your broadside and pits every armour face.", effectLabel: "−10 all armour", tone: "danger", weight: 31, effects: [{ kind: "armour", amount: -10 }] },
@@ -351,7 +334,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "spoof-token",
         label: "Spoof its credentials",
         description: "Let your stolen systems impersonate the officer who once owned them.",
-        riskHint: "Gate data · trace risk",
         outcomes: [
           { id: "gatekeeper-range", title: "Survey solution", description: "The drone accepts the lie and uploads precision ranging for the corridor.", effectLabel: "+1.5 km gun range", tone: "favourable", weight: 43, effects: [{ kind: "stat", stat: "weaponRange", amount: 1.5 }] },
           { id: "gatekeeper-move", title: "Express aperture", description: "It opens a fast lane and teaches your drive how to hold the geometry.", effectLabel: "+0.75 km movement", tone: "favourable", weight: 31, effects: [{ kind: "stat", stat: "maxMove", amount: 0.75 }] },
@@ -362,7 +344,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "dismantle-drone",
         label: "Dismantle the drone",
         description: "Pull the machine out of its orbit and force the aperture manually.",
-        riskHint: "Defence salvage · anti-tamper risk",
         outcomes: [
           { id: "gatekeeper-armour", title: "Dense machine shell", description: "The drone's layered casing becomes clean armour stock.", effectLabel: "+10 all armour", tone: "favourable", weight: 43, effects: [{ kind: "armour", amount: 10 }] },
           { id: "gatekeeper-emitter", title: "Compact emitter", description: "Its enforcement beam adds a brutal pulse to the main cannon.", effectLabel: "+4 gun damage", tone: "favourable", weight: 28, effects: [{ kind: "stat", stat: "weaponDamage", amount: 4 }] },
@@ -381,7 +362,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "allow-nanites",
         label: "Allow the cloud aboard",
         description: "Open the maintenance ports and let the swarm decide what needs fixing.",
-        riskHint: "Major repair · contamination",
         outcomes: [
           { id: "nanite-hull", title: "Hull rewritten", description: "The swarm closes fractures and rebuilds structural members atom by atom.", effectLabel: "+22 hull repair", tone: "favourable", weight: 44, effects: [{ kind: "hull", amount: 22 }] },
           { id: "nanite-armour", title: "Living armour", description: "The cloud thickens every plate before returning to the void.", effectLabel: "+11 all armour", tone: "favourable", weight: 31, effects: [{ kind: "armour", amount: 11 }] },
@@ -392,7 +372,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "purge-nanites",
         label: "Purge it with cannon fire",
         description: "Burn a channel through the swarm before crossing the aperture.",
-        riskHint: "Weapon tuning · swarm response",
         outcomes: [
           { id: "nanite-calibration", title: "Perfect burn", description: "The purge exposes an inefficiency in the cannon cycle and your crew corrects it.", effectLabel: "+4 gun damage", tone: "favourable", weight: 45, effects: [{ kind: "stat", stat: "weaponDamage", amount: 4 }] },
           { id: "nanite-breach", title: "Reactive swarm", description: "The cloud flows backward along the beam and eats into the bow.", effectLabel: "−17 hull", tone: "danger", weight: 30, effects: [{ kind: "hull", amount: -17 }] },
@@ -411,7 +390,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "forge-reply",
         label: "Forge a reply",
         description: "Implicate another vessel and flood the channel with a false escape vector.",
-        riskHint: "Tracking data · forgery risk",
         outcomes: [
           { id: "bounty-route", title: "Hunters diverted", description: "The false lead works, and their pursuit geometry reveals a faster route.", effectLabel: "+0.75 km movement", tone: "favourable", weight: 43, effects: [{ kind: "stat", stat: "maxMove", amount: 0.75 }] },
           { id: "bounty-decrypt", title: "Contract telemetry", description: "Your comms officer cracks their ranging packet before deleting the reply.", effectLabel: "+1.5 km gun range", tone: "favourable", weight: 31, effects: [{ kind: "stat", stat: "weaponRange", amount: 1.5 }] },
@@ -422,7 +400,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "answer-challenge",
         label: "Answer the challenge",
         description: "Broadcast your real vector and dare the closest hunter to take the ship.",
-        riskHint: "High-grade salvage · trap risk",
         outcomes: [
           { id: "bounty-cannon", title: "Hunter blinks", description: "The nearest ship retreats, shedding a weapons pod to lighten its jump.", effectLabel: "+5 gun damage", tone: "favourable", weight: 42, effects: [{ kind: "stat", stat: "weaponDamage", amount: 5 }] },
           { id: "bounty-armour", title: "Abandoned cache", description: "The hunter leaves a trapped cache, but your crew safely recovers its armour mesh.", effectLabel: "+10 all armour", tone: "favourable", weight: 30, effects: [{ kind: "armour", amount: 10 }] },
@@ -441,7 +418,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "tap-reactor",
         label: "Tap the reactor directly",
         description: "Hold position inside the radiation shadow and siphon power before collapse.",
-        riskHint: "Major repair · surge risk",
         outcomes: [
           { id: "reactor-repair", title: "Power without limit", description: "For eleven seconds every repair system runs beyond specification.", effectLabel: "+24 hull repair", tone: "favourable", weight: 44, effects: [{ kind: "hull", amount: 24 }] },
           { id: "reactor-damage", title: "Overcharged cannon", description: "The weapons bus captures the surge and holds a permanent higher charge.", effectLabel: "+5 gun damage", tone: "favourable", weight: 30, effects: [{ kind: "stat", stat: "weaponDamage", amount: 5 }] },
@@ -452,7 +428,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "ride-shockwave",
         label: "Ride the final shockwave",
         description: "Time the gate jump to the reactor's collapse and steal its momentum.",
-        riskHint: "Drive gain · armour risk",
         outcomes: [
           { id: "reactor-move", title: "Slingshot burn", description: "The drive learns to hold an impossible acceleration curve.", effectLabel: "+1 km movement", tone: "favourable", weight: 49, effects: [{ kind: "stat", stat: "maxMove", amount: 1 }] },
           { id: "reactor-armour", title: "Radiation scouring", description: "The wave carries you clear but peels material from every facing.", effectLabel: "−12 all armour", tone: "danger", weight: 28, effects: [{ kind: "armour", amount: -12 }] },
@@ -471,7 +446,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "take-officer",
         label: "Bring the officer aboard",
         description: "Accept the mutineer, their command codes, and every enemy they made.",
-        riskHint: "Possible escort · betrayal risk",
         outcomes: [
           { id: "officer-escort", title: "Mutiny confirmed", description: "The officer calls a loyal escort out of silent running and places it under your command.", effectLabel: "Escort joins the squad", tone: "favourable", weight: 22, effects: [{ kind: "recruit", ship: "escort" }] },
           { id: "officer-codes", title: "Gunnery authority", description: "Their command codes unlock restricted calibration tables in the stolen ship.", effectLabel: "+4 gun damage · +1 km range", tone: "favourable", weight: 46, effects: [{ kind: "stat", stat: "weaponDamage", amount: 4 }, { kind: "stat", stat: "weaponRange", amount: 1 }] },
@@ -482,7 +456,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "leave-officer",
         label: "Leave the pod behind",
         description: "Copy what data you can without opening the airlock.",
-        riskHint: "Safe data · witness risk",
         outcomes: [
           { id: "officer-range", title: "Intercept tables", description: "The pod carries current fleet ranging tables in its emergency cache.", effectLabel: "+1.5 km gun range", tone: "favourable", weight: 43, effects: [{ kind: "stat", stat: "weaponRange", amount: 1.5 }] },
           { id: "officer-armour", title: "Command shell", description: "The pod's reinforced panels become a patchwork second skin.", effectLabel: "+9 all armour", tone: "favourable", weight: 30, effects: [{ kind: "armour", amount: 9 }] },
@@ -501,7 +474,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "clear-path",
         label: "Clear a path to them",
         description: "Use the forward cannon to carve a corridor through the dormant mines.",
-        riskHint: "Possible scout · chain reaction",
         outcomes: [
           { id: "mine-scout", title: "Pilot recovered", description: "The survivor restores a compact scout and joins the squad rather than face the lattice alone.", effectLabel: "Scout joins the squad", tone: "favourable", weight: 23, effects: [{ kind: "recruit", ship: "scout" }] },
           { id: "mine-calibration", title: "Precision fire", description: "Clearing the path teaches your gunners to place energy exactly where it matters.", effectLabel: "+4 gun damage", tone: "favourable", weight: 46, effects: [{ kind: "stat", stat: "weaponDamage", amount: 4 }] },
@@ -512,7 +484,6 @@ export const STORY_ENCOUNTERS: StoryEncounter[] = [
         id: "take-detour",
         label: "Take the pilot's detour",
         description: "Trust their transmitted route but leave the stranded ship behind.",
-        riskHint: "Drive data · ambush route",
         outcomes: [
           { id: "mine-route", title: "Threading the lattice", description: "The route becomes a new drive-control routine for close maneuvering.", effectLabel: "+0.75 km movement", tone: "favourable", weight: 44, effects: [{ kind: "stat", stat: "maxMove", amount: 0.75 }] },
           { id: "mine-cache", title: "Maintenance hollow", description: "The detour passes a sealed mine tender stocked with repair foam.", effectLabel: "+17 hull repair", tone: "favourable", weight: 30, effects: [{ kind: "hull", amount: 17 }] },
