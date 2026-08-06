@@ -13,7 +13,7 @@ async function render() {
   );
 }
 
-test("server-renders the Parallax game shell", async () => {
+test("server-renders the Parallax main menu", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
@@ -21,12 +21,15 @@ test("server-renders the Parallax game shell", async () => {
   const html = await response.text();
   assert.match(html, /<title>Parallax — 3D Fleet Tactics<\/title>/i);
   assert.match(html, /PARALLAX/);
-  assert.match(html, /Fleet tactics simulator/);
-  assert.match(html, /TACTICAL VOLUME/);
-  assert.match(html, /TARGET LOCATION/);
-  assert.match(html, /FINAL ORIENTATION/);
-  assert.match(html, /Turn left \/ right/);
-  assert.match(html, /FORWARD GUN ENVELOPE/);
-  assert.match(html, /STAGE SHIP ORDER/);
+  assert.match(html, /Fleet tactics command/);
+  assert.match(html, /SELECT/);
+  assert.match(html, /OPERATION/);
+  assert.match(html, /Story Mode/);
+  assert.match(html, /Skirmish Mode/);
+  assert.match(html, /Endless Mode/);
+  assert.match(html, /Hardcore Mode/);
+  assert.match(html, /Sound effects/);
+  assert.match(html, /Music/);
+  assert.match(html, /INITIALIZE\s*(?:<!-- -->)?SKIRMISH MODE/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });

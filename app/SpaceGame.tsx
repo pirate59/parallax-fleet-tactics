@@ -8,6 +8,15 @@ type Vec3 = [number, number, number];
 type ArmourFace = "fore" | "aft" | "port" | "starboard" | "dorsal" | "ventral";
 type Team = "player" | "ally" | "enemy";
 type Phase = "planning" | "executing" | "victory" | "defeat";
+type GameScreen = "menu" | "battle";
+type GameMode = "story" | "skirmish" | "endless" | "hardcore";
+
+type AudioSettings = {
+  soundEnabled: boolean;
+  soundVolume: number;
+  musicEnabled: boolean;
+  musicVolume: number;
+};
 
 type Armour = Record<ArmourFace, number>;
 
@@ -61,6 +70,55 @@ type CombatFocus = {
 const WEAPON_HALF_ARC = 28;
 const BATTLEFIELD_HALF = 20;
 const BATTLEFIELD_VERTICAL_HALF = 7;
+
+const MODE_OPTIONS: Array<{
+  id: GameMode;
+  number: string;
+  label: string;
+  category: string;
+  description: string;
+  status: string;
+}> = [
+  {
+    id: "story",
+    number: "01",
+    label: "Story Mode",
+    category: "Campaign",
+    description: "Lead a persistent fleet through a branching war across the Kestrel systems.",
+    status: "Campaign framework",
+  },
+  {
+    id: "skirmish",
+    number: "02",
+    label: "Skirmish Mode",
+    category: "Single engagement",
+    description: "Enter a focused fleet battle and test movement, facing, and firing solutions.",
+    status: "Tactical prototype ready",
+  },
+  {
+    id: "endless",
+    number: "03",
+    label: "Endless Mode",
+    category: "Survival",
+    description: "Hold the battlespace against escalating formations for as long as your fleet lasts.",
+    status: "Survival framework",
+  },
+  {
+    id: "hardcore",
+    number: "04",
+    label: "Hardcore Mode",
+    category: "Iron fleet",
+    description: "Take command with harsher damage, no resets, and consequences that carry forward.",
+    status: "Iron-fleet framework",
+  },
+];
+
+const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
+  soundEnabled: true,
+  soundVolume: 72,
+  musicEnabled: true,
+  musicVolume: 48,
+};
 
 const ARMOUR_FACES: ArmourFace[] = [
   "fore",
@@ -1156,7 +1214,155 @@ function SliderControl({
   );
 }
 
+function AudioChannelControl({
+  label,
+  description,
+  enabled,
+  volume,
+  onToggle,
+  onVolumeChange,
+}: {
+  label: string;
+  description: string;
+  enabled: boolean;
+  volume: number;
+  onToggle: () => void;
+  onVolumeChange: (volume: number) => void;
+}) {
+  return (
+    <div className={`audio-channel ${enabled ? "enabled" : "muted"}`}>
+      <div className="audio-channel-heading">
+        <div><strong>{label}</strong><span>{description}</span></div>
+        <button type="button" aria-pressed={enabled} aria-label={`${enabled ? "Mute" : "Enable"} ${label}`} onClick={onToggle}>
+          <i /><span>{enabled ? "ON" : "OFF"}</span>
+        </button>
+      </div>
+      <label>
+        <span>VOLUME</span>
+        <input type="range" min={0} max={100} step={1} value={volume} disabled={!enabled} aria-label={`${label} volume`} onChange={(event) => onVolumeChange(Number(event.target.value))} />
+        <output>{volume}%</output>
+      </label>
+    </div>
+  );
+}
+
+function MainMenu({
+  selectedMode,
+  audioSettings,
+  onSelectMode,
+  onLaunch,
+  onAudioChange,
+}: {
+  selectedMode: GameMode;
+  audioSettings: AudioSettings;
+  onSelectMode: (mode: GameMode) => void;
+  onLaunch: (mode: GameMode) => void;
+  onAudioChange: (patch: Partial<AudioSettings>) => void;
+}) {
+  const selected = MODE_OPTIONS.find((mode) => mode.id === selectedMode) ?? MODE_OPTIONS[1];
+
+  return (
+    <main className="main-menu">
+      <div className="menu-space" aria-hidden="true">
+        <span className="menu-orbit orbit-one" />
+        <span className="menu-orbit orbit-two" />
+        <span className="menu-orbit orbit-three" />
+        <span className="menu-planet" />
+        <i className="menu-contact contact-one" />
+        <i className="menu-contact contact-two" />
+        <i className="menu-contact contact-three" />
+      </div>
+
+      <header className="menu-header">
+        <div className="brand-lockup">
+          <span className="brand-mark" aria-hidden="true"><i /><i /></span>
+          <div><strong>PARALLAX</strong><span>Fleet tactics command</span></div>
+        </div>
+        <div className="menu-system-status"><i /><span>COMMAND LINK ONLINE</span><strong>BUILD 0.3.0</strong></div>
+      </header>
+
+      <div className="menu-content">
+        <section className="menu-intro" aria-labelledby="menu-title">
+          <span className="eyebrow">COMMAND TERMINAL · KESTREL THEATRE</span>
+          <h1 id="menu-title">SELECT<br /><em>OPERATION</em></h1>
+          <p>Choose the rules of engagement, take command of your fleet, and commit every vector before the enemy does.</p>
+          <div className="prototype-notice">
+            <i />
+            <span><strong>TACTICAL PROTOTYPE</strong><small>Mode-specific progression will connect here as each ruleset is created.</small></span>
+          </div>
+        </section>
+
+        <section className="mode-picker" aria-labelledby="mode-picker-title">
+          <div className="menu-section-heading">
+            <div><span>01</span><strong id="mode-picker-title">GAME MODE</strong></div>
+            <small>SELECT ONE</small>
+          </div>
+          <div className="mode-grid">
+            {MODE_OPTIONS.map((mode) => (
+              <button
+                type="button"
+                key={mode.id}
+                className={`mode-card ${selectedMode === mode.id ? "selected" : ""} ${mode.id === "hardcore" ? "hardcore" : ""}`}
+                aria-pressed={selectedMode === mode.id}
+                onClick={() => onSelectMode(mode.id)}
+              >
+                <span className="mode-number">{mode.number}</span>
+                <span className="mode-copy">
+                  <small>{mode.category}</small>
+                  <strong>{mode.label}</strong>
+                  <p>{mode.description}</p>
+                </span>
+                <span className="mode-status"><i />{mode.status}</span>
+              </button>
+            ))}
+          </div>
+          <button type="button" className="launch-mode-button" onClick={() => onLaunch(selectedMode)}>
+            <span><small>SELECTED · {selected.category.toUpperCase()}</small><strong>INITIALIZE {selected.label.toUpperCase()}</strong></span>
+            <b aria-hidden="true">→</b>
+          </button>
+          <p className="mode-footnote">All four entries currently launch the Kestrel Reach tactical encounter while their distinct rules are built.</p>
+        </section>
+
+        <aside className="audio-panel" aria-labelledby="audio-title">
+          <div className="menu-section-heading">
+            <div><span>02</span><strong id="audio-title">AUDIO</strong></div>
+            <small>PREFERENCES</small>
+          </div>
+          <AudioChannelControl
+            label="Sound effects"
+            description="Weapons · engines · interface"
+            enabled={audioSettings.soundEnabled}
+            volume={audioSettings.soundVolume}
+            onToggle={() => onAudioChange({ soundEnabled: !audioSettings.soundEnabled })}
+            onVolumeChange={(soundVolume) => onAudioChange({ soundVolume })}
+          />
+          <AudioChannelControl
+            label="Music"
+            description="Score · ambience"
+            enabled={audioSettings.musicEnabled}
+            volume={audioSettings.musicVolume}
+            onToggle={() => onAudioChange({ musicEnabled: !audioSettings.musicEnabled })}
+            onVolumeChange={(musicVolume) => onAudioChange({ musicVolume })}
+          />
+          <div className="audio-placeholder"><i /><span>AUDIO BUS READY</span><small>Sound assets connect in a future pass.</small></div>
+        </aside>
+      </div>
+
+      <footer className="menu-footer">
+        <span>PARALLAX COMMAND OS</span>
+        <span>SIMULTANEOUS-TURN COMBAT SYSTEM</span>
+        <span>LOCAL AUDIO PROFILE ACTIVE</span>
+      </footer>
+    </main>
+  );
+}
+
 export function SpaceGame() {
+  const [screen, setScreen] = useState<GameScreen>("menu");
+  const [selectedMode, setSelectedMode] = useState<GameMode>("skirmish");
+  const [activeMode, setActiveMode] = useState<GameMode>("skirmish");
+  const [audioSettings, setAudioSettings] = useState<AudioSettings>(DEFAULT_AUDIO_SETTINGS);
+  const [audioSettingsHydrated, setAudioSettingsHydrated] = useState(false);
   const [ships, setShips] = useState<Ship[]>(() => copyShips(INITIAL_SHIPS));
   const [selectedShipId, setSelectedShipId] = useState("aegis");
   const [drafts, setDrafts] = useState<Record<string, Order>>(() => buildDrafts(INITIAL_SHIPS));
@@ -1168,6 +1374,40 @@ export function SpaceGame() {
   const [combatFocus, setCombatFocus] = useState<CombatFocus | null>(null);
   const [cameraCommand, setCameraCommand] = useState<CameraCommand>({ kind: "reset", nonce: 0 });
   const [helpOpen, setHelpOpen] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    let nextSettings = DEFAULT_AUDIO_SETTINGS;
+    try {
+      const saved = window.localStorage.getItem("parallax.audio.v1");
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<AudioSettings>;
+        nextSettings = {
+          soundEnabled: typeof parsed.soundEnabled === "boolean" ? parsed.soundEnabled : DEFAULT_AUDIO_SETTINGS.soundEnabled,
+          soundVolume: typeof parsed.soundVolume === "number" ? clamp(parsed.soundVolume, 0, 100) : DEFAULT_AUDIO_SETTINGS.soundVolume,
+          musicEnabled: typeof parsed.musicEnabled === "boolean" ? parsed.musicEnabled : DEFAULT_AUDIO_SETTINGS.musicEnabled,
+          musicVolume: typeof parsed.musicVolume === "number" ? clamp(parsed.musicVolume, 0, 100) : DEFAULT_AUDIO_SETTINGS.musicVolume,
+        };
+      }
+    } catch {
+      // Device-local settings are optional; defaults remain available.
+    }
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setAudioSettings(nextSettings);
+      setAudioSettingsHydrated(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!audioSettingsHydrated) return;
+    try {
+      window.localStorage.setItem("parallax.audio.v1", JSON.stringify(audioSettings));
+    } catch {
+      // Browsers may disable local storage; settings still work for this session.
+    }
+  }, [audioSettings, audioSettingsHydrated]);
 
   const selectedShip = ships.find((ship) => ship.id === selectedShipId) ?? ships.find((ship) => ship.team === "player" && ship.hull > 0) ?? ships[0];
   const selectedDraft = selectedShip ? drafts[selectedShip.id] : undefined;
@@ -1181,6 +1421,10 @@ export function SpaceGame() {
   const allReady = livingPlayerShips.length > 0 && readyCount === livingPlayerShips.length && allDestinationsValid;
   const plottedDistance = selectedShip && selectedDraft ? distanceBetween(selectedShip.position, selectedDraft.destination) : 0;
   const destinationValid = selectedShip && selectedDraft ? isDestinationValid(selectedShip, selectedDraft.destination) : false;
+
+  const updateAudioSettings = useCallback((patch: Partial<AudioSettings>) => {
+    setAudioSettings((current) => ({ ...current, ...patch }));
+  }, []);
 
   const forecast = useMemo(() => {
     if (!selectedShip || !selectedDraft) return null;
@@ -1337,6 +1581,18 @@ export function SpaceGame() {
     setCameraCommand({ kind: "reset", nonce: Date.now() });
   }, []);
 
+  const launchMode = useCallback((mode: GameMode) => {
+    resetGame();
+    setSelectedMode(mode);
+    setActiveMode(mode);
+    setScreen("battle");
+  }, [resetGame]);
+
+  const returnToMenu = useCallback(() => {
+    resetGame();
+    setScreen("menu");
+  }, [resetGame]);
+
   const selectShip = useCallback((id: string) => {
     const clicked = ships.find((ship) => ship.id === id);
     if (!clicked) return;
@@ -1350,6 +1606,7 @@ export function SpaceGame() {
   }, [ships, selectedShip, updateDraft]);
 
   useEffect(() => {
+    if (screen !== "battle") return;
     const handleShortcuts = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, select, textarea")) return;
@@ -1368,9 +1625,22 @@ export function SpaceGame() {
     };
     window.addEventListener("keydown", handleShortcuts);
     return () => window.removeEventListener("keydown", handleShortcuts);
-  }, [selectedShipId, selectedShip, ships, phase]);
+  }, [selectedShipId, selectedShip, ships, phase, screen]);
+
+  if (screen === "menu") {
+    return (
+      <MainMenu
+        selectedMode={selectedMode}
+        audioSettings={audioSettings}
+        onSelectMode={setSelectedMode}
+        onLaunch={launchMode}
+        onAudioChange={updateAudioSettings}
+      />
+    );
+  }
 
   if (!selectedShip) return null;
+  const activeModeInfo = MODE_OPTIONS.find((mode) => mode.id === activeMode) ?? MODE_OPTIONS[1];
   const controlsDisabled = phase !== "planning" || selectedShip.team !== "player" || selectedShip.hull <= 0;
   const hullPercent = (selectedShip.hull / selectedShip.maxHull) * 100;
 
@@ -1392,10 +1662,13 @@ export function SpaceGame() {
           </div>
         </div>
         <div className="mission-brief">
-          <small>KESTREL REACH · SKIRMISH 04</small>
-          <span>Break the Corsair formation</span>
+          <small>{activeModeInfo.category.toUpperCase()} · KESTREL REACH</small>
+          <span>{activeModeInfo.label} · Prototype encounter</span>
         </div>
-        <button className="quiet-button" type="button" onClick={resetGame}>Restart</button>
+        <div className="topbar-actions">
+          <button className="quiet-button" type="button" onClick={returnToMenu}>Main menu</button>
+          <button className="quiet-button" type="button" onClick={resetGame}>Restart</button>
+        </div>
       </header>
 
       <section className="battle-layout">
@@ -1458,7 +1731,7 @@ export function SpaceGame() {
               <small>SKIRMISH COMPLETE</small>
               <h2>{phase === "victory" ? "Formation broken" : "Command ships lost"}</h2>
               <p>{phase === "victory" ? "The Kestrel Reach is secure." : "Replot the engagement and try a new vector."}</p>
-              <button type="button" onClick={resetGame}>Run another skirmish</button>
+              <button type="button" onClick={resetGame}>Run another {activeModeInfo.label.toLowerCase()}</button>
             </div>
           )}
 

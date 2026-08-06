@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Parallax — 3D Fleet Tactics",
   description:
-    "Command a fleet in simultaneous-turn 3D space combat where movement, prediction, and armour facing decide every volley.",
+    "Choose your operation and command a fleet in simultaneous-turn 3D space combat where movement, prediction, and armour facing decide every volley.",
 };
 
 export default function RootLayout({
