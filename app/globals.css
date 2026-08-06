@@ -1002,12 +1002,42 @@ input:focus-visible {
   font-size: var(--type-label);
 }
 
+.telemetry-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .shield-regen-note {
-  align-self: flex-end;
   color: #638699;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--type-meta);
   letter-spacing: 0.1em;
+}
+
+.stance-chip {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: 1px solid rgba(105, 223, 255, 0.22);
+  background: rgba(105, 223, 255, 0.06);
+  color: #9fddec;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--type-meta);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.stance-chip[data-stance="focus-fire"] {
+  border-color: rgba(207, 156, 255, 0.34);
+  background: rgba(207, 156, 255, 0.08);
+  color: #d8b9f5;
+}
+
+.stance-chip[data-stance="extra-move"] {
+  border-color: rgba(97, 233, 189, 0.32);
+  background: rgba(97, 233, 189, 0.07);
+  color: #94e5c9;
 }
 
 .tactical-telemetry .target-select {
@@ -1510,6 +1540,149 @@ kbd {
   font-size: var(--type-small);
 }
 
+.stance-block {
+  background: linear-gradient(130deg, rgba(143, 104, 202, 0.035), rgba(105, 223, 255, 0.015));
+}
+
+.stance-options {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.stance-options legend {
+  width: 100%;
+  margin: 0 0 7px;
+  padding: 0;
+  color: #607d8d;
+  font-size: var(--type-meta);
+  letter-spacing: 0.08em;
+}
+
+.stance-option {
+  position: relative;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.stance-option > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stance-option > span {
+  min-height: 54px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 7px 6px;
+  border: 1px solid rgba(116, 171, 195, 0.16);
+  background: rgba(255, 255, 255, 0.02);
+  text-align: center;
+}
+
+.stance-option strong,
+.stance-option small {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.stance-option strong {
+  color: #9bb6c4;
+  font-size: var(--type-control);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.stance-option small {
+  color: #607a89;
+  font-size: var(--type-meta);
+  line-height: 1.25;
+}
+
+.stance-option > input:focus-visible + span {
+  outline: 2px solid var(--cyan-strong);
+  outline-offset: 2px;
+}
+
+.stance-option > input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.stance-option[data-stance="normal"] > input:checked + span {
+  border-color: rgba(105, 223, 255, 0.5);
+  background: rgba(105, 223, 255, 0.1);
+}
+
+.stance-option[data-stance="focus-fire"] > input:checked + span {
+  border-color: rgba(207, 156, 255, 0.52);
+  background: rgba(207, 156, 255, 0.1);
+}
+
+.stance-option[data-stance="extra-move"] > input:checked + span {
+  border-color: rgba(97, 233, 189, 0.5);
+  background: rgba(97, 233, 189, 0.09);
+}
+
+.stance-option > input:checked + span strong {
+  color: #effbff;
+}
+
+.stance-status {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 8px;
+  margin-top: 8px;
+  padding: 7px 8px;
+  border-left: 2px solid var(--cyan);
+  background: rgba(105, 223, 255, 0.035);
+}
+
+.stance-status strong,
+.stance-status span,
+.stance-status p {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.stance-status strong {
+  color: #bcecf5;
+  font-size: var(--type-label);
+  letter-spacing: 0.08em;
+}
+
+.stance-status span {
+  color: #84a7b7;
+  font-size: var(--type-meta);
+  letter-spacing: 0.06em;
+  text-align: right;
+}
+
+.stance-status p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #668391;
+  font-size: var(--type-meta);
+  line-height: 1.35;
+}
+
+.stance-status[data-stance="focus-fire"] {
+  border-color: #cf9cff;
+  background: rgba(207, 156, 255, 0.045);
+}
+
+.stance-status[data-stance="extra-move"] {
+  border-color: var(--mint);
+  background: rgba(97, 233, 189, 0.04);
+}
+
 .team-glyph {
   position: relative;
   width: 32px;
@@ -1654,6 +1827,36 @@ kbd {
 
 .plot-status.invalid > i > b {
   background: var(--coral);
+}
+
+.plot-status.locked {
+  border-color: rgba(207, 156, 255, 0.28);
+  background: rgba(207, 156, 255, 0.045);
+}
+
+.plot-status.locked strong {
+  color: #d4b3ef;
+}
+
+.plot-status.locked > i > b {
+  background: #cf9cff;
+}
+
+.automatic-rule {
+  margin: 8px 0 2px;
+  padding: 7px 8px;
+  border: 1px solid rgba(207, 156, 255, 0.2);
+  background: rgba(207, 156, 255, 0.035);
+  color: #b99bd1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--type-meta);
+  letter-spacing: 0.09em;
+  text-align: center;
+}
+
+.translation-locked .slider-control > span,
+.translation-locked .slider-directions {
+  opacity: 0.5;
 }
 
 .integrity-track {
@@ -1945,6 +2148,32 @@ input[type="range"]::-moz-range-thumb {
 .weapon-toggle.armed > i {
   background: var(--coral);
   box-shadow: 0 0 9px rgba(255, 109, 121, 0.5);
+}
+
+.weapon-toggle:disabled {
+  cursor: not-allowed;
+}
+
+.weapon-toggle.focus-fire {
+  border-color: rgba(207, 156, 255, 0.34);
+  background: rgba(207, 156, 255, 0.075);
+  color: #dbbaff;
+}
+
+.weapon-toggle.focus-fire > i {
+  background: #cf9cff;
+  box-shadow: 0 0 9px rgba(207, 156, 255, 0.48);
+}
+
+.weapon-toggle.extra-move {
+  border-color: rgba(97, 233, 189, 0.26);
+  background: rgba(97, 233, 189, 0.04);
+  color: #8db9aa;
+}
+
+.weapon-toggle.extra-move > i {
+  background: var(--mint);
+  box-shadow: 0 0 8px rgba(97, 233, 189, 0.3);
 }
 
 .forecast {
@@ -2359,6 +2588,11 @@ input[type="range"]::-moz-range-thumb {
   .tactical-telemetry__target .target-contact {
     grid-column: 1 / -1;
   }
+
+  .telemetry-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 
 @media (max-width: 820px) {
@@ -2433,6 +2667,7 @@ input[type="range"]::-moz-range-thumb {
   }
 
   .ship-identity,
+  .stance-block,
   .command-confirmation,
   .combat-log,
   .npc-block {

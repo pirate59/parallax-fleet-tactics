@@ -33,6 +33,21 @@ export function destinationFromShipMovement(
   ];
 }
 
+export function clampShipMovementToRange(
+  movement: ShipRelativeMovement,
+  maximumDistance: number,
+): ShipRelativeMovement {
+  const limit = Math.max(0, maximumDistance);
+  const distance = Math.hypot(movement.forward, movement.right, movement.up);
+  if (distance <= limit || distance === 0) return { ...movement };
+  const scale = limit / distance;
+  return {
+    forward: cleanComponent(movement.forward * scale),
+    right: cleanComponent(movement.right * scale),
+    up: cleanComponent(movement.up * scale),
+  };
+}
+
 export function shipMovementFromDestination(
   position: ManeuverVec3,
   rotation: ManeuverVec3,

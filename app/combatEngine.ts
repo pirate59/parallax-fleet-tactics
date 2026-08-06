@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { shipQuaternionForRotation } from "./maneuverEngine.ts";
+import { salvosForOrder, type FlightMode } from "./orderRules.ts";
 import { BASIC_WEAPON_SYSTEMS, type BasicWeaponKind } from "./shipCatalog.ts";
 
 export type Vec3 = [number, number, number];
@@ -28,6 +29,7 @@ export type CombatShip = {
 export type CombatOrder = {
   targetId: string;
   fire: boolean;
+  mode: FlightMode;
 };
 
 export type WeaponProfile = {
@@ -49,6 +51,7 @@ export type ShotSolution = {
 export type CombatShotEvent = {
   id: string;
   sequence: number;
+  salvoIndex: number;
   mountIndex: number;
   shooterId: string;
   targetId: string;
@@ -204,6 +207,7 @@ export function resolveCombatTurn<T extends CombatShip>(sourceShips: T[], orders
     shooter: T;
     target: T;
     weapon: WeaponProfile;
+    salvoIndex: number;
     mountIndex: number;
     origin: THREE.Vector3;
     solution: ShotSolution;
@@ -215,7 +219,7 @@ export function resolveCombatTurn<T extends CombatShip>(sourceShips: T[], orders
   // releases every mount it had queued at the beginning of the volley.
   const volley: PendingShot[] = [];
   startingShips
-    .filter((shooter) => shooter.hull > 0 && orders[shooter.id]?.fire && orders[shooter.id]?.targetId)
+    .filter((shooter) => shooter.hull > 0 && salvosForOrder(orders[shooter.id]) > 0 && orders[shooter.id]?.targetId)
     .sort((left, right) => {
       const teamDifference = teamPriority[left.team] - teamPriority[right.team];
       if (teamDifference !== 0) return teamDifference;
@@ -226,29 +230,35 @@ export function resolveCombatTurn<T extends CombatShip>(sourceShips: T[], orders
       const target = startingById.get(orders[shooter.id].targetId);
       if (!target || target.hull <= 0) return;
 
-      weaponProfilesFor(shooter).forEach((weapon, mountIndex) => {
-        const origin = weaponOriginFor(shooter, weapon);
-        const solution = shotSolutionForWeapon(shooter, target, weapon);
-        volley.push({
-          shooter,
-          target,
-          weapon,
-          mountIndex,
-          origin,
-          solution,
-          face: solution.valid ? shieldFaceForOrigin(target, origin) : null,
+      const weapons = weaponProfilesFor(shooter);
+      const salvoCount = salvosForOrder(orders[shooter.id]);
+      for (let salvoIndex = 0; salvoIndex < salvoCount; salvoIndex += 1) {
+        weapons.forEach((weapon, mountIndex) => {
+          const origin = weaponOriginFor(shooter, weapon);
+          const solution = shotSolutionForWeapon(shooter, target, weapon);
+          volley.push({
+            shooter,
+            target,
+            weapon,
+            salvoIndex,
+            mountIndex,
+            origin,
+            solution,
+            face: solution.valid ? shieldFaceForOrigin(target, origin) : null,
+          });
         });
-      });
+      }
     });
 
   volley.forEach((pending, sequence) => {
-    const { shooter, target: targetAtFire, weapon, mountIndex, origin, solution, face } = pending;
+    const { shooter, target: targetAtFire, weapon, salvoIndex, mountIndex, origin, solution, face } = pending;
     const target = resultById.get(targetAtFire.id);
     if (!target) return;
 
     const eventBase = {
-      id: `${shooter.id}:${mountIndex}:${weapon.kind}:${target.id}`,
+      id: `${shooter.id}:${salvoIndex}:${mountIndex}:${weapon.kind}:${target.id}`,
       sequence,
+      salvoIndex,
       mountIndex,
       shooterId: shooter.id,
       targetId: target.id,
@@ -314,9 +324,10 @@ export function resolveCombatTurn<T extends CombatShip>(sourceShips: T[], orders
     const shooter = startingShips.find((ship) => ship.id === shot.shooterId);
     const target = startingShips.find((ship) => ship.id === shot.targetId);
     if (!shooter || !target) return "Unknown firing event.";
-    if (!shot.valid) return `${shooter.name}: ${shot.weapon.name} lost — target escaped ${shot.missReason === "range" ? "range" : "firing arc"}.`;
+    const salvoLabel = orders[shot.shooterId]?.mode === "focus-fire" ? ` salvo ${shot.salvoIndex + 1}` : "";
+    if (!shot.valid) return `${shooter.name}: ${shot.weapon.name}${salvoLabel} lost — target escaped ${shot.missReason === "range" ? "range" : "firing arc"}.`;
     const hullDamage = shot.hullBefore - shot.hullAfter;
-    return `${shooter.name}'s ${shot.weapon.name} hit ${target.name} ${shot.face} shield for ${Math.round(shot.weapon.damage)}${hullDamage > 0 ? ` (${Math.round(hullDamage)} hull)` : ""}.`;
+    return `${shooter.name}'s ${shot.weapon.name}${salvoLabel} hit ${target.name} ${shot.face} shield for ${Math.round(shot.weapon.damage)}${hullDamage > 0 ? ` (${Math.round(hullDamage)} hull)` : ""}.`;
   });
   destroyedIds.forEach((id) => {
     const ship = startingShips.find((candidate) => candidate.id === id);

@@ -43,7 +43,7 @@ const makeShip = (id: string, overrides: Partial<CombatShip> = {}): CombatShip =
 });
 
 const ordersFor = (entries: Array<[string, string]>): Record<string, CombatOrder> =>
-  Object.fromEntries(entries.map(([shooterId, targetId]) => [shooterId, { targetId, fire: true }]));
+  Object.fromEntries(entries.map(([shooterId, targetId]) => [shooterId, { targetId, fire: true, mode: "normal" }]));
 
 const findShip = (ships: CombatShip[], id: string) => {
   const ship = ships.find((candidate) => candidate.id === id);
@@ -94,6 +94,44 @@ test("weapon origins follow per-hull visual scale", () => {
   assert.deepEqual(weaponLocalOriginFor(ship, main).toArray(), [0, 0, -2.96]);
   assert.deepEqual(weaponLocalOriginFor(ship, turret).toArray(), [0, 1.24, 0]);
   assert.deepEqual(weaponOriginFor(ship, main).toArray(), [0, 0, -2.96]);
+});
+
+test("focus fire queues two complete salvos with unique deterministic events", () => {
+  const attacker = makeShip("focus", { eliteWeapons: ["railgun", "turret", "flak"] });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -7], hull: 300, maxHull: 300 });
+  const result = resolveCombatTurn([attacker, target], {
+    [attacker.id]: { targetId: target.id, fire: false, mode: "focus-fire" },
+  });
+
+  assert.equal(result.shots.length, 8);
+  assert.deepEqual(result.shots.map((shot) => shot.salvoIndex), [0, 0, 0, 0, 1, 1, 1, 1]);
+  assert.deepEqual(result.shots.map((shot) => shot.mountIndex), [0, 1, 2, 3, 0, 1, 2, 3]);
+  assert.equal(new Set(result.shots.map((shot) => shot.id)).size, 8);
+  assert.equal(findShip(result.ships, target.id).hull, 140);
+});
+
+test("extra move forces weapons safe even when a stale order says fire", () => {
+  const attacker = makeShip("sprinting");
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -8] });
+  const result = resolveCombatTurn([attacker, target], {
+    [attacker.id]: { targetId: target.id, fire: true, mode: "extra-move" },
+  });
+
+  assert.equal(result.shots.length, 0);
+  assert.equal(findShip(result.ships, target.id).hull, 100);
+});
+
+test("both focus-fire salvos remain committed after the first destroys the target", () => {
+  const attacker = makeShip("focus", { weaponDamage: 120 });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -8] });
+  const result = resolveCombatTurn([attacker, target], {
+    [attacker.id]: { targetId: target.id, fire: true, mode: "focus-fire" },
+  });
+
+  assert.equal(result.shots.length, 2);
+  assert.equal(result.shots.filter((shot) => shot.destroyed).length, 1);
+  assert.equal(result.shots[0].destroyed, true);
+  assert.equal(result.shots[1].destroyed, false);
 });
 
 test("zero-distance targets are safe and count as inside the firing arc", () => {
@@ -204,9 +242,9 @@ test("dead shooters, dead starting targets, and missing targets never enter the 
   const result = resolveCombatTurn(
     [deadShooter, liveShooter, deadTarget, liveTarget],
     {
-      [deadShooter.id]: { targetId: liveTarget.id, fire: true },
-      [liveShooter.id]: { targetId: deadTarget.id, fire: true },
-      [liveTarget.id]: { targetId: "missing", fire: true },
+      [deadShooter.id]: { targetId: liveTarget.id, fire: true, mode: "normal" },
+      [liveShooter.id]: { targetId: deadTarget.id, fire: true, mode: "normal" },
+      [liveTarget.id]: { targetId: "missing", fire: true, mode: "normal" },
     },
   );
 

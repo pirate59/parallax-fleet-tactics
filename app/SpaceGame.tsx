@@ -15,11 +15,20 @@ import {
   type StoryOutcome,
 } from "./storyEngine";
 import {
+  clampShipMovementToRange,
   destinationFromShipMovement,
   shipMovementFromDestination,
   shipQuaternionForRotation,
   type ShipRelativeMovement,
 } from "./maneuverEngine";
+import {
+  FLIGHT_MODE_ORDER,
+  FLIGHT_MODE_RULES,
+  fireStateForMode,
+  movementLimitFor,
+  salvosForOrder,
+  type FlightMode,
+} from "./orderRules";
 import {
   SHIELD_FACES,
   resolveCombatTurn,
@@ -80,6 +89,7 @@ type Order = {
   roll: number;
   targetId: string;
   fire: boolean;
+  mode: FlightMode;
 };
 
 type Resolution = {
@@ -407,7 +417,7 @@ const quaternionFor = shipQuaternionForRotation;
 const distanceBetween = (a: Vec3, b: Vec3) =>
   new THREE.Vector3(...a).distanceTo(new THREE.Vector3(...b));
 
-const clampDestination = (ship: Ship, destination: Vec3): Vec3 => {
+const clampDestination = (ship: Ship, destination: Vec3, mode: FlightMode = "normal"): Vec3 => {
   const origin = new THREE.Vector3(...ship.position);
   const target = new THREE.Vector3(
     clamp(destination[0], -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
@@ -415,13 +425,14 @@ const clampDestination = (ship: Ship, destination: Vec3): Vec3 => {
     clamp(destination[2], -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
   );
   const offset = target.sub(origin);
-  if (offset.length() > ship.maxMove) offset.setLength(ship.maxMove);
+  const movementLimit = movementLimitFor(ship.maxMove, mode);
+  if (offset.length() > movementLimit) offset.setLength(movementLimit);
   const result = origin.add(offset);
   return [result.x, result.y, result.z];
 };
 
-const isDestinationValid = (ship: Ship, destination: Vec3) =>
-  distanceBetween(ship.position, destination) <= ship.maxMove + 0.01 &&
+const isDestinationValid = (ship: Ship, destination: Vec3, mode: FlightMode = "normal") =>
+  distanceBetween(ship.position, destination) <= movementLimitFor(ship.maxMove, mode) + 0.01 &&
   Math.abs(destination[0]) <= BATTLEFIELD_HALF &&
   Math.abs(destination[1]) <= BATTLEFIELD_VERTICAL_HALF &&
   Math.abs(destination[2]) <= BATTLEFIELD_HALF;
@@ -432,29 +443,32 @@ const destinationFromManeuver = (
   turn: number,
   pitch: number,
   roll: number,
+  mode: FlightMode = "normal",
 ) => {
   const finalRotation: Vec3 = [
     clamp(ship.rotation[0] + clamp(pitch, -ship.maxPitch, ship.maxPitch), -85, 85),
     normalizeAngle(ship.rotation[1] + clamp(turn, -ship.maxTurn, ship.maxTurn)),
     normalizeAngle(ship.rotation[2] + clamp(roll, -ship.maxRoll, ship.maxRoll)),
   ];
+  const movementLimit = movementLimitFor(ship.maxMove, mode);
   const destination = new THREE.Vector3(...ship.position).addScaledVector(
     forwardVector(finalRotation),
-    clamp(distance, 0, ship.maxMove),
+    clamp(distance, 0, movementLimit),
   );
-  return clampDestination(ship, [destination.x, destination.y, destination.z]);
+  return clampDestination(ship, [destination.x, destination.y, destination.z], mode);
 };
 
 const defaultOrderFor = (ship: Ship, ships: Ship[]): Order => {
   const firstEnemy = ships.find((candidate) => candidate.team === "enemy" && candidate.hull > 0);
   const defaultDistance = Math.min(ship.maxMove, ship.team === "player" ? 3 : ship.maxMove * 0.55);
   return {
-    destination: destinationFromManeuver(ship, defaultDistance, 0, 0, 0),
+    destination: destinationFromManeuver(ship, defaultDistance, 0, 0, 0, "normal"),
     turn: 0,
     pitch: 0,
     roll: 0,
     targetId: firstEnemy?.id ?? "",
     fire: true,
+    mode: "normal",
   };
 };
 
@@ -471,7 +485,7 @@ const endStateFor = (ship: Ship, order: Order): Ship => {
     normalizeAngle(ship.rotation[1] + clamp(order.turn, -ship.maxTurn, ship.maxTurn)),
     normalizeAngle(ship.rotation[2] + clamp(order.roll, -ship.maxRoll, ship.maxRoll)),
   ];
-  const destination = clampDestination(ship, order.destination);
+  const destination = clampDestination(ship, order.destination, order.mode);
 
   return {
     ...ship,
@@ -1478,12 +1492,15 @@ function TacticalScene({
         context.planGroup.add(ghostRoot);
 
         if (ship.id === selectedShipId) {
-          const envelope = new THREE.Mesh(
-            new THREE.SphereGeometry(ship.maxMove, 18, 12),
-            new THREE.MeshBasicMaterial({ color: "#4b8ba8", transparent: true, opacity: 0.1, wireframe: true, depthWrite: false }),
-          );
-          envelope.position.copy(startPoint);
-          context.planGroup.add(envelope);
+          const movementLimit = movementLimitFor(ship.maxMove, order.mode);
+          if (movementLimit > 0) {
+            const envelope = new THREE.Mesh(
+              new THREE.SphereGeometry(movementLimit, 18, 12),
+              new THREE.MeshBasicMaterial({ color: order.mode === "extra-move" ? "#61e9bd" : "#4b8ba8", transparent: true, opacity: 0.1, wireframe: true, depthWrite: false }),
+            );
+            envelope.position.copy(startPoint);
+            context.planGroup.add(envelope);
+          }
 
           const target = ships.find((candidate) => candidate.id === order.targetId && candidate.hull > 0);
           addWeaponEnvelope(context.planGroup, ship, end, target, order.fire);
@@ -1633,7 +1650,10 @@ function TacticalScene({
           .addScaledVector(lift, 1.65);
         const lookAt = muzzle.clone().lerp(targetPoint, 0.48);
 
-        focusRef.current({ shooter: shooter.name, target: target.name, team: shooter.team, weapon: shot.weapon.name });
+        const focusSuffix = resolution.orders[shot.shooterId]?.mode === "focus-fire"
+          ? ` · SALVO ${shot.salvoIndex + 1}/2`
+          : "";
+        focusRef.current({ shooter: shooter.name, target: target.name, team: shooter.team, weapon: `${shot.weapon.name}${focusSuffix}` });
         await tweenCamera(cameraPosition, lookAt, 430);
         if (cancelled) return;
         clearGroup(context.laserGroup);
@@ -2160,12 +2180,18 @@ export function SpaceGame() {
   const livingPlayerShips = playerShips.filter((ship) => ship.hull > 0);
   const alliedNPC = ships.find((ship) => ship.team === "ally");
   const selectedTargetId = selectedDraft?.targetId ?? "";
-  const selectedTarget = ships.find((ship) => ship.id === selectedTargetId && ship.hull > 0);
+  const selectedTarget = ships.find((ship) => ship.id === selectedTargetId && ship.team === "enemy" && ship.hull > 0);
   const readyCount = livingPlayerShips.filter((ship) => staged.has(ship.id)).length;
-  const allDestinationsValid = livingPlayerShips.every((ship) => drafts[ship.id] && isDestinationValid(ship, drafts[ship.id].destination));
-  const allReady = livingPlayerShips.length > 0 && readyCount === livingPlayerShips.length && allDestinationsValid;
+  const allOrdersValid = livingPlayerShips.every((ship) => {
+    const order = drafts[ship.id];
+    if (!order || !isDestinationValid(ship, order.destination, order.mode)) return false;
+    return order.mode !== "focus-fire" || ships.some((candidate) => candidate.id === order.targetId && candidate.team === "enemy" && candidate.hull > 0);
+  });
+  const allReady = livingPlayerShips.length > 0 && readyCount === livingPlayerShips.length && allOrdersValid;
   const plottedDistance = selectedShip && selectedDraft ? distanceBetween(selectedShip.position, selectedDraft.destination) : 0;
-  const destinationValid = selectedShip && selectedDraft ? isDestinationValid(selectedShip, selectedDraft.destination) : false;
+  const movementLimit = selectedShip && selectedDraft ? movementLimitFor(selectedShip.maxMove, selectedDraft.mode) : 0;
+  const destinationValid = selectedShip && selectedDraft ? isDestinationValid(selectedShip, selectedDraft.destination, selectedDraft.mode) : false;
+  const orderReady = Boolean(destinationValid && selectedDraft && (selectedDraft.mode !== "focus-fire" || selectedTarget));
   const relativeMovement = selectedShip && selectedDraft
     ? shipMovementFromDestination(selectedShip.position, selectedShip.rotation, selectedDraft.destination)
     : { forward: 0, right: 0, up: 0 };
@@ -2177,7 +2203,8 @@ export function SpaceGame() {
   const forecast = useMemo(() => {
     if (!selectedShip || !selectedDraft) return null;
     const target = ships.find((ship) => ship.id === selectedDraft.targetId && ship.hull > 0);
-    if (!target || !selectedDraft.fire) return null;
+    const salvoCount = salvosForOrder(selectedDraft);
+    if (!target || salvoCount === 0) return null;
     const predicted = endStateFor(selectedShip, selectedDraft);
     const solutions = weaponProfilesFor(predicted).map((weapon) => ({
       weapon,
@@ -2187,11 +2214,12 @@ export function SpaceGame() {
     return {
       solutions,
       valid: validSolutions.length > 0,
-      validCount: validSolutions.length,
-      total: solutions.length,
+      validCount: validSolutions.length * salvoCount,
+      total: solutions.length * salvoCount,
       inRange: solutions.some(({ solution }) => solution.inRange),
       distance: Math.min(...solutions.map(({ solution }) => solution.distance)),
-      damage: validSolutions.reduce((sum, { weapon }) => sum + weapon.damage, 0),
+      damage: validSolutions.reduce((sum, { weapon }) => sum + weapon.damage, 0) * salvoCount,
+      salvoCount,
     };
   }, [selectedShip, selectedDraft, ships]);
 
@@ -2211,12 +2239,28 @@ export function SpaceGame() {
   const updateRelativeMovement = useCallback((axis: keyof ShipRelativeMovement, value: number) => {
     if (!selectedShip || !selectedDraft) return;
     const movement = shipMovementFromDestination(selectedShip.position, selectedShip.rotation, selectedDraft.destination);
+    const constrainedMovement = clampShipMovementToRange(
+      { ...movement, [axis]: value },
+      movementLimitFor(selectedShip.maxMove, selectedDraft.mode),
+    );
+    const proposedDestination = destinationFromShipMovement(
+      selectedShip.position,
+      selectedShip.rotation,
+      constrainedMovement,
+    );
     updateDraft({
-      destination: destinationFromShipMovement(
-        selectedShip.position,
-        selectedShip.rotation,
-        { ...movement, [axis]: value },
-      ),
+      destination: clampDestination(selectedShip, proposedDestination, selectedDraft.mode),
+    });
+  }, [selectedShip, selectedDraft, updateDraft]);
+
+  const updateFlightMode = useCallback((mode: FlightMode) => {
+    if (!selectedShip || !selectedDraft) return;
+    updateDraft({
+      mode,
+      destination: mode === "focus-fire"
+        ? [...selectedShip.position] as Vec3
+        : clampDestination(selectedShip, selectedDraft.destination, mode),
+      fire: fireStateForMode(mode, true),
     });
   }, [selectedShip, selectedDraft, updateDraft]);
 
@@ -2249,7 +2293,7 @@ export function SpaceGame() {
         const maximumWeaponRange = Math.max(...weaponProfilesFor(ship).map((weapon) => weapon.range));
         const moveDistance = distance > maximumWeaponRange * 0.72 ? ship.maxMove * 0.68 : ship.maxMove * 0.22;
         const destinationPoint = new THREE.Vector3(...ship.position).addScaledVector(delta.clone().normalize(), moveDistance);
-        const destination = clampDestination(ship, [destinationPoint.x, destinationPoint.y, destinationPoint.z]);
+        const destination = clampDestination(ship, [destinationPoint.x, destinationPoint.y, destinationPoint.z], "normal");
         const aimDelta = new THREE.Vector3(...target.position).sub(new THREE.Vector3(...destination));
         const desiredTurn = THREE.MathUtils.radToDeg(Math.atan2(aimDelta.x, -aimDelta.z));
         const desiredPitch = THREE.MathUtils.radToDeg(Math.atan2(aimDelta.y, Math.hypot(aimDelta.x, aimDelta.z)));
@@ -2265,13 +2309,14 @@ export function SpaceGame() {
           roll,
           targetId: target.id,
           fire: true,
+          mode: "normal",
         };
       });
     return orders;
   }, []);
 
   const executeTurn = () => {
-    if (!allReady || !allDestinationsValid || phase !== "planning") return;
+    if (!allReady || !allOrdersValid || phase !== "planning") return;
     const npcOrders = generateNpcOrders(ships);
     const allOrders: Record<string, Order> = { ...drafts, ...npcOrders };
     const endShips = ships.map((ship) => {
@@ -2548,8 +2593,14 @@ export function SpaceGame() {
   if (!selectedShip) return null;
   const activeModeInfo = MODE_OPTIONS.find((mode) => mode.id === activeMode) ?? MODE_OPTIONS[1];
   const controlsDisabled = phase !== "planning" || selectedShip.team !== "player" || selectedShip.hull <= 0;
+  const selectedFlightMode = selectedDraft?.mode ?? "normal";
+  const selectedFlightRule = FLIGHT_MODE_RULES[selectedFlightMode];
+  const translationDisabled = controlsDisabled || selectedFlightMode === "focus-fire";
+  const weaponControlDisabled = controlsDisabled || selectedFlightMode !== "normal";
   const selectedWeapons = weaponProfilesFor(selectedShip);
-  const totalVolleyDamage = selectedWeapons.reduce((sum, weapon) => sum + weapon.damage, 0);
+  const selectedSalvos = selectedDraft ? salvosForOrder(selectedDraft) : 1;
+  const batteryDamage = selectedWeapons.reduce((sum, weapon) => sum + weapon.damage, 0) * selectedSalvos;
+  const formattedMovementLimit = Number.isInteger(movementLimit) ? String(movementLimit) : movementLimit.toFixed(1);
   const plannedTargetDistance = selectedTarget && selectedDraft
     ? distanceBetween(selectedDraft.destination, selectedTarget.position)
     : null;
@@ -2617,7 +2668,10 @@ export function SpaceGame() {
                   );
                 })}
               </div>
-              <small className="shield-regen-note">SHIELD REGEN · +5 AFTER HIT · +10 WHEN CLEAR</small>
+              <div className="telemetry-footer">
+                <span className="stance-chip" data-stance={selectedFlightMode}>{selectedFlightRule.label} · {selectedFlightRule.shortRule}</span>
+                <small className="shield-regen-note">SHIELD REGEN · +5 AFTER HIT · +10 WHEN CLEAR</small>
+              </div>
             </div>
 
             <div className="tactical-telemetry__target">
@@ -2643,8 +2697,8 @@ export function SpaceGame() {
                   <div className={`forecast ${forecast?.valid ? "valid" : "warning"}`}>
                     <i />
                     <span>
-                      <strong>{!selectedTarget ? "NO ACTIVE TARGET" : !selectedDraft.fire ? "WEAPONS SAFE" : forecast?.valid ? `${forecast.validCount}/${forecast.total} MOUNTS LOCKED` : forecast?.inRange === false ? "OUTSIDE ALL RANGES" : "OUTSIDE FIRING ARCS"}</strong>
-                      <small>{forecast ? `${forecast.distance.toFixed(1)} km · ${Math.round(forecast.damage)} projected damage` : selectedTarget ? `${plannedTargetDistance?.toFixed(1)} km · no firing solution` : "No target selected"}</small>
+                      <strong>{!selectedTarget ? "NO ACTIVE TARGET" : selectedFlightMode === "extra-move" ? "EXTRA MOVE · WEAPONS OFFLINE" : selectedSalvos === 0 ? "WEAPONS SAFE" : forecast?.valid ? `${forecast.validCount}/${forecast.total} SHOTS LOCKED` : forecast?.inRange === false ? "OUTSIDE ALL RANGES" : "OUTSIDE FIRING ARCS"}</strong>
+                      <small>{forecast ? `${forecast.distance.toFixed(1)} km · ${Math.round(forecast.damage)} projected damage${forecast.salvoCount === 2 ? " · double salvo" : ""}` : selectedTarget ? `${plannedTargetDistance?.toFixed(1)} km · ${selectedFlightMode === "extra-move" ? "firing disabled" : selectedSalvos === 0 ? "fire held" : "no firing solution"}` : "No target selected"}</small>
                     </span>
                   </div>
                 </>
@@ -2742,8 +2796,8 @@ export function SpaceGame() {
         <aside className="command-panel">
           {selectedShip.team === "player" && selectedDraft && (
             <div className="command-confirmation">
-              <button className={`stage-button ${staged.has(selectedShip.id) ? "staged" : ""}`} type="button" disabled={controlsDisabled || !destinationValid} aria-describedby={`plot-status-${selectedShip.id}`} onClick={() => setStaged((current) => new Set(current).add(selectedShip.id))}>
-                <span>{!destinationValid ? "MOVE OUTSIDE RANGE" : staged.has(selectedShip.id) ? "ORDER CONFIRMED" : "CONFIRM SHIP ORDER"}</span><b>{staged.has(selectedShip.id) ? "✓" : "→"}</b>
+              <button className={`stage-button ${staged.has(selectedShip.id) ? "staged" : ""}`} type="button" disabled={controlsDisabled || !orderReady} aria-describedby={`stance-status-${selectedShip.id} plot-status-${selectedShip.id}`} onClick={() => setStaged((current) => new Set(current).add(selectedShip.id))}>
+                <span>{!destinationValid ? "MOVE OUTSIDE RANGE" : selectedFlightMode === "focus-fire" && !selectedTarget ? "FOCUS TARGET REQUIRED" : staged.has(selectedShip.id) ? "ORDER CONFIRMED" : `CONFIRM ${selectedFlightRule.label.toUpperCase()} ORDER`}</span><b>{staged.has(selectedShip.id) ? "✓" : "→"}</b>
               </button>
             </div>
           )}
@@ -2759,24 +2813,47 @@ export function SpaceGame() {
 
           {selectedShip.team === "player" && selectedDraft ? (
             <>
-              <section className="orders-block location-block">
-                <div className="section-heading stepped"><span><b>01</b>TARGET LOCATION</span><strong>SHIP-RELATIVE</strong></div>
-                <div id={`plot-status-${selectedShip.id}`} className={`plot-status ${destinationValid ? "valid" : "invalid"}`}>
-                  <span>LOCAL VECTOR LENGTH</span>
-                  <strong>{plottedDistance.toFixed(1)} / {selectedShip.maxMove} KM</strong>
-                  <i><b style={{ width: `${Math.min(100, (plottedDistance / selectedShip.maxMove) * 100)}%` }} /></i>
+              <section className="stance-block">
+                <div className="section-heading stepped"><span><b>01</b>TURN STANCE</span><strong>CHOOSE TRADE-OFF</strong></div>
+                <fieldset className="stance-options">
+                  <legend>Choose movement and firing priority</legend>
+                  {FLIGHT_MODE_ORDER.map((mode) => {
+                    const rule = FLIGHT_MODE_RULES[mode];
+                    const inputId = `stance-${selectedShip.id}-${mode}`;
+                    return (
+                      <label className="stance-option" data-stance={mode} key={mode} htmlFor={inputId} aria-label={`${rule.label}: ${rule.description}`}>
+                        <input id={inputId} type="radio" name={`stance-${selectedShip.id}`} value={mode} checked={selectedFlightMode === mode} disabled={controlsDisabled} aria-label={rule.label} onChange={() => updateFlightMode(mode)} />
+                        <span><strong>{rule.label}</strong><small>{rule.shortRule}</small></span>
+                      </label>
+                    );
+                  })}
+                </fieldset>
+                <div id={`stance-status-${selectedShip.id}`} className="stance-status" data-stance={selectedFlightMode} role="status" aria-live="polite">
+                  <strong>{selectedFlightRule.label}</strong>
+                  <span>{selectedFlightMode === "focus-fire" ? "0 KM · DOUBLE VOLLEY · TRANSLATION LOCKED" : selectedFlightMode === "extra-move" ? `${formattedMovementLimit} KM · WEAPONS OFFLINE` : `${formattedMovementLimit} KM · SINGLE VOLLEY AVAILABLE`}</span>
+                  <p>{selectedFlightRule.description}</p>
                 </div>
-                <SliderControl label="Forward / back" axis="F" value={relativeMovement.forward} min={-selectedShip.maxMove} max={selectedShip.maxMove} suffix=" km" step={0.25} decimals={2} lowLabel="BACK" highLabel="FORWARD" disabled={controlsDisabled} onChange={(value) => updateRelativeMovement("forward", value)} />
-                <SliderControl label="Left / right" axis="R" value={relativeMovement.right} min={-selectedShip.maxMove} max={selectedShip.maxMove} suffix=" km" step={0.25} decimals={2} lowLabel="LEFT" highLabel="RIGHT" disabled={controlsDisabled} onChange={(value) => updateRelativeMovement("right", value)} />
-                <SliderControl label="Up / down" axis="U" value={relativeMovement.up} min={-selectedShip.maxMove} max={selectedShip.maxMove} suffix=" km" step={0.25} decimals={2} lowLabel="DOWN" highLabel="UP" disabled={controlsDisabled} onChange={(value) => updateRelativeMovement("up", value)} />
+              </section>
+
+              <section className={`orders-block location-block ${selectedFlightMode === "focus-fire" ? "translation-locked" : ""}`}>
+                <div className="section-heading stepped"><span><b>02</b>TARGET LOCATION</span><strong>SHIP-RELATIVE</strong></div>
+                <div id={`plot-status-${selectedShip.id}`} className={`plot-status ${selectedFlightMode === "focus-fire" ? "locked" : destinationValid ? "valid" : "invalid"}`}>
+                  <span>{selectedFlightMode === "focus-fire" ? "FOCUS FIRE RULE" : "LOCAL VECTOR LENGTH"}</span>
+                  <strong>{selectedFlightMode === "focus-fire" ? "POSITION LOCKED" : `${plottedDistance.toFixed(1)} / ${formattedMovementLimit} KM`}</strong>
+                  <i><b style={{ width: `${movementLimit === 0 ? 100 : Math.min(100, (plottedDistance / movementLimit) * 100)}%` }} /></i>
+                </div>
+                {selectedFlightMode === "focus-fire" && <p className="automatic-rule">TRANSLATION LOCKED BY FOCUS FIRE</p>}
+                <SliderControl label="Forward / back" axis="F" value={relativeMovement.forward} min={-movementLimit} max={movementLimit} suffix=" km" step={0.25} decimals={2} lowLabel="BACK" highLabel="FORWARD" disabled={translationDisabled} onChange={(value) => updateRelativeMovement("forward", value)} />
+                <SliderControl label="Left / right" axis="R" value={relativeMovement.right} min={-movementLimit} max={movementLimit} suffix=" km" step={0.25} decimals={2} lowLabel="LEFT" highLabel="RIGHT" disabled={translationDisabled} onChange={(value) => updateRelativeMovement("right", value)} />
+                <SliderControl label="Up / down" axis="U" value={relativeMovement.up} min={-movementLimit} max={movementLimit} suffix=" km" step={0.25} decimals={2} lowLabel="DOWN" highLabel="UP" disabled={translationDisabled} onChange={(value) => updateRelativeMovement("up", value)} />
                 <div className="quick-actions">
-                  <button type="button" disabled={controlsDisabled} onClick={() => updateDraft({ destination: [...selectedShip.position] as Vec3 })}>Hold position</button>
-                  <button type="button" disabled={controlsDisabled} onClick={() => updateDraft({ destination: destinationFromManeuver(selectedShip, selectedShip.maxMove * 0.6, 0, 0, 0) })}>Forward 60%</button>
+                  <button type="button" disabled={translationDisabled} onClick={() => updateDraft({ destination: [...selectedShip.position] as Vec3 })}>Hold position</button>
+                  <button type="button" disabled={translationDisabled} onClick={() => updateDraft({ destination: destinationFromManeuver(selectedShip, movementLimit * 0.6, 0, 0, 0, selectedFlightMode) })}>Forward 60%</button>
                 </div>
               </section>
 
               <section className="orders-block orientation-block">
-                <div className="section-heading stepped"><span><b>02</b>FINAL ORIENTATION</span><strong>3-AXIS ATTITUDE</strong></div>
+                <div className="section-heading stepped"><span><b>03</b>FINAL ORIENTATION</span><strong>3-AXIS ATTITUDE</strong></div>
                 <SliderControl label="Turn left / right" axis="Y" value={selectedDraft.turn} min={-selectedShip.maxTurn} max={selectedShip.maxTurn} suffix="°" lowLabel="LEFT" highLabel="RIGHT" disabled={controlsDisabled} onChange={(turnValue) => updateDraft({ turn: turnValue })} />
                 <SliderControl label="Nose down / up" axis="X" value={selectedDraft.pitch} min={-selectedShip.maxPitch} max={selectedShip.maxPitch} suffix="°" lowLabel="DOWN" highLabel="UP" disabled={controlsDisabled} onChange={(pitch) => updateDraft({ pitch })} />
                 <SliderControl label="Roll left / right" axis="Z" value={selectedDraft.roll} min={-selectedShip.maxRoll} max={selectedShip.maxRoll} suffix="°" lowLabel="LEFT" highLabel="RIGHT" disabled={controlsDisabled} onChange={(roll) => updateDraft({ roll })} />
@@ -2787,9 +2864,11 @@ export function SpaceGame() {
               </section>
 
               <section className="weapon-block">
-                <div className="section-heading stepped"><span><b>03</b>WEAPON BATTERY</span><strong>{totalVolleyDamage} MAX VOLLEY · {selectedWeapons.length} MOUNT{selectedWeapons.length === 1 ? "" : "S"}</strong></div>
-                <button type="button" className={`weapon-toggle ${selectedDraft.fire ? "armed" : ""}`} disabled={controlsDisabled} onClick={() => updateDraft({ fire: !selectedDraft.fire })}>
-                  <i /> <span>{selectedDraft.fire ? `${selectedWeapons.length} GUN${selectedWeapons.length === 1 ? "" : "S"} ARMED` : "HOLD FIRE"}</span><b>{selectedDraft.fire ? "LIVE" : "SAFE"}</b>
+                <div className="section-heading stepped"><span><b>04</b>WEAPON BATTERY</span><strong>{selectedSalvos ? `${batteryDamage} DAMAGE · ${selectedSalvos} SALVO${selectedSalvos === 1 ? "" : "S"}` : "WEAPONS OFFLINE"}</strong></div>
+                <button type="button" className={`weapon-toggle ${selectedDraft.fire ? "armed" : ""} ${selectedFlightMode}`} disabled={weaponControlDisabled} onClick={() => updateDraft({ fire: !selectedDraft.fire })}>
+                  <i />
+                  <span>{selectedFlightMode === "focus-fire" ? `${selectedWeapons.length} MOUNTS · DOUBLE VOLLEY` : selectedFlightMode === "extra-move" ? "WEAPONS AUTOMATICALLY SAFE" : selectedDraft.fire ? `${selectedWeapons.length} GUN${selectedWeapons.length === 1 ? "" : "S"} ARMED` : "HOLD FIRE"}</span>
+                  <b>{selectedFlightMode === "focus-fire" ? "2×" : selectedFlightMode === "extra-move" ? "DRIVE" : selectedDraft.fire ? "LIVE" : "SAFE"}</b>
                 </button>
               </section>
             </>

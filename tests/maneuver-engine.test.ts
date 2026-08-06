@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  clampShipMovementToRange,
   destinationFromShipMovement,
   shipMovementFromDestination,
   type ManeuverVec3,
@@ -42,4 +43,21 @@ test("ship-local movement round-trips across pitch, turn, and roll", () => {
   closeTo(recovered.forward, movement.forward);
   closeTo(recovered.right, movement.right);
   closeTo(recovered.up, movement.up);
+});
+
+test("combined axis input is clamped to the upgraded spherical movement range", () => {
+  const movement = clampShipMovementToRange({ forward: 3, right: 6.5, up: 0 }, 6.5);
+  closeTo(Math.hypot(movement.forward, movement.right, movement.up), 6.5);
+  assert.ok(movement.forward > 0);
+  assert.ok(movement.right > 0);
+
+  const unchanged = clampShipMovementToRange({ forward: 5.5, right: 2, up: 1 }, 6.5);
+  assert.deepEqual(unchanged, { forward: 5.5, right: 2, up: 1 });
+});
+
+test("zero movement allowance locks every relative axis", () => {
+  assert.deepEqual(
+    clampShipMovementToRange({ forward: 4, right: -2, up: 1 }, 0),
+    { forward: 0, right: 0, up: 0 },
+  );
 });
