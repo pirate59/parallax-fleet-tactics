@@ -44,7 +44,7 @@ export type WeaponMount = {
   hardpointId: string;
 };
 
-export type ShipPassiveTrait = {
+export type AutonomousTurretTrait = {
   kind: "autonomous-turret";
   name: "Turrets";
   weaponKind: "cannon";
@@ -52,6 +52,22 @@ export type ShipPassiveTrait = {
   rangeMultiplier: number;
   damageMultiplier: number;
   targetPriority: "weakest";
+};
+
+export type EvasiveManeuverTrait = {
+  kind: "evasive-maneuver";
+  name: "Evasive manoeuvre";
+  uses: 1;
+  attackForfeit: true;
+};
+
+export type ShipPassiveTrait = AutonomousTurretTrait | EvasiveManeuverTrait;
+
+export const CARRIER_FIGHTER_EVASIVE_TRAIT: EvasiveManeuverTrait = {
+  kind: "evasive-maneuver",
+  name: "Evasive manoeuvre",
+  uses: 1,
+  attackForfeit: true,
 };
 
 const DEFAULT_HARDPOINTS: Record<WeaponKind, string> = {

@@ -44,6 +44,7 @@ import {
   type Vec3,
 } from "./combatEngine";
 import {
+  CARRIER_FIGHTER_EVASIVE_TRAIT,
   SHIP_ARCHETYPES,
   STORY_STARTER_ARCHETYPE,
   createWeaponMount,
@@ -120,6 +121,7 @@ import {
   scaledAnimationDuration,
   type AnimationSpeed,
 } from "./animationSpeed";
+import { applyAiMovementAvoidance, collisionSafeLaunchPosition } from "./movementAvoidanceEngine";
 
 type Phase = "planning" | "executing" | "victory" | "defeat";
 type GameScreen = "menu" | "battle" | "story";
@@ -171,6 +173,7 @@ type Ship = {
   turnEndAbility?: ShipTurnEndAbility;
   fighterReserveRemaining?: number;
   spawnedByShipId?: string;
+  evasiveManeuverAvailable?: boolean;
   lastTargetId?: string;
 };
 
@@ -182,6 +185,7 @@ type Order = {
   targetId: string;
   fire: boolean;
   mode: FlightMode;
+  ramTargetId?: string;
 };
 
 type Resolution = {
@@ -774,9 +778,21 @@ function createLaunchedFighter(
     ],
     rotation: [...carrier.rotation] as Vec3,
   });
+  const safeLaunchPosition = collisionSafeLaunchPosition(
+    carrier,
+    fighter,
+    [launchPosition.x, launchPosition.y, launchPosition.z],
+    bounds,
+  );
   return {
     ...applyCarrierFighterCombatProfile(fighter, ability),
+    position: safeLaunchPosition,
     spawnedByShipId: carrier.id,
+    passiveTraits: [
+      ...(fighter.passiveTraits ?? []),
+      { ...CARRIER_FIGHTER_EVASIVE_TRAIT },
+    ],
+    evasiveManeuverAvailable: true,
     turnEndAbility: undefined,
   };
 }
@@ -3349,16 +3365,17 @@ export function SpaceGame() {
       const order = allOrders[ship.id];
       return ship.hull > 0 && order ? endStateFor(ship, order, bounds) : ship;
     });
+    const avoidance = applyAiMovementAvoidance(ships, intendedShips, allOrders, bounds);
     const collision = resolveMovementCollisions(
       ships,
-      intendedShips,
+      avoidance.ships,
       bounds.halfLength,
       bounds.halfHeight,
       bounds.halfWidth,
     );
     const combat = resolveCombatTurn(
       collision.ships,
-      allOrders,
+      avoidance.orders,
       {
         ...(fishtankCommit ? { teamOrder: fishtankActivationOrder(turn) } : {}),
         preHitFaces: collision.hitFaces,
@@ -3375,10 +3392,10 @@ export function SpaceGame() {
       token: Date.now(),
       endShips: collision.ships,
       resolvedShips: combat.ships,
-      orders: allOrders,
+      orders: avoidance.orders,
       collisions: collision.collisions,
       shots: combat.shots,
-      outcomes: [...collision.outcomes, ...combat.outcomes],
+      outcomes: [...avoidance.outcomes, ...collision.outcomes, ...combat.outcomes],
       destroyedIds: [...new Set([...collision.destroyedIds, ...combat.destroyedIds])],
     });
   }, [activeMode, allOrdersValid, allReady, drafts, generateNpcOrders, phase, ships, turn]);
@@ -4094,7 +4111,7 @@ export function SpaceGame() {
               <span className="eyebrow">AI WINGMATE · AUTONOMOUS COMMAND</span>
               <h2>{selectedIsCarrierFighter ? "Disposable strike doctrine" : "Set tactical doctrine"}</h2>
               <p>{selectedIsCarrierFighter
-                ? `${selectedShip.name} is carrier-launched strike craft and will press its attack regardless of damage.`
+                ? `${selectedShip.name} is carrier-launched strike craft and will press its attack regardless of damage. Its one-use evasive manoeuvre diverts a collision course but forfeits that turn's attack.`
                 : `You set intent; ${selectedShip.name} weighs its hull role, shielding, weapon range, and incoming threats before choosing its order.`}</p>
               <fieldset className="doctrine-options">
                 <legend>Choose the wingmate&apos;s standing order</legend>
@@ -4112,7 +4129,11 @@ export function SpaceGame() {
               <div className="doctrine-status" data-doctrine={selectedAiDoctrine} role="status" aria-live="polite">
                 <span><strong>{selectedAiRule.label} doctrine</strong><b>{Math.round(selectedAiCondition * 100)}% COMBAT CONDITION</b></span>
                 <p>{selectedAiRule.description}</p>
-                <small>{selectedIsCarrierFighter ? "DOCTRINE LOCKED · DISPOSABLE ATTACK RUN" : "AI READY · HULL-AWARE ORDER CALCULATED ON COMMIT"}</small>
+                <small>{selectedIsCarrierFighter
+                  ? selectedShip.evasiveManeuverAvailable
+                    ? "EVASION READY · AUTO-DODGE FORFEITS ATTACK"
+                    : "EVASION SPENT · DISPOSABLE ATTACK RUN"
+                  : "AI READY · HULL-AWARE ORDER CALCULATED ON COMMIT"}</small>
               </div>
             </section>
           ) : (

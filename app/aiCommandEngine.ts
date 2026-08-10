@@ -40,6 +40,7 @@ export type AiCommandOrder = {
   targetId: string;
   fire: boolean;
   mode: FlightMode;
+  ramTargetId?: string;
 };
 
 export type AiCommandOptions = {
@@ -581,5 +582,6 @@ export function generateAiCommandOrder(
     targetId: target.id,
     fire: fireStateForMode(mode, true),
     mode,
+    ramTargetId: rammingOpportunity ? target.id : undefined,
   };
 }

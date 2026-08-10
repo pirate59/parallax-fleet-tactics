@@ -380,6 +380,7 @@ test("healthy Hammerhead AI deliberately uses its reinforced hull for a close ra
   const order = generateAiCommandOrder(hammerhead, [hammerhead, target], "standard");
   assert.ok(order);
   assert.equal(order.mode, "normal");
+  assert.equal(order.ramTargetId, target.id);
   assert.ok(new THREE.Vector3(...order.destination).distanceTo(new THREE.Vector3(...target.position)) < 0.1);
 });
 

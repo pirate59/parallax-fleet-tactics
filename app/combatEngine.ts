@@ -167,7 +167,9 @@ export function weaponProfilesFor(ship: CombatShip): WeaponProfile[] {
 }
 
 export function passiveWeaponProfilesFor(ship: CombatShip): WeaponProfile[] {
-  return (ship.passiveTraits ?? []).map((trait, index) => ({
+  return (ship.passiveTraits ?? [])
+    .filter((trait) => trait.kind === "autonomous-turret")
+    .map((trait, index) => ({
     kind: "passive-turret" as const,
     weaponKind: trait.weaponKind,
     mountId: `passive-${trait.kind}-${index + 1}`,

@@ -102,6 +102,30 @@ function closestApproach(
   return { time, pointA, pointB, distance: pointA.distanceTo(pointB) };
 }
 
+export function movementPathClearance(
+  shipA: Pick<CollisionShip, "modelId" | "modelScale">,
+  startA: Vec3,
+  endA: Vec3,
+  shipB: Pick<CollisionShip, "modelId" | "modelScale">,
+  startB: Vec3,
+  endB: Vec3,
+  extraBuffer = 0,
+) {
+  const closest = closestApproach(
+    new THREE.Vector3(...startA),
+    new THREE.Vector3(...endA),
+    new THREE.Vector3(...startB),
+    new THREE.Vector3(...endB),
+  );
+  const minimumDistance = collisionRadiusFor(shipA) + collisionRadiusFor(shipB) + extraBuffer;
+  return {
+    time: closest.time,
+    closestDistance: closest.distance,
+    minimumDistance,
+    clearance: closest.distance - minimumDistance,
+  };
+}
+
 function fallbackNormal(shipAId: string, shipBId: string) {
   const seed = [...`${shipAId}:${shipBId}`].reduce((sum, character) => sum + character.charCodeAt(0), 0);
   const angle = (seed % 360) * Math.PI / 180;
