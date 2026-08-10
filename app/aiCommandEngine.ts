@@ -117,6 +117,7 @@ function targetScore(ship: AiCommandShip, target: AiCommandShip, doctrine: AiDoc
     1,
   );
 
+  if (ship.spawnedByShipId) return vulnerability * 0.68 + proximity * 0.27 + threat * 0.05;
   if (doctrine === "aggressive") return vulnerability * 0.58 + proximity * 0.27 + threat * 0.15;
   if (doctrine === "defensive") return proximity * 0.52 + threat * 0.34 + vulnerability * 0.14;
   return proximity * 0.38 + vulnerability * 0.37 + threat * 0.25;
@@ -331,9 +332,11 @@ export function generateAiCommandOrder(
 
   let mode: FlightMode = "normal";
   if (effectiveDoctrine === "aggressive") {
-    if (ownCondition >= 0.38 && assessment.hasSolution && (assessment.canFinishWithFocus || targetCondition < 0.42)) {
+    if (isDisposable && assessment.hasSolution) {
       mode = "focus-fire";
-    } else if (distance > maximumRange * 1.05) {
+    } else if (ownCondition >= 0.38 && assessment.hasSolution && (assessment.canFinishWithFocus || targetCondition < 0.42)) {
+      mode = "focus-fire";
+    } else if (distance > maximumRange * (isDisposable ? 1.35 : 1.05)) {
       mode = "extra-move";
     }
   } else if (effectiveDoctrine === "defensive") {
@@ -380,7 +383,11 @@ export function generateAiCommandOrder(
       }
     }
   } else if (mode === "normal") {
-    if (effectiveDoctrine === "aggressive") movementFraction = distance > maximumRange * 0.45 ? 0.78 : 0.22;
+    if (effectiveDoctrine === "aggressive") {
+      movementFraction = isDisposable
+        ? (distance > maximumRange * 0.25 ? 0.95 : 0.35)
+        : (distance > maximumRange * 0.45 ? 0.78 : 0.22);
+    }
     if (effectiveDoctrine === "standard") {
       if (hullDamaged) {
         const retreatTarget = expectedThreat ?? target;
@@ -440,7 +447,7 @@ export function generateAiCommandOrder(
   const desiredPitch = THREE.MathUtils.radToDeg(Math.atan2(aimDelta.y, Math.hypot(aimDelta.x, aimDelta.z)));
   const turn = clamp(normalizeAngle(desiredTurn - ship.rotation[1]), -ship.maxTurn, ship.maxTurn);
   const pitch = clamp(desiredPitch - ship.rotation[0], -ship.maxPitch, ship.maxPitch);
-  const rollFactor = effectiveDoctrine === "aggressive" ? -0.42 : effectiveDoctrine === "defensive" ? 0.46 : -0.18;
+  const rollFactor = isDisposable ? -0.58 : effectiveDoctrine === "aggressive" ? -0.42 : effectiveDoctrine === "defensive" ? 0.46 : -0.18;
 
   return {
     destination,

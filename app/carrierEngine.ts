@@ -1,4 +1,5 @@
 import type { ShipTurnEndAbility } from "./shipCatalog.ts";
+import { SHIELD_FACES, type Shields } from "./combatEngine.ts";
 
 export type CarrierCapableShip = {
   id: string;
@@ -16,6 +17,34 @@ export type CarrierLaunch = {
 };
 
 export const isDisposableCarrierFighter = (ship: CarrierCapableShip) => Boolean(ship.spawnedByShipId);
+
+type CarrierFighterCombatState = {
+  hull: number;
+  maxHull: number;
+  shields: Shields;
+  maxShields: Shields;
+  weaponDamage: number;
+};
+
+/** Applies the carrier bay's glass-cannon profile without changing the base Fighter hull. */
+export function applyCarrierFighterCombatProfile<T extends CarrierFighterCombatState>(
+  fighter: T,
+  ability: ShipTurnEndAbility,
+): T {
+  const maxHull = Math.max(1, Math.round(fighter.maxHull * ability.fighterDurabilityMultiplier));
+  const maxShields = SHIELD_FACES.reduce((scaled, face) => {
+    scaled[face] = Math.max(1, Math.round(fighter.maxShields[face] * ability.fighterDurabilityMultiplier));
+    return scaled;
+  }, {} as Shields);
+  return {
+    ...fighter,
+    hull: maxHull,
+    maxHull,
+    shields: { ...maxShields },
+    maxShields,
+    weaponDamage: Math.max(1, Math.round(fighter.weaponDamage * ability.fighterDamageMultiplier)),
+  };
+}
 
 /** Applies end-of-turn fighter launches without mutating the resolved fleet. */
 export function applyCarrierLaunches<T extends CarrierCapableShip>(

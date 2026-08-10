@@ -74,6 +74,8 @@ export type ShipTurnEndAbility = {
   kind: "launch-fighter";
   fighterArchetypeId: "fighter";
   maxActive: number;
+  fighterDamageMultiplier: number;
+  fighterDurabilityMultiplier: number;
   launchOffsets: Vec3[];
 };
 
@@ -228,6 +230,8 @@ export const SHIP_ARCHETYPES = {
       kind: "launch-fighter",
       fighterArchetypeId: "fighter",
       maxActive: 3,
+      fighterDamageMultiplier: 1.6,
+      fighterDurabilityMultiplier: 0.55,
       launchOffsets: [[-1.15, -0.5, 0.25], [1.15, -0.5, 0.25], [0, -0.65, 1.15]],
     },
   },

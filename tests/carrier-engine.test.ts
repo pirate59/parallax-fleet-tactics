@@ -1,14 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyCarrierLaunches, isDisposableCarrierFighter, type CarrierCapableShip } from "../app/carrierEngine.ts";
+import { applyCarrierFighterCombatProfile, applyCarrierLaunches, isDisposableCarrierFighter, type CarrierCapableShip } from "../app/carrierEngine.ts";
+import type { Shields } from "../app/combatEngine.ts";
 import type { ShipTurnEndAbility } from "../app/shipCatalog.ts";
 
 const ability: ShipTurnEndAbility = {
   kind: "launch-fighter",
   fighterArchetypeId: "fighter",
   maxActive: 3,
+  fighterDamageMultiplier: 1.6,
+  fighterDurabilityMultiplier: 0.55,
   launchOffsets: [[0, 0, 1]],
 };
+
+const shieldsAt = (value: number): Shields => ({
+  fore: value,
+  aft: value,
+  port: value,
+  starboard: value,
+  dorsal: value,
+  ventral: value,
+});
 
 type TestShip = CarrierCapableShip & { team: "ally" | "enemy" };
 
@@ -37,6 +49,22 @@ test("a living carrier launches one AI fighter per completed turn", () => {
   assert.equal(first.ships.length, 2);
   assert.equal(second.launches.length, 1);
   assert.equal(second.ships.at(-1)?.id, "carrier-fighter-2");
+});
+
+test("carrier fighters receive the glass-cannon combat profile", () => {
+  const tuned = applyCarrierFighterCombatProfile({
+    hull: 34,
+    maxHull: 34,
+    shields: shieldsAt(20),
+    maxShields: shieldsAt(20),
+    weaponDamage: 22,
+  }, ability);
+
+  assert.equal(tuned.hull, 19);
+  assert.equal(tuned.maxHull, 19);
+  assert.equal(tuned.shields.fore, 11);
+  assert.equal(tuned.maxShields.aft, 11);
+  assert.equal(tuned.weaponDamage, 35);
 });
 
 test("carrier launch bays stop at three active fighters", () => {

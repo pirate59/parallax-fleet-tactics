@@ -56,7 +56,7 @@ import {
 } from "./shipCatalog";
 import { shipModelProfileFor, type ShipModelId } from "./shipModels";
 import { createShipHullGeometry } from "./shipGeometry";
-import { applyCarrierLaunches, isDisposableCarrierFighter } from "./carrierEngine";
+import { applyCarrierFighterCombatProfile, applyCarrierLaunches, isDisposableCarrierFighter } from "./carrierEngine";
 import {
   AI_DOCTRINE_ORDER,
   AI_DOCTRINE_RULES,
@@ -679,7 +679,7 @@ function createLaunchedFighter(carrier: Ship, sequence: number, ability: ShipTur
     rotation: [...carrier.rotation] as Vec3,
   });
   return {
-    ...fighter,
+    ...applyCarrierFighterCombatProfile(fighter, ability),
     spawnedByShipId: carrier.id,
     turnEndAbility: undefined,
   };

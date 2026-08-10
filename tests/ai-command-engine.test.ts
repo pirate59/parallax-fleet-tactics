@@ -103,6 +103,37 @@ test("carrier-launched fighters override defensive orders with disposable aggres
   assert.equal(order.fire, true);
 });
 
+test("damaged carrier fighters focus fire whenever their target is in solution", () => {
+  const fighter = makeShip("carrier-fighter", {
+    modelId: "fighter",
+    spawnedByShipId: "carrier",
+    hull: 1,
+    shields: shieldsAt(0),
+    aiDoctrine: "defensive",
+    aiTactics: { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const healthyTarget = makeShip("healthy-target", { team: "enemy", position: [0, 0, -8] });
+
+  const order = generateAiCommandOrder(fighter, [fighter, healthyTarget], "defensive");
+  assert.equal(order?.mode, "focus-fire");
+  assert.equal(order?.fire, true);
+});
+
+test("carrier fighters prefer a firing attack run over sprinting just outside range", () => {
+  const fighter = makeShip("carrier-fighter", {
+    modelId: "fighter",
+    spawnedByShipId: "carrier",
+    maxMove: 5,
+    aiTactics: { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -23] });
+
+  const order = generateAiCommandOrder(fighter, [fighter, target]);
+  assert.equal(order?.mode, "normal");
+  assert.equal(order?.fire, true);
+  assert.ok((order?.destination[2] ?? 0) < -4.5);
+});
+
 test("fighters from one carrier share and retain a single overwhelm target", () => {
   const fighterProfile = { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 } as const;
   const fighterA = makeShip("fighter-a", {
