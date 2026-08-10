@@ -1305,19 +1305,21 @@ function addWeaponEnvelope(
     const isPassive = weapon.kind === "passive-turret";
     const solution = target ? shotSolutionForWeapon(end, target, weapon) : null;
     const color = isPassive ? weapon.color : !armed ? "#456779" : solution?.valid ? "#62edbd" : weapon.color;
-    const origin = weaponLocalOriginFor(end, weapon);
+    const muzzleOrigin = weaponLocalOriginFor(end, weapon);
     if (weapon.halfArc >= 180) {
       const sphere = new THREE.Mesh(
         new THREE.SphereGeometry(weapon.range, 28, 18),
         new THREE.MeshBasicMaterial({ color, transparent: true, opacity: isPassive || armed ? 0.16 : 0.06, wireframe: true, depthWrite: false }),
       );
-      sphere.position.copy(origin);
+      sphere.position.copy(muzzleOrigin);
       envelopeRoot.add(sphere);
       return;
     }
+    const origin = new THREE.Vector3();
+    const displayRange = weapon.range + Math.max(0, -muzzleOrigin.z);
     const halfArc = degrees(weapon.halfArc);
-    const coneHeight = weapon.range * Math.cos(halfArc);
-    const coneRadius = weapon.range * Math.sin(halfArc);
+    const coneHeight = displayRange * Math.cos(halfArc);
+    const coneRadius = displayRange * Math.sin(halfArc);
     const coneGeometry = new THREE.ConeGeometry(coneRadius, coneHeight, 32, 1, true);
     const cone = new THREE.Mesh(
       coneGeometry,
@@ -1332,7 +1334,7 @@ function addWeaponEnvelope(
     wire.rotation.copy(cone.rotation);
     wire.position.copy(cone.position);
     const centerline = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([origin, origin.clone().add(new THREE.Vector3(0, 0, -weapon.range))]),
+      new THREE.BufferGeometry().setFromPoints([origin, origin.clone().add(new THREE.Vector3(0, 0, -displayRange))]),
       new THREE.LineDashedMaterial({ color, dashSize: 0.42, gapSize: 0.3, transparent: true, opacity: armed ? 0.68 : 0.18 }),
     );
     centerline.computeLineDistances();

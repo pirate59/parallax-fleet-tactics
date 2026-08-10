@@ -253,8 +253,7 @@ test("a lethal first Focus Fire salvo cancels the second salvo", () => {
 test("zero-distance targets are safe and count as inside the firing arc", () => {
   const shooter = makeShip("shooter");
   const weapon = weaponProfilesFor(shooter)[0];
-  const origin = weaponOriginFor(shooter, weapon);
-  const target = makeShip("target", { position: [origin.x, origin.y, origin.z], team: "enemy" });
+  const target = makeShip("target", { position: [...shooter.position], team: "enemy" });
   const solution = shotSolutionForWeapon(shooter, target, weapon);
 
   assert.equal(solution.distance, 0);
@@ -265,6 +264,19 @@ test("zero-distance targets are safe and count as inside the firing arc", () => 
   const result = resolveCombatTurn([shooter, target], ordersFor([[shooter.id, target.id]]));
   assert.equal(result.shots[0].valid, true);
   assert.equal(result.shots[0].face, "fore");
+});
+
+test("directional firing cones begin at ship centre instead of the forward muzzle", () => {
+  const shooter = makeShip("shooter");
+  const weapon = weaponProfilesFor(shooter)[0];
+  // This target is inside the ship-centred 28-degree cone but sits behind the
+  // forward muzzle hardpoint, reproducing the former close-range blind pocket.
+  const target = makeShip("target", { position: [0.45, 0, -1], team: "enemy" });
+  const muzzle = weaponOriginFor(shooter, weapon);
+
+  assert.ok(muzzle.z < target.position[2]);
+  assert.equal(shotSolutionForWeapon(shooter, target, weapon).valid, true);
+  assert.equal(resolveCombatTurn([shooter, target], ordersFor([[shooter.id, target.id]])).shots[0].valid, true);
 });
 
 test("shield facings are selected from the exact weapon origin", () => {

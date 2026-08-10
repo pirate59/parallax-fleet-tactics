@@ -192,7 +192,14 @@ export function weaponOriginFor(ship: CombatShip, weapon: WeaponProfile) {
 }
 
 export function shotSolutionForWeapon(shooter: CombatShip, target: CombatShip, weapon: WeaponProfile): ShotSolution {
-  const toTarget = new THREE.Vector3(...target.position).sub(weaponOriginFor(shooter, weapon));
+  // Targeting cones begin at the ship's tactical centre. Muzzle hardpoints are
+  // still used for beams and shield-facing impacts, but should not create a
+  // blind pocket around targets that are closer than the ship's nose.
+  const localMuzzle = weaponLocalOriginFor(shooter, weapon);
+  const targetingOrigin = weapon.halfArc >= 180
+    ? weaponOriginFor(shooter, weapon)
+    : new THREE.Vector3(...shooter.position);
+  const toTarget = new THREE.Vector3(...target.position).sub(targetingOrigin);
   const distance = toTarget.length();
   const forward = new THREE.Vector3(0, 0, -1)
     .applyQuaternion(shipQuaternionForRotation(shooter.rotation))
@@ -202,7 +209,10 @@ export function shotSolutionForWeapon(shooter: CombatShip, target: CombatShip, w
   const inArc = distance <= ZERO_DISTANCE_EPSILON
     || weapon.halfArc >= 180
     || forward.dot(toTarget.clone().normalize()) >= Math.cos(degrees(weapon.halfArc));
-  const inRange = distance <= weapon.range;
+  // Moving a directional cone's apex back to the ship centre must not shorten
+  // its existing forward reach. Add the muzzle's forward offset to the cone.
+  const centreAllowance = weapon.halfArc >= 180 ? 0 : Math.max(0, -localMuzzle.z);
+  const inRange = distance <= weapon.range + centreAllowance;
   return { distance, inRange, inArc, valid: inRange && inArc };
 }
 
