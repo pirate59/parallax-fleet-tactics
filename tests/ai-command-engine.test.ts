@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import {
+  carrierWingTargetAssignments,
   chooseAiTarget,
   generateAiCommandOrder,
   shipConditionScore,
   type AiCommandShip,
 } from "../app/aiCommandEngine.ts";
 import type { Shields } from "../app/combatEngine.ts";
-import { createPrimaryWeaponMount } from "../app/shipCatalog.ts";
+import { createPrimaryWeaponMount, createWeaponMount } from "../app/shipCatalog.ts";
 
 const shieldsAt = (value: number): Shields => ({
   fore: value,
@@ -80,6 +81,200 @@ test("healthy aggressive AI uses Focus Fire against a vulnerable target already 
   assert.equal(order.mode, "focus-fire");
   assert.equal(order.fire, true);
   assert.deepEqual(order.destination, ally.position);
+});
+
+test("carrier-launched fighters override defensive orders with disposable aggression", () => {
+  const fighter = makeShip("carrier-fighter", {
+    modelId: "fighter",
+    spawnedByShipId: "carrier",
+    aiDoctrine: "defensive",
+    aiTactics: { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const target = makeShip("target", {
+    team: "enemy",
+    position: [0, 0, -8],
+    hull: 8,
+    shields: shieldsAt(0),
+  });
+
+  const order = generateAiCommandOrder(fighter, [fighter, target], "defensive");
+  assert.ok(order);
+  assert.equal(order.mode, "focus-fire");
+  assert.equal(order.fire, true);
+});
+
+test("damaged carrier fighters focus fire whenever their target is in solution", () => {
+  const fighter = makeShip("carrier-fighter", {
+    modelId: "fighter",
+    spawnedByShipId: "carrier",
+    hull: 1,
+    shields: shieldsAt(0),
+    aiDoctrine: "defensive",
+    aiTactics: { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const healthyTarget = makeShip("healthy-target", { team: "enemy", position: [0, 0, -8] });
+
+  const order = generateAiCommandOrder(fighter, [fighter, healthyTarget], "defensive");
+  assert.equal(order?.mode, "focus-fire");
+  assert.equal(order?.fire, true);
+});
+
+test("carrier fighters prefer a firing attack run over sprinting just outside range", () => {
+  const fighter = makeShip("carrier-fighter", {
+    modelId: "fighter",
+    spawnedByShipId: "carrier",
+    maxMove: 5,
+    aiTactics: { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -23] });
+
+  const order = generateAiCommandOrder(fighter, [fighter, target]);
+  assert.equal(order?.mode, "normal");
+  assert.equal(order?.fire, true);
+  assert.ok((order?.destination[2] ?? 0) < -4.5);
+});
+
+test("fighters from one carrier share and retain a single overwhelm target", () => {
+  const fighterProfile = { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 } as const;
+  const fighterA = makeShip("fighter-a", {
+    modelId: "fighter",
+    position: [-6, 0, 0],
+    spawnedByShipId: "carrier",
+    aiTactics: fighterProfile,
+  });
+  const fighterB = makeShip("fighter-b", {
+    modelId: "fighter",
+    position: [6, 0, 0],
+    spawnedByShipId: "carrier",
+    aiTactics: fighterProfile,
+  });
+  const targetA = makeShip("target-a", { team: "enemy", position: [-6, 0, -9] });
+  const targetB = makeShip("target-b", { team: "enemy", position: [6, 0, -9], hull: 55 });
+  const fleet = [fighterA, fighterB, targetA, targetB];
+
+  const assignments = carrierWingTargetAssignments(fleet);
+  assert.ok(assignments[fighterA.id]);
+  assert.equal(assignments[fighterA.id], assignments[fighterB.id]);
+  const orders = [fighterA, fighterB].map((fighter) => generateAiCommandOrder(
+    fighter,
+    fleet,
+    "standard",
+    20,
+    7,
+    { forcedTargetId: assignments[fighter.id] },
+  ));
+  assert.ok(orders.every((order) => order?.targetId === assignments[fighterA.id]));
+
+  const rememberedFleet = fleet.map((ship) => ship.id.startsWith("fighter-") ? { ...ship, lastTargetId: targetB.id } : ship);
+  const rememberedAssignments = carrierWingTargetAssignments(rememberedFleet);
+  assert.equal(rememberedAssignments[fighterA.id], targetB.id);
+  assert.equal(rememberedAssignments[fighterB.id], targetB.id);
+
+  const destroyedTargetFleet = rememberedFleet.map((ship) => ship.id === targetB.id ? { ...ship, hull: 0 } : ship);
+  const fallbackAssignments = carrierWingTargetAssignments(destroyedTargetFleet);
+  assert.equal(fallbackAssignments[fighterA.id], targetA.id);
+  assert.equal(fallbackAssignments[fighterB.id], targetA.id);
+});
+
+test("carrier wings ignore disposable enemies while core targets remain", () => {
+  const fighter = makeShip("fighter-a", { spawnedByShipId: "carrier", position: [0, 0, 0] });
+  const carrier = makeShip("carrier", { weaponMounts: [], position: [20, 0, 20] });
+  const enemyFighter = makeShip("enemy-fighter", { team: "enemy", spawnedByShipId: "enemy-carrier", position: [0, 0, -5] });
+  const enemyCore = makeShip("enemy-core", { team: "enemy", position: [0, 0, -12] });
+
+  assert.equal(carrierWingTargetAssignments([fighter, carrier, enemyFighter, enemyCore])[fighter.id], enemyCore.id);
+});
+
+test("carrier wings intercept disposable fighters with an imminent carrier attack", () => {
+  const fighter = makeShip("fighter-a", { spawnedByShipId: "carrier", position: [0, 0, 0] });
+  const carrier = makeShip("carrier", { weaponMounts: [], position: [0, 0, -2] });
+  const enemyFighter = makeShip("enemy-fighter", {
+    team: "enemy",
+    spawnedByShipId: "enemy-carrier",
+    position: [0, 0, -8],
+    rotation: [0, 0, 0],
+    lastTargetId: carrier.id,
+  });
+  const enemyCore = makeShip("enemy-core", { team: "enemy", position: [0, 0, -14] });
+
+  assert.equal(carrierWingTargetAssignments([fighter, carrier, enemyFighter, enemyCore])[fighter.id], enemyFighter.id);
+});
+
+test("standard Hammerhead faces the hostile most likely to shoot it", () => {
+  const hammerhead = makeShip("hammerhead", {
+    maxTurn: 60,
+    aiTactics: { role: "bow-tank", preferredRangeRatio: 0.62, facingPriority: "expected-threat", survivalHullRatio: 0.5 },
+  });
+  const vulnerableTarget = makeShip("vulnerable", {
+    team: "enemy",
+    position: [0, 0, -8],
+    rotation: [0, 180, 0],
+    hull: 10,
+    shields: shieldsAt(0),
+    weaponDamage: 5,
+  });
+  const incomingThreat = makeShip("threat", {
+    team: "enemy",
+    position: [8, 0, 0],
+    rotation: [0, -90, 0],
+    weaponDamage: 40,
+  });
+
+  const order = generateAiCommandOrder(hammerhead, [hammerhead, vulnerableTarget, incomingThreat], "standard");
+  assert.ok(order);
+  assert.equal(order.targetId, vulnerableTarget.id, "weapon targeting should still favour the vulnerable ship");
+  assert.equal(order.turn, hammerhead.maxTurn, "reinforced bow should turn as far as possible toward the expected shooter");
+});
+
+test("standard standoff ships close using normal movement so their guns remain active", () => {
+  const archer = makeShip("archer", {
+    modelId: "archer",
+    maxMove: 6,
+    weaponRange: 20,
+    weaponMounts: [createWeaponMount("railgun")],
+    aiTactics: { role: "standoff", preferredRangeRatio: 0.82, facingPriority: "weapon-target", survivalHullRatio: 0.52 },
+  });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -70] });
+
+  const order = generateAiCommandOrder(archer, [archer, target], "standard", 100, 20);
+  assert.ok(order);
+  assert.equal(order.mode, "normal");
+  assert.equal(order.fire, true);
+  assert.ok(order.destination[2] < archer.position[2]);
+});
+
+test("a damaged non-fighter retreats with guns active until destruction becomes imminent", () => {
+  const damaged = makeShip("damaged", {
+    hull: 75,
+    aiTactics: { role: "brawler", preferredRangeRatio: 0.62, facingPriority: "weapon-target", survivalHullRatio: 0.48 },
+  });
+  const target = makeShip("target", {
+    team: "enemy",
+    position: [0, 0, -6],
+    rotation: [0, 180, 0],
+    weaponDamage: 5,
+  });
+
+  const order = generateAiCommandOrder(damaged, [damaged, target], "standard");
+  assert.ok(order);
+  assert.equal(order.mode, "normal");
+  assert.equal(order.fire, true);
+  assert.ok(order.destination[2] > damaged.position[2]);
+});
+
+test("fighters do not switch to survival-only movement after hull damage", () => {
+  const fighter = makeShip("fighter", {
+    modelId: "fighter",
+    hull: 15,
+    shields: shieldsAt(0),
+    aiTactics: { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -6] });
+
+  const order = generateAiCommandOrder(fighter, [fighter, target], "standard");
+  assert.ok(order);
+  assert.equal(order.mode, "normal");
+  assert.equal(order.fire, true);
 });
 
 test("damaged defensive AI doubles movement to retreat and keeps weapons safe", () => {

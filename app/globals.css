@@ -832,7 +832,53 @@ input:focus-visible {
 
 .topbar-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+
+.overlay-label-toggles {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  margin: 0 4px 0 0;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.overlay-label-toggles legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.overlay-label-toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #86a2b3;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--type-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.overlay-label-toggles input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--mint);
+  cursor: pointer;
+}
+
+.overlay-label-toggles label:has(input:checked) {
+  color: #d8f5f3;
 }
 
 .battle-layout {
@@ -973,25 +1019,90 @@ input:focus-visible {
   font-weight: 500;
 }
 
-.fishtank-team ol {
+.fishtank-fleet-bars {
   display: flex;
-  gap: 6px;
+  align-items: flex-end;
+  gap: 7px;
+  min-height: 30px;
   margin: 8px 0 0;
   padding: 0;
   list-style: none;
 }
 
-.fishtank-team li {
-  width: 24px;
-  height: 4px;
-  background: currentColor;
-  box-shadow: 0 0 9px currentColor;
-  transition: opacity 220ms ease;
+.fishtank-formation-slot {
+  width: 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 3px;
 }
 
-.fishtank-team li.destroyed {
-  opacity: 0.15;
+.fishtank-carrier-wing {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fishtank-ship-bar {
+  width: 30px;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid rgba(140, 188, 205, 0.22);
+  background: #02060a;
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.85);
+}
+
+.fishtank-ship-bar[data-size="shuttle"] {
+  height: 4px;
+}
+
+.fishtank-ship-bar[data-size="cruiser"] {
+  height: 7px;
+}
+
+.fishtank-ship-bar[data-size="large"] {
+  height: 11px;
+}
+
+.fishtank-ship-bar i {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  box-shadow: 0 0 9px currentColor;
+  transition: width 320ms ease;
+}
+
+.fishtank-ship-bar.destroyed {
+  border-color: rgba(96, 118, 128, 0.14);
   box-shadow: none;
+}
+
+.fishtank-ship-bar.carrier-fighter {
+  border-color: color-mix(in srgb, currentColor 36%, transparent);
+  opacity: 0.82;
+}
+
+.fishtank-carrier-reserve {
+  display: grid;
+  grid-template-columns: repeat(3, 3px);
+  align-self: center;
+  gap: 2px;
+  min-height: 13px;
+  padding-top: 1px;
+}
+
+.fishtank-carrier-reserve i {
+  width: 3px;
+  height: 3px;
+  border: 1px solid color-mix(in srgb, currentColor 38%, transparent);
+  border-radius: 50%;
+  background: #02060a;
+}
+
+.fishtank-carrier-reserve i.available {
+  background: currentColor;
+  box-shadow: 0 0 5px currentColor;
 }
 
 .fishtank-team.azure {
@@ -1002,6 +1113,14 @@ input:focus-visible {
   align-items: flex-end;
   color: var(--coral);
   text-align: right;
+}
+
+.fishtank-team.crimson .fishtank-fleet-bars {
+  justify-content: flex-end;
+}
+
+.fishtank-team.crimson .fishtank-ship-bar {
+  justify-content: flex-end;
 }
 
 .fishtank-director {
@@ -2943,6 +3062,16 @@ input[type="range"]::-moz-range-thumb {
     border-right: 0;
   }
 
+  .overlay-label-toggles {
+    gap: 7px;
+    padding: 0 8px;
+  }
+
+  .overlay-label-toggles label {
+    gap: 4px;
+    font-size: 9px;
+  }
+
   .battle-layout {
     display: block;
   }
@@ -3113,8 +3242,9 @@ input[type="range"]::-moz-range-thumb {
     font-size: 19px;
   }
 
-  .fishtank-team li {
-    width: 14px;
+  .fishtank-formation-slot,
+  .fishtank-ship-bar {
+    width: 18px;
   }
 
   .attitude-row {
@@ -3145,6 +3275,15 @@ input[type="range"]::-moz-range-thumb {
   .topbar-actions .quiet-button {
     padding: 0 8px;
     letter-spacing: 0.06em;
+  }
+
+  .overlay-label-toggles {
+    gap: 5px;
+    padding: 0 6px;
+  }
+
+  .overlay-label-toggles label span {
+    display: none;
   }
 }
 

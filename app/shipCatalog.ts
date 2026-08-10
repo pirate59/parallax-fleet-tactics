@@ -5,6 +5,7 @@ import {
   type ShipSizeClass,
 } from "./shipSize.ts";
 import type { ShipModelId } from "./shipModels.ts";
+import type { AiTacticalProfile } from "./aiTactics.ts";
 
 export const BASIC_WEAPON_SYSTEMS = {
   cannon: {
@@ -73,6 +74,9 @@ export type ShipTurnEndAbility = {
   kind: "launch-fighter";
   fighterArchetypeId: "fighter";
   maxActive: number;
+  fighterReserve: number;
+  fighterDamageMultiplier: number;
+  fighterDurabilityMultiplier: number;
   launchOffsets: Vec3[];
 };
 
@@ -95,6 +99,7 @@ export type ShipArchetype = {
   weaponRange: number;
   weaponDamage: number;
   weaponMounts: WeaponMount[];
+  aiTactics: AiTacticalProfile;
   turnEndAbility?: ShipTurnEndAbility;
 };
 
@@ -120,6 +125,7 @@ export const SHIP_ARCHETYPES = {
     weaponRange: 17,
     weaponDamage: 34,
     weaponMounts: [createPrimaryWeaponMount("cannon")],
+    aiTactics: { role: "bow-tank", preferredRangeRatio: 0.62, facingPriority: "expected-threat", survivalHullRatio: 0.5 },
   },
   archer: {
     id: "archer",
@@ -139,6 +145,7 @@ export const SHIP_ARCHETYPES = {
     weaponRange: 16,
     weaponDamage: 30,
     weaponMounts: [createWeaponMount("railgun")],
+    aiTactics: { role: "standoff", preferredRangeRatio: 0.82, facingPriority: "weapon-target", survivalHullRatio: 0.52 },
   },
   hulk: {
     id: "hulk",
@@ -158,6 +165,7 @@ export const SHIP_ARCHETYPES = {
     weaponRange: 16,
     weaponDamage: 30,
     weaponMounts: [createWeaponMount("flak")],
+    aiTactics: { role: "brawler", preferredRangeRatio: 0.68, facingPriority: "weapon-target", survivalHullRatio: 0.48 },
   },
   fighter: {
     id: "fighter",
@@ -177,6 +185,7 @@ export const SHIP_ARCHETYPES = {
     weaponRange: 26,
     weaponDamage: 22,
     weaponMounts: [createPrimaryWeaponMount("pulse")],
+    aiTactics: { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
   },
   behemoth: {
     id: "behemoth",
@@ -197,6 +206,7 @@ export const SHIP_ARCHETYPES = {
     weaponRange: 16,
     weaponDamage: 38,
     weaponMounts: [behemothRailgun, createWeaponMount("flak", [behemothRailgun], "starboard-forward")],
+    aiTactics: { role: "heavy-platform", preferredRangeRatio: 0.72, facingPriority: "expected-threat", survivalHullRatio: 0.55 },
   },
   carrier: {
     id: "carrier",
@@ -206,6 +216,7 @@ export const SHIP_ARCHETYPES = {
     color: "#77c9ff",
     modelId: "carrier",
     sizeClass: "large",
+    durabilityMultiplier: 0.72,
     baseModelScale: 1,
     baseShieldCapacity: { fore: 118, aft: 110, port: 124, starboard: 124, dorsal: 116, ventral: 108 },
     baseHull: 156,
@@ -216,10 +227,14 @@ export const SHIP_ARCHETYPES = {
     weaponRange: 16,
     weaponDamage: 0,
     weaponMounts: [],
+    aiTactics: { role: "carrier", preferredRangeRatio: 0.9, facingPriority: "expected-threat", survivalHullRatio: 0.62 },
     turnEndAbility: {
       kind: "launch-fighter",
       fighterArchetypeId: "fighter",
       maxActive: 3,
+      fighterReserve: 9,
+      fighterDamageMultiplier: 1.6,
+      fighterDurabilityMultiplier: 0.55,
       launchOffsets: [[-1.15, -0.5, 0.25], [1.15, -0.5, 0.25], [0, -0.65, 1.15]],
     },
   },

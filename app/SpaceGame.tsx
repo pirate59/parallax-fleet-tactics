@@ -56,10 +56,11 @@ import {
 } from "./shipCatalog";
 import { shipModelProfileFor, type ShipModelId } from "./shipModels";
 import { createShipHullGeometry } from "./shipGeometry";
-import { applyCarrierLaunches } from "./carrierEngine";
+import { applyCarrierFighterCombatProfile, applyCarrierLaunches, isDisposableCarrierFighter } from "./carrierEngine";
 import {
   AI_DOCTRINE_ORDER,
   AI_DOCTRINE_RULES,
+  carrierWingTargetAssignments,
   generateAiCommandOrder,
   shipConditionScore,
   type AiDoctrine,
@@ -72,10 +73,12 @@ import {
   type ShipController,
 } from "./fleetControl";
 import {
+  FISHTANK_CINEMATIC_TIMINGS,
   FISHTANK_FLEET_SIZE,
   FISHTANK_PLANNING_DELAY_MS,
   FISHTANK_RESTART_DELAY_MS,
   createFishtankFleet,
+  createFishtankStatusRows,
   fishtankActivationOrder,
 } from "./fishtankMode";
 import {
@@ -85,6 +88,10 @@ import {
   totalDurabilityMultiplier,
   type ShipSizeClass,
 } from "./shipSize";
+import { fleetColorFor } from "./fleetPresentation";
+import { preferredTargetId, rememberOrderedTargets } from "./targetMemory";
+import { spectatorOverviewFor } from "./spectatorCamera";
+import type { AiTacticalProfile } from "./aiTactics";
 
 type Phase = "planning" | "executing" | "victory" | "defeat";
 type GameScreen = "menu" | "battle" | "story";
@@ -96,6 +103,11 @@ type AudioSettings = {
   soundVolume: number;
   musicEnabled: boolean;
   musicVolume: number;
+};
+
+type OverlayLabelSettings = {
+  showShipNames: boolean;
+  showHealth: boolean;
 };
 
 type Ship = {
@@ -125,8 +137,11 @@ type Ship = {
   durabilityMultiplier: number;
   modelScale: number;
   weaponMounts: WeaponMount[];
+  aiTactics: AiTacticalProfile;
   turnEndAbility?: ShipTurnEndAbility;
+  fighterReserveRemaining?: number;
   spawnedByShipId?: string;
+  lastTargetId?: string;
 };
 
 type Order = {
@@ -244,6 +259,11 @@ const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   musicVolume: 48,
 };
 
+const DEFAULT_OVERLAY_LABELS: OverlayLabelSettings = {
+  showShipNames: true,
+  showHealth: true,
+};
+
 const TEAM_LABELS: Record<Team, string> = {
   player: "Your fleet",
   ally: "Allied NPC",
@@ -281,7 +301,7 @@ function createShipFromArchetype(archetype: ShipArchetype, deployment: ShipDeplo
     name: deployment.name ?? archetype.name,
     callsign: deployment.callsign ?? archetype.callsign,
     className: deployment.className ?? archetype.className,
-    color: deployment.color ?? archetype.color,
+    color: deployment.color ?? fleetColorFor(deployment.team, archetype.id),
     team: deployment.team,
     controller: deployment.controller,
     aiDoctrine: deployment.aiDoctrine,
@@ -303,10 +323,12 @@ function createShipFromArchetype(archetype: ShipArchetype, deployment: ShipDeplo
     maxHull: durability.hull,
     modelScale: resolveSizedModelScale(archetype.baseModelScale, archetype.sizeClass),
     weaponMounts: archetype.weaponMounts.map((mount) => ({ ...mount })),
+    aiTactics: { ...archetype.aiTactics },
     turnEndAbility: archetype.turnEndAbility ? {
       ...archetype.turnEndAbility,
       launchOffsets: archetype.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
     } : undefined,
+    fighterReserveRemaining: archetype.turnEndAbility?.fighterReserve,
   };
 }
 
@@ -469,14 +491,13 @@ const destinationFromManeuver = (
 };
 
 const defaultOrderFor = (ship: Ship, ships: Ship[]): Order => {
-  const firstEnemy = ships.find((candidate) => candidate.team === "enemy" && candidate.hull > 0);
   const defaultDistance = Math.min(ship.maxMove, ship.team === "player" ? 3 : ship.maxMove * 0.55);
   return {
     destination: destinationFromManeuver(ship, defaultDistance, 0, 0, 0, "normal"),
     turn: 0,
     pitch: 0,
     roll: 0,
-    targetId: firstEnemy?.id ?? "",
+    targetId: preferredTargetId(ship, ships),
     fire: true,
     mode: "normal",
   };
@@ -512,6 +533,7 @@ function copyShips(ships: Ship[]) {
     shields: { ...ship.shields },
     maxShields: { ...ship.maxShields },
     weaponMounts: ship.weaponMounts.map((mount) => ({ ...mount })),
+    aiTactics: { ...ship.aiTactics },
     turnEndAbility: ship.turnEndAbility ? {
       ...ship.turnEndAbility,
       launchOffsets: ship.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
@@ -548,13 +570,14 @@ function createStoryStarter() {
     name: archetype.name,
     callsign: archetype.callsign,
     className: archetype.className,
-    color: archetype.color,
+    color: fleetColorFor("player", archetype.id),
     archetypeId: archetype.id,
     modelId: archetype.modelId,
     sizeClass: archetype.sizeClass,
     durabilityMultiplier: archetype.durabilityMultiplier ?? 1,
     modelScale: modelScaleForArchetype(archetype),
     weaponMounts: archetype.weaponMounts.map((mount) => ({ ...mount })),
+    aiTactics: { ...archetype.aiTactics },
     turnEndAbility: archetype.turnEndAbility ? {
       ...archetype.turnEndAbility,
       launchOffsets: archetype.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
@@ -599,6 +622,7 @@ function createStoryEnemy(kind: StoryEnemyKind, gate: number, index: number, sca
     className: threatId ? `Pursuit ${template.className.toLowerCase()}` : template.className,
     team: "enemy" as Team,
     controller: "ai" as const,
+    color: fleetColorFor("enemy", `${archetypeId}-${index}`),
     position: [...slot] as Vec3,
     rotation: [index % 2 ? -5 : 3, -118 - index * 8, index % 2 ? 6 : -4] as Vec3,
     shields,
@@ -618,7 +642,6 @@ function createRecruitShip(kind: "scout" | "escort" | "gunboat", currentShips: S
   const template = copyShips([sourceTemplate])[0];
   const index = currentShips.filter((ship) => ship.id.startsWith(`recruit-${kind}`)).length + 1;
   const names = { scout: "Morrow", escort: "Vesper", gunboat: "Bastion" } as const;
-  const colors = { scout: "#9af2ff", escort: "#67e7ca", gunboat: "#85c8ff" } as const;
   const slot = STORY_PLAYER_SLOTS[Math.min(currentShips.filter((ship) => ship.team === "player").length, STORY_PLAYER_SLOTS.length - 1)];
   return {
     ...template,
@@ -628,7 +651,7 @@ function createRecruitShip(kind: "scout" | "escort" | "gunboat", currentShips: S
     className: `Volunteer ${template.className.toLowerCase()}`,
     team: "player" as Team,
     ...AI_RECRUIT_CONTROL,
-    color: colors[kind],
+    color: fleetColorFor("player", `${archetypeId}-${index}`),
     position: [...slot.position] as Vec3,
     rotation: [...slot.rotation] as Vec3,
   };
@@ -649,7 +672,7 @@ function createLaunchedFighter(carrier: Ship, sequence: number, ability: ShipTur
     color: carrier.color,
     team: carrier.team,
     controller: "ai",
-    aiDoctrine: carrier.aiDoctrine ?? "aggressive",
+    aiDoctrine: "aggressive",
     position: [
       clamp(launchPosition.x, -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
       clamp(launchPosition.y, -BATTLEFIELD_VERTICAL_HALF, BATTLEFIELD_VERTICAL_HALF),
@@ -658,7 +681,7 @@ function createLaunchedFighter(carrier: Ship, sequence: number, ability: ShipTur
     rotation: [...carrier.rotation] as Vec3,
   });
   return {
-    ...fighter,
+    ...applyCarrierFighterCombatProfile(fighter, ability),
     spawnedByShipId: carrier.id,
     turnEndAbility: undefined,
   };
@@ -670,7 +693,12 @@ function prepareStoryBattle(fleet: Ship[], gate: number, pendingThreats: Pending
     .filter((ship) => ship.hull > 0)
     .map((ship, index) => {
       const slot = STORY_PLAYER_SLOTS[index % STORY_PLAYER_SLOTS.length];
-      return { ...ship, position: [...slot.position] as Vec3, rotation: [...slot.rotation] as Vec3 };
+      return {
+        ...ship,
+        fighterReserveRemaining: ship.turnEndAbility?.fighterReserve,
+        position: [...slot.position] as Vec3,
+        rotation: [...slot.rotation] as Vec3,
+      };
     });
   const enemies = config.enemies.map((kind, index) => createStoryEnemy(kind, gate, index, config.scale));
   const triggeredThreats = pendingThreats.filter((threat) => threat.triggerGate <= gate);
@@ -751,6 +779,7 @@ type ShipHudHandle = {
   texture: THREE.CanvasTexture;
   context: CanvasRenderingContext2D;
   lastKey: string;
+  enabled: boolean;
 };
 
 function hullHealthColor(ratio: number) {
@@ -759,47 +788,54 @@ function hullHealthColor(ratio: number) {
   return "#61e9bd";
 }
 
-function updateShipHud(handle: ShipHudHandle, ship: Ship) {
-  const key = `${ship.name}|${ship.color}|${ship.hull}|${ship.maxHull}`;
+function updateShipHud(handle: ShipHudHandle, ship: Ship, labels: OverlayLabelSettings) {
+  const key = `${ship.name}|${ship.color}|${ship.hull}|${ship.maxHull}|${labels.showShipNames}|${labels.showHealth}`;
   if (handle.lastKey === key) return;
   handle.lastKey = key;
+  handle.enabled = labels.showShipNames || labels.showHealth;
 
   const { context } = handle;
   const ratio = clamp(ship.hull / Math.max(1, ship.maxHull), 0, 1);
   const percentage = Math.round(ratio * 100);
   context.clearRect(0, 0, 384, 112);
 
-  context.fillStyle = "rgba(5, 11, 19, 0.9)";
-  context.beginPath();
-  context.roundRect(8, 6, 368, 50, 11);
-  context.fill();
-  context.strokeStyle = ship.color;
-  context.lineWidth = 2;
-  context.stroke();
-  context.fillStyle = "#eff9ff";
-  context.font = "600 27px ui-monospace, monospace";
-  context.textAlign = "center";
-  context.fillText(ship.name.toUpperCase(), 192, 40);
+  if (labels.showShipNames) {
+    context.fillStyle = "rgba(5, 11, 19, 0.9)";
+    context.beginPath();
+    context.roundRect(8, 6, 368, 50, 11);
+    context.fill();
+    context.strokeStyle = ship.color;
+    context.lineWidth = 2;
+    context.stroke();
+    context.fillStyle = "#eff9ff";
+    context.font = "600 27px ui-monospace, monospace";
+    context.textAlign = "center";
+    context.fillText(ship.name.toUpperCase(), 192, 40);
+  }
 
-  context.fillStyle = "rgba(5, 11, 19, 0.92)";
-  context.fillRect(12, 66, 360, 18);
-  context.fillStyle = hullHealthColor(ratio);
-  context.fillRect(12, 66, 360 * ratio, 18);
-  context.strokeStyle = "rgba(223, 244, 252, 0.46)";
-  context.lineWidth = 2;
-  context.strokeRect(12, 66, 360, 18);
+  if (labels.showHealth) {
+    const barY = labels.showShipNames ? 66 : 28;
+    const textY = labels.showShipNames ? 105 : 67;
+    context.fillStyle = "rgba(5, 11, 19, 0.92)";
+    context.fillRect(12, barY, 360, 18);
+    context.fillStyle = hullHealthColor(ratio);
+    context.fillRect(12, barY, 360 * ratio, 18);
+    context.strokeStyle = "rgba(223, 244, 252, 0.46)";
+    context.lineWidth = 2;
+    context.strokeRect(12, barY, 360, 18);
 
-  context.font = "600 17px ui-monospace, monospace";
-  context.textAlign = "left";
-  context.fillStyle = "#9eb8c5";
-  context.fillText("HULL", 12, 105);
-  context.textAlign = "right";
-  context.fillStyle = "#edf8fc";
-  context.fillText(`${Math.round(ship.hull)} / ${ship.maxHull} · ${percentage}%`, 372, 105);
+    context.font = "600 17px ui-monospace, monospace";
+    context.textAlign = "left";
+    context.fillStyle = "#9eb8c5";
+    context.fillText("HULL", 12, textY);
+    context.textAlign = "right";
+    context.fillStyle = "#edf8fc";
+    context.fillText(`${Math.round(ship.hull)} / ${ship.maxHull} · ${percentage}%`, 372, textY);
+  }
   handle.texture.needsUpdate = true;
 }
 
-function createShipHud(ship: Ship) {
+function createShipHud(ship: Ship, labels: OverlayLabelSettings) {
   const canvas = document.createElement("canvas");
   canvas.width = 384;
   canvas.height = 112;
@@ -811,8 +847,8 @@ function createShipHud(ship: Ship) {
     new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false }),
   );
   sprite.renderOrder = 30;
-  const handle: ShipHudHandle = { sprite, texture, context, lastKey: "" };
-  updateShipHud(handle, ship);
+  const handle: ShipHudHandle = { sprite, texture, context, lastKey: "", enabled: true };
+  updateShipHud(handle, ship, labels);
   return handle;
 }
 
@@ -966,6 +1002,119 @@ function clearGroup(group: THREE.Group) {
     group.remove(child);
     disposeObject(child);
   });
+}
+
+function createNebulaTexture(seed: number, colors: string[]) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  let value = seed >>> 0;
+  const random = () => {
+    value += 0x6d2b79f5;
+    let result = value;
+    result = Math.imul(result ^ (result >>> 15), result | 1);
+    result ^= result + Math.imul(result ^ (result >>> 7), result | 61);
+    return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
+  };
+
+  context.clearRect(0, 0, 512, 512);
+  context.globalCompositeOperation = "lighter";
+  for (let index = 0; index < 34; index += 1) {
+    const x = 110 + random() * 292;
+    const y = 90 + random() * 332;
+    const radius = 48 + random() * 122;
+    const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+    const color = new THREE.Color(colors[index % colors.length]);
+    const red = Math.round(color.r * 255);
+    const green = Math.round(color.g * 255);
+    const blue = Math.round(color.b * 255);
+    gradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, ${0.055 + random() * 0.08})`);
+    gradient.addColorStop(0.42, `rgba(${red}, ${green}, ${blue}, 0.035)`);
+    gradient.addColorStop(1, `rgba(${red}, ${green}, ${blue}, 0)`);
+    context.fillStyle = gradient;
+    context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createSpaceScenery() {
+  const scenery = new THREE.Group();
+  scenery.name = "distant-space-scenery";
+
+  const planet = new THREE.Mesh(
+    new THREE.SphereGeometry(12, 56, 40),
+    new THREE.MeshStandardMaterial({
+      color: "#315a72",
+      emissive: "#071b2a",
+      emissiveIntensity: 0.46,
+      roughness: 0.94,
+      metalness: 0.02,
+    }),
+  );
+  planet.position.set(-52, -10, -70);
+  planet.rotation.set(0.12, -0.48, -0.08);
+  scenery.add(planet);
+
+  const atmosphere = new THREE.Mesh(
+    new THREE.SphereGeometry(12.45, 56, 40),
+    new THREE.MeshBasicMaterial({
+      color: "#62c9eb",
+      transparent: true,
+      opacity: 0.13,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.BackSide,
+    }),
+  );
+  atmosphere.position.copy(planet.position);
+  scenery.add(atmosphere);
+
+  const nightGlow = new THREE.PointLight("#55bce6", 22, 46, 2);
+  nightGlow.position.set(-39, -3, -60);
+  scenery.add(nightGlow);
+
+  const moon = new THREE.Mesh(
+    new THREE.SphereGeometry(3.25, 32, 24),
+    new THREE.MeshStandardMaterial({ color: "#a6a7a2", roughness: 1, metalness: 0 }),
+  );
+  moon.position.set(-34, 12, -62);
+  scenery.add(moon);
+
+  const moonShadow = new THREE.Mesh(
+    new THREE.SphereGeometry(3.29, 32, 24, 0, Math.PI * 0.82),
+    new THREE.MeshBasicMaterial({ color: "#16191f", transparent: true, opacity: 0.62, side: THREE.DoubleSide }),
+  );
+  moonShadow.position.copy(moon.position);
+  moonShadow.rotation.y = 0.68;
+  scenery.add(moonShadow);
+
+  const nebulaLayers = [
+    { position: [49, 16, -78] as Vec3, scale: [52, 36] as const, seed: 17, colors: ["#5f42b8", "#b04497", "#325fd0"] },
+    { position: [59, -4, -72] as Vec3, scale: [43, 29] as const, seed: 41, colors: ["#3d79bc", "#913f91", "#cf5b91"] },
+    { position: [36, 6, -83] as Vec3, scale: [32, 48] as const, seed: 93, colors: ["#294992", "#7b3db5", "#d568a3"] },
+  ];
+  nebulaLayers.forEach((layer) => {
+    const texture = createNebulaTexture(layer.seed, layer.colors);
+    if (!texture) return;
+    const cloud = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: texture,
+      color: "#ffffff",
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      depthTest: true,
+    }));
+    cloud.position.set(...layer.position);
+    cloud.scale.set(layer.scale[0], layer.scale[1], 1);
+    scenery.add(cloud);
+  });
+
+  return scenery;
 }
 
 function addWeaponEnvelope(
@@ -1151,8 +1300,16 @@ function spawnExplosion(context: SceneContext, position: THREE.Vector3, color: s
 }
 
 function destroyShipVisual(context: SceneContext, ship: Ship) {
-  if (context.wrecks.has(ship.id)) return;
   const liveGroup = context.shipGroups.get(ship.id);
+  if (isDisposableCarrierFighter(ship)) {
+    const position = liveGroup?.position.clone() ?? new THREE.Vector3(...ship.position);
+    if (liveGroup) liveGroup.visible = false;
+    const hud = context.shipHuds.get(ship.id);
+    if (hud) hud.sprite.visible = false;
+    spawnExplosion(context, position, ship.team === "enemy" ? "#ff536b" : "#71ebff");
+    return;
+  }
+  if (context.wrecks.has(ship.id)) return;
   const wreck = createWreck(ship, liveGroup);
   context.wrecks.set(ship.id, wreck);
   context.wreckGroup.add(wreck);
@@ -1178,6 +1335,60 @@ type SceneContext = {
   frame: number;
 };
 
+type CombatVisibilitySnapshot = {
+  shipGroups: Map<string, boolean>;
+  shipHuds: Map<string, boolean>;
+  wrecks: Map<string, boolean>;
+  wreckGroup: boolean;
+};
+
+function captureCombatVisibility(context: SceneContext): CombatVisibilitySnapshot {
+  return {
+    shipGroups: new Map([...context.shipGroups].map(([id, group]) => [id, group.visible])),
+    shipHuds: new Map([...context.shipHuds].map(([id, hud]) => [id, hud.sprite.visible])),
+    wrecks: new Map([...context.wrecks].map(([id, wreck]) => [id, wreck.visible])),
+    wreckGroup: context.wreckGroup.visible,
+  };
+}
+
+function isolateCombatParticipants(
+  context: SceneContext,
+  snapshot: CombatVisibilitySnapshot,
+  shooterId: string,
+  targetId: string,
+) {
+  const participants = new Set([shooterId, targetId]);
+  context.shipGroups.forEach((group, id) => {
+    group.visible = participants.has(id) && (snapshot.shipGroups.get(id) ?? group.visible);
+  });
+  context.shipHuds.forEach((hud, id) => {
+    hud.sprite.visible = participants.has(id) && (snapshot.shipHuds.get(id) ?? hud.sprite.visible);
+  });
+  context.wreckGroup.visible = false;
+}
+
+function restoreCombatVisibility(
+  context: SceneContext,
+  snapshot: CombatVisibilitySnapshot,
+  destroyedIds: readonly string[],
+) {
+  const destroyed = new Set(destroyedIds);
+  context.shipGroups.forEach((group, id) => {
+    group.visible = (snapshot.shipGroups.get(id) ?? true)
+      && !destroyed.has(id)
+      && !context.wrecks.has(id);
+  });
+  context.shipHuds.forEach((hud, id) => {
+    hud.sprite.visible = (snapshot.shipHuds.get(id) ?? hud.enabled)
+      && !destroyed.has(id)
+      && Boolean(context.shipGroups.get(id)?.visible);
+  });
+  context.wreckGroup.visible = snapshot.wreckGroup;
+  context.wrecks.forEach((wreck, id) => {
+    wreck.visible = snapshot.wrecks.get(id) ?? true;
+  });
+}
+
 function TacticalScene({
   ships,
   drafts,
@@ -1189,6 +1400,7 @@ function TacticalScene({
   onSelect,
   onCombatFocus,
   onResolutionComplete,
+  overlayLabels,
   presentation = "command",
 }: {
   ships: Ship[];
@@ -1201,6 +1413,7 @@ function TacticalScene({
   onSelect: (id: string) => void;
   onCombatFocus: (focus: CombatFocus | null) => void;
   onResolutionComplete: (resolution: Resolution) => void;
+  overlayLabels: OverlayLabelSettings;
   presentation?: "command" | "spectator";
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -1208,12 +1421,15 @@ function TacticalScene({
   const selectRef = useRef(onSelect);
   const focusRef = useRef(onCombatFocus);
   const completeRef = useRef(onResolutionComplete);
+  const overlayLabelsRef = useRef(overlayLabels);
+  const spectatorViewRef = useRef(0);
 
   useEffect(() => {
     selectRef.current = onSelect;
     focusRef.current = onCombatFocus;
     completeRef.current = onResolutionComplete;
-  }, [onSelect, onCombatFocus, onResolutionComplete]);
+    overlayLabelsRef.current = overlayLabels;
+  }, [onSelect, onCombatFocus, onResolutionComplete, overlayLabels]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -1282,6 +1498,7 @@ function TacticalScene({
       new THREE.PointsMaterial({ color: "#b9dcf2", size: 0.12, transparent: true, opacity: 0.72, sizeAttenuation: true }),
     );
     scene.add(stars);
+    scene.add(createSpaceScenery());
 
     const planGroup = new THREE.Group();
     const laserGroup = new THREE.Group();
@@ -1381,7 +1598,7 @@ function TacticalScene({
       hudCameraUp.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
       shipHuds.forEach((hud, id) => {
         const group = shipGroups.get(id);
-        hud.sprite.visible = Boolean(group?.visible);
+        hud.sprite.visible = Boolean(group?.visible && hud.enabled);
         if (!group?.visible) return;
         const distance = camera.position.distanceTo(group.position);
         const worldPerPixel = 2 * distance * Math.tan(degrees(camera.fov) / 2) / viewportHeight;
@@ -1485,15 +1702,15 @@ function TacticalScene({
       }
       let hud = context.shipHuds.get(ship.id);
       if (!hud) {
-        hud = createShipHud(ship) ?? undefined;
+        hud = createShipHud(ship, overlayLabels) ?? undefined;
         if (hud) {
           context.shipHuds.set(ship.id, hud);
           context.scene.add(hud.sprite);
         }
       }
       if (hud) {
-        updateShipHud(hud, ship);
-        hud.sprite.visible = ship.hull > 0;
+        updateShipHud(hud, ship, overlayLabels);
+        hud.sprite.visible = ship.hull > 0 && hud.enabled;
       }
       if (!resolution) {
         group.position.set(...ship.position);
@@ -1510,7 +1727,7 @@ function TacticalScene({
         materials[face]?.color.copy(shieldColor(ship.shields[face], ship.maxShields[face]));
         materials[face]?.emissive.copy(shieldColor(ship.shields[face], ship.maxShields[face]).multiplyScalar(0.55));
       });
-      if (ship.hull <= 0 && !context.wrecks.has(ship.id)) {
+      if (ship.hull <= 0 && !isDisposableCarrierFighter(ship) && !context.wrecks.has(ship.id)) {
         const wreck = createWreck(ship, group);
         context.wrecks.set(ship.id, wreck);
         context.wreckGroup.add(wreck);
@@ -1586,14 +1803,22 @@ function TacticalScene({
           }
         }
       });
-  }, [ships, drafts, staged, selectedShipId, selectedTargetId, resolution]);
+  }, [ships, drafts, staged, selectedShipId, selectedTargetId, resolution, overlayLabels]);
 
   useEffect(() => {
     const context = contextRef.current;
     if (!context || !cameraCommand.nonce) return;
     if (cameraCommand.kind === "reset") {
-      context.camera.position.set(19, 16, 22);
-      context.controls.target.set(0, 0, 0);
+      if (presentation === "spectator") {
+        const overview = spectatorOverviewFor(ships, context.camera.aspect, spectatorViewRef.current);
+        context.camera.position.set(...overview.position);
+        context.controls.target.set(...overview.target);
+        context.camera.fov = overview.fov;
+        context.camera.updateProjectionMatrix();
+      } else {
+        context.camera.position.set(19, 16, 22);
+        context.controls.target.set(0, 0, 0);
+      }
     } else {
       const ship = ships.find((candidate) => candidate.id === cameraCommand.shipId);
       if (ship) {
@@ -1604,19 +1829,39 @@ function TacticalScene({
       }
     }
     context.controls.update();
-  }, [cameraCommand, ships]);
+  }, [cameraCommand, presentation, ships]);
+
+  useEffect(() => {
+    const context = contextRef.current;
+    if (!context || presentation !== "spectator" || resolution) return;
+    context.controls.maxDistance = 75;
+    spectatorViewRef.current += 1;
+    const overview = spectatorOverviewFor(ships, context.camera.aspect, spectatorViewRef.current);
+    context.camera.position.set(...overview.position);
+    context.controls.target.set(...overview.target);
+    context.camera.fov = overview.fov;
+    context.camera.updateProjectionMatrix();
+    context.controls.update();
+  }, [presentation, resolution, ships]);
 
   useEffect(() => {
     const context = contextRef.current;
     if (!context || !resolution) return;
     let cancelled = false;
+    let combatVisibility: CombatVisibilitySnapshot | null = null;
     const timers = new Set<ReturnType<typeof setTimeout>>();
-    const tacticalPosition = context.camera.position.clone();
-    const tacticalTarget = context.controls.target.clone();
-    const tacticalFov = context.camera.fov;
+    const spectatorOverview = presentation === "spectator"
+      ? spectatorOverviewFor(resolution.endShips, context.camera.aspect, spectatorViewRef.current + 1)
+      : null;
+    const tacticalPosition = spectatorOverview
+      ? new THREE.Vector3(...spectatorOverview.position)
+      : context.camera.position.clone();
+    const tacticalTarget = spectatorOverview
+      ? new THREE.Vector3(...spectatorOverview.target)
+      : context.controls.target.clone();
+    const tacticalFov = spectatorOverview?.fov ?? context.camera.fov;
     const started = performance.now();
-    const duration = presentation === "spectator" ? 1120 : 1550;
-    const timing = (command: number, spectator: number) => presentation === "spectator" ? spectator : command;
+    const duration = presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.movement : 1550;
     const starts = new Map(
       ships.map((ship) => [
         ship.id,
@@ -1695,7 +1940,7 @@ function TacticalScene({
         .filter((entry): entry is { shot: CombatShotEvent; shooter: Ship; target: Ship } => Boolean(entry.shooter && entry.target));
 
       if (!shots.length) {
-        await delay(timing(420, 260));
+        await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.quietTurnHold : 420);
         context.controls.enabled = true;
         if (!cancelled) completeRef.current(resolution);
         return;
@@ -1703,9 +1948,11 @@ function TacticalScene({
 
       context.camera.fov = 42;
       context.camera.updateProjectionMatrix();
+      combatVisibility = captureCombatVisibility(context);
 
       for (const { shot, shooter, target } of shots) {
         if (cancelled) return;
+        isolateCombatParticipants(context, combatVisibility, shooter.id, target.id);
         const muzzle = weaponOriginFor(shooter, shot.weapon);
         const targetPoint = new THREE.Vector3(...target.position);
         const direction = targetPoint.clone().sub(muzzle).normalize();
@@ -1725,13 +1972,17 @@ function TacticalScene({
           ? ` · SALVO ${shot.salvoIndex + 1}/2`
           : "";
         focusRef.current({ shooter: shooter.name, target: target.name, team: shooter.team, weapon: `${shot.weapon.name}${focusSuffix}` });
-        await tweenCamera(cameraPosition, lookAt, timing(430, 300));
+        await tweenCamera(
+          cameraPosition,
+          lookAt,
+          presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraApproach : 430,
+        );
         if (cancelled) return;
         clearGroup(context.laserGroup);
         const beam = addCinematicBeam(context.laserGroup, shooter, target, shot);
-        await growBeam(beam, timing(240, 170));
+        await growBeam(beam, presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.beam : 240);
         const hud = context.shipHuds.get(target.id);
-        if (hud) updateShipHud(hud, { ...target, hull: shot.hullAfter });
+        if (hud) updateShipHud(hud, { ...target, hull: shot.hullAfter }, overlayLabelsRef.current);
         if (shot.face) {
           const group = context.shipGroups.get(target.id);
           const materials = group?.userData.shieldMaterials as Partial<Record<ShieldFace, THREE.MeshStandardMaterial>> | undefined;
@@ -1742,14 +1993,28 @@ function TacticalScene({
           }
         }
         if (shot.destroyed) destroyShipVisual(context, target);
-        await delay(shot.destroyed ? timing(760, 520) : timing(540, 340));
+        await delay(
+          presentation === "spectator"
+            ? shot.destroyed
+              ? FISHTANK_CINEMATIC_TIMINGS.destroyedHold
+              : FISHTANK_CINEMATIC_TIMINGS.impactHold
+            : shot.destroyed
+              ? 760
+              : 540,
+        );
         clearGroup(context.laserGroup);
-        await delay(timing(120, 70));
+        await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.betweenShots : 120);
       }
 
       if (cancelled) return;
       focusRef.current(null);
-      await tweenCamera(tacticalPosition, tacticalTarget, timing(520, 360));
+      restoreCombatVisibility(context, combatVisibility, resolution.destroyedIds);
+      combatVisibility = null;
+      await tweenCamera(
+        tacticalPosition,
+        tacticalTarget,
+        presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraReturn : 520,
+      );
       context.camera.fov = tacticalFov;
       context.camera.updateProjectionMatrix();
       context.controls.target.copy(tacticalTarget);
@@ -1785,6 +2050,7 @@ function TacticalScene({
       timers.forEach((timer) => clearTimeout(timer));
       focusRef.current(null);
       clearGroup(context.laserGroup);
+      if (combatVisibility) restoreCombatVisibility(context, combatVisibility, resolution.destroyedIds);
       context.controls.enabled = true;
       context.camera.position.copy(tacticalPosition);
       context.controls.target.copy(tacticalTarget);
@@ -1795,6 +2061,59 @@ function TacticalScene({
   }, [presentation, resolution, ships]);
 
   return <div className="three-mount" ref={mountRef} />;
+}
+
+function FishtankFleetBars({ ships }: { ships: Ship[] }) {
+  const rows = createFishtankStatusRows(ships);
+  return (
+    <ol className="fishtank-fleet-bars">
+      {rows.map(({ ship, healthPercentage, fighters }) => {
+        const sizeCode = ship.sizeClass === "shuttle" ? "S" : ship.sizeClass === "cruiser" ? "M" : "L";
+        const reserveCapacity = ship.turnEndAbility?.fighterReserve ?? 0;
+        const reserveRemaining = ship.hull > 0
+          ? Math.max(0, Math.min(reserveCapacity, ship.fighterReserveRemaining ?? reserveCapacity))
+          : 0;
+        return (
+          <li className="fishtank-formation-slot" key={ship.id}>
+            {fighters.length > 0 && (
+              <span className="fishtank-carrier-wing" aria-label={`${fighters.length} active fighters launched by ${ship.name}`}>
+                {fighters.map(({ fighter, healthPercentage: fighterHealth }) => (
+                  <span
+                    className="fishtank-ship-bar carrier-fighter"
+                    data-size="shuttle"
+                    key={fighter.id}
+                    role="img"
+                    aria-label={`${fighter.name}, small fighter, ${Math.round(fighterHealth)} percent hull`}
+                  >
+                    <i style={{ width: `${fighterHealth}%` }} />
+                  </span>
+                ))}
+              </span>
+            )}
+            <span
+              className={`fishtank-ship-bar ${ship.hull <= 0 ? "destroyed" : ""}`}
+              data-size={ship.sizeClass}
+              role="img"
+              aria-label={`${ship.name}, size ${sizeCode}, ${Math.round(healthPercentage)} percent hull${ship.hull <= 0 ? ", destroyed" : ""}`}
+            >
+              <i style={{ width: `${healthPercentage}%` }} />
+            </span>
+            {reserveCapacity > 0 && (
+              <span
+                className="fishtank-carrier-reserve"
+                role="img"
+                aria-label={`${ship.name}, ${reserveRemaining} of ${reserveCapacity} reserve fighters available`}
+              >
+                {Array.from({ length: reserveCapacity }, (_, index) => (
+                  <i className={index < reserveRemaining ? "available" : "spent"} key={index} />
+                ))}
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
 }
 
 function SliderControl({
@@ -2192,6 +2511,7 @@ export function SpaceGame() {
   const [activeMode, setActiveMode] = useState<GameMode>("skirmish");
   const [storyRun, setStoryRun] = useState<StoryRun | null>(null);
   const [audioSettings, setAudioSettings] = useState<AudioSettings>(DEFAULT_AUDIO_SETTINGS);
+  const [overlayLabels, setOverlayLabels] = useState<OverlayLabelSettings>(DEFAULT_OVERLAY_LABELS);
   const [audioSettingsHydrated, setAudioSettingsHydrated] = useState(false);
   const [ships, setShips] = useState<Ship[]>(() => copyShips(INITIAL_SHIPS));
   const [selectedShipId, setSelectedShipId] = useState("aegis");
@@ -2315,7 +2635,7 @@ export function SpaceGame() {
   }, [selectedShip, phase]);
 
   const updateAiDoctrine = useCallback((doctrine: AiDoctrine) => {
-    if (!selectedShip || selectedShip.controller !== "ai" || selectedShip.team === "enemy" || phase !== "planning") return;
+    if (!selectedShip || selectedShip.controller !== "ai" || selectedShip.team === "enemy" || selectedShip.spawnedByShipId || phase !== "planning") return;
     setShips((current) => current.map((ship) => ship.id === selectedShip.id ? { ...ship, aiDoctrine: doctrine } : ship));
   }, [selectedShip, phase]);
 
@@ -2363,10 +2683,18 @@ export function SpaceGame() {
 
   const generateNpcOrders = useCallback((currentShips: Ship[]) => {
     const orders: Record<string, Order> = {};
+    const wingTargets = carrierWingTargetAssignments(currentShips);
     currentShips
       .filter((ship) => ship.controller === "ai" && ship.hull > 0)
       .forEach((ship) => {
-        const order = generateAiCommandOrder(ship, currentShips, ship.aiDoctrine ?? "standard", BATTLEFIELD_HALF, BATTLEFIELD_VERTICAL_HALF);
+        const order = generateAiCommandOrder(
+          ship,
+          currentShips,
+          ship.aiDoctrine ?? "standard",
+          BATTLEFIELD_HALF,
+          BATTLEFIELD_VERTICAL_HALF,
+          { forcedTargetId: wingTargets[ship.id] },
+        );
         if (order) orders[ship.id] = order;
       });
     return orders;
@@ -2405,7 +2733,8 @@ export function SpaceGame() {
   }, [activeMode, allOrdersValid, allReady, drafts, generateNpcOrders, phase, ships, turn]);
 
   const resolveCombat = useCallback((finished: Resolution) => {
-    const launched = applyCarrierLaunches(copyShips(finished.resolvedShips), createLaunchedFighter);
+    const rememberedShips = rememberOrderedTargets(finished.resolvedShips, finished.orders);
+    const launched = applyCarrierLaunches(copyShips(rememberedShips), createLaunchedFighter);
     const results = copyShips(launched.ships);
     setShips(results);
     setResolution(null);
@@ -2710,6 +3039,7 @@ export function SpaceGame() {
   const selectedAiDoctrine = selectedShip.aiDoctrine ?? "standard";
   const selectedAiRule = AI_DOCTRINE_RULES[selectedAiDoctrine];
   const selectedAiCondition = shipConditionScore(selectedShip);
+  const selectedIsCarrierFighter = Boolean(selectedShip.spawnedByShipId);
   const translationDisabled = controlsDisabled || selectedFlightMode === "focus-fire";
   const weaponControlDisabled = controlsDisabled || selectedFlightMode !== "normal";
   const selectedWeapons = weaponProfilesFor(selectedShip);
@@ -2751,6 +3081,27 @@ export function SpaceGame() {
           )}
         </div>
         <div className="topbar-actions">
+          <fieldset className="overlay-label-toggles">
+            <legend>Overlay labels</legend>
+            <label>
+              <input
+                type="checkbox"
+                checked={overlayLabels.showShipNames}
+                aria-label="Show ship names"
+                onChange={(event) => setOverlayLabels((current) => ({ ...current, showShipNames: event.target.checked }))}
+              />
+              <span>Ship names</span>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={overlayLabels.showHealth}
+                aria-label="Show ship health"
+                onChange={(event) => setOverlayLabels((current) => ({ ...current, showHealth: event.target.checked }))}
+              />
+              <span>Health</span>
+            </label>
+          </fieldset>
           <button className="quiet-button" type="button" onClick={returnToMenu}>Main menu</button>
           <button className="quiet-button" type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : activeMode === "fishtank" ? "New match" : "Restart"}</button>
         </div>
@@ -2769,6 +3120,7 @@ export function SpaceGame() {
             onSelect={selectShip}
             onCombatFocus={setCombatFocus}
             onResolutionComplete={resolveCombat}
+            overlayLabels={overlayLabels}
             presentation={activeMode === "fishtank" ? "spectator" : "command"}
           />
 
@@ -2849,8 +3201,8 @@ export function SpaceGame() {
             <section className="fishtank-scoreboard" aria-label="Fishtank fleet status">
               <div className="fishtank-team azure">
                 <span>AZURE AI</span>
-                <strong>{livingFishtankAllies.length}<small> / {FISHTANK_FLEET_SIZE} ACTIVE</small></strong>
-                <ol>{fishtankAllies.map((ship) => <li key={ship.id} className={ship.hull <= 0 ? "destroyed" : ""} aria-label={`${ship.name} ${ship.hull <= 0 ? "destroyed" : "active"}`} />)}</ol>
+                <strong>{livingFishtankAllies.length}<small> ACTIVE · {FISHTANK_FLEET_SIZE} CORE</small></strong>
+                <FishtankFleetBars ships={fishtankAllies} />
               </div>
               <div className="fishtank-director" aria-live="polite">
                 <small>MATCH {String(fishtankMatch).padStart(2, "0")} · TURN {String(turn).padStart(2, "0")}</small>
@@ -2859,8 +3211,8 @@ export function SpaceGame() {
               </div>
               <div className="fishtank-team crimson">
                 <span>CRIMSON AI</span>
-                <strong>{livingFishtankEnemies.length}<small> / {FISHTANK_FLEET_SIZE} ACTIVE</small></strong>
-                <ol>{fishtankEnemies.map((ship) => <li key={ship.id} className={ship.hull <= 0 ? "destroyed" : ""} aria-label={`${ship.name} ${ship.hull <= 0 ? "destroyed" : "active"}`} />)}</ol>
+                <strong>{livingFishtankEnemies.length}<small> ACTIVE · {FISHTANK_FLEET_SIZE} CORE</small></strong>
+                <FishtankFleetBars ships={fishtankEnemies} />
               </div>
             </section>
           )}
@@ -3035,8 +3387,10 @@ export function SpaceGame() {
           ) : selectedShip.controller === "ai" && selectedShip.team !== "enemy" ? (
             <section className="npc-block doctrine-block">
               <span className="eyebrow">AI WINGMATE · AUTONOMOUS COMMAND</span>
-              <h2>Set tactical doctrine</h2>
-              <p>You set intent; {selectedShip.name} weighs its own hull and shielding against enemy condition before choosing movement, orientation, target, and weapon stance.</p>
+              <h2>{selectedIsCarrierFighter ? "Disposable strike doctrine" : "Set tactical doctrine"}</h2>
+              <p>{selectedIsCarrierFighter
+                ? `${selectedShip.name} is carrier-launched strike craft and will press its attack regardless of damage.`
+                : `You set intent; ${selectedShip.name} weighs its hull role, shielding, weapon range, and incoming threats before choosing its order.`}</p>
               <fieldset className="doctrine-options">
                 <legend>Choose the wingmate&apos;s standing order</legend>
                 {AI_DOCTRINE_ORDER.map((doctrine) => {
@@ -3044,7 +3398,7 @@ export function SpaceGame() {
                   const inputId = `doctrine-${selectedShip.id}-${doctrine}`;
                   return (
                     <label className="doctrine-option" data-doctrine={doctrine} key={doctrine} htmlFor={inputId} aria-label={`${rule.label}: ${rule.description}`}>
-                      <input id={inputId} type="radio" name={`doctrine-${selectedShip.id}`} checked={selectedAiDoctrine === doctrine} disabled={phase !== "planning" || selectedShip.hull <= 0} aria-label={rule.label} onChange={() => updateAiDoctrine(doctrine)} />
+                      <input id={inputId} type="radio" name={`doctrine-${selectedShip.id}`} checked={selectedAiDoctrine === doctrine} disabled={selectedIsCarrierFighter || phase !== "planning" || selectedShip.hull <= 0} aria-label={rule.label} onChange={() => updateAiDoctrine(doctrine)} />
                       <span><strong>{rule.label}</strong><small>{rule.shortRule}</small></span>
                     </label>
                   );
@@ -3053,7 +3407,7 @@ export function SpaceGame() {
               <div className="doctrine-status" data-doctrine={selectedAiDoctrine} role="status" aria-live="polite">
                 <span><strong>{selectedAiRule.label} doctrine</strong><b>{Math.round(selectedAiCondition * 100)}% COMBAT CONDITION</b></span>
                 <p>{selectedAiRule.description}</p>
-                <small>AI READY · ORDER CALCULATED ON COMMIT</small>
+                <small>{selectedIsCarrierFighter ? "DOCTRINE LOCKED · DISPOSABLE ATTACK RUN" : "AI READY · HULL-AWARE ORDER CALCULATED ON COMMIT"}</small>
               </div>
             </section>
           ) : (

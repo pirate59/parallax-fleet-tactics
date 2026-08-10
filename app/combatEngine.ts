@@ -30,6 +30,7 @@ export type CombatShip = {
   modelId: ShipModelId;
   modelScale: number;
   weaponMounts: WeaponMount[];
+  spawnedByShipId?: string;
 };
 
 export type CombatOrder = {
@@ -381,7 +382,9 @@ export function resolveCombatTurn<T extends CombatShip>(
   });
   destroyedIds.forEach((id) => {
     const ship = startingShips.find((candidate) => candidate.id === id);
-    if (ship) outcomes.unshift(`${ship.name} destroyed — wreck on tactical grid.`);
+    if (ship) outcomes.unshift(ship.spawnedByShipId
+      ? `${ship.name} destroyed — fighter signal lost.`
+      : `${ship.name} destroyed — wreck on tactical grid.`);
   });
   outcomes.push(...suppressedActivations);
   outcomes.push(`Shield cycle complete: +${SHIELD_REGEN_HIT} struck facings, +${SHIELD_REGEN_CLEAR} clear facings.`);
