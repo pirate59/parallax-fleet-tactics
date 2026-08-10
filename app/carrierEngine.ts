@@ -15,23 +15,30 @@ export type CarrierLaunch = {
   fighterName: string;
 };
 
+export const isDisposableCarrierFighter = (ship: CarrierCapableShip) => Boolean(ship.spawnedByShipId);
+
 /** Applies end-of-turn fighter launches without mutating the resolved fleet. */
 export function applyCarrierLaunches<T extends CarrierCapableShip>(
   ships: readonly T[],
   createFighter: (carrier: T, sequence: number, ability: ShipTurnEndAbility) => T,
 ) {
-  const nextShips = [...ships];
+  const nextShips = ships.filter((ship) => !isDisposableCarrierFighter(ship) || ship.hull > 0);
   const launches: CarrierLaunch[] = [];
 
   ships.forEach((carrier) => {
     const ability = carrier.turnEndAbility;
     if (carrier.hull <= 0 || ability?.kind !== "launch-fighter") return;
 
+    const allFighters = ships.filter((ship) => ship.spawnedByShipId === carrier.id);
     const existingFighters = nextShips.filter((ship) => ship.spawnedByShipId === carrier.id);
     const activeFighters = existingFighters.filter((ship) => ship.hull > 0);
     if (activeFighters.length >= ability.maxActive) return;
 
-    const fighter = createFighter(carrier, existingFighters.length + 1, ability);
+    const highestSequence = allFighters.reduce((highest, fighter) => {
+      const match = fighter.id.match(/-fighter-(\d+)$/);
+      return Math.max(highest, match ? Number(match[1]) : 0);
+    }, 0);
+    const fighter = createFighter(carrier, Math.max(highestSequence, existingFighters.length) + 1, ability);
     nextShips.push(fighter);
     launches.push({
       carrierId: carrier.id,

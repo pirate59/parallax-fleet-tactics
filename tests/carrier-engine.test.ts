@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyCarrierLaunches, type CarrierCapableShip } from "../app/carrierEngine.ts";
+import { applyCarrierLaunches, isDisposableCarrierFighter, type CarrierCapableShip } from "../app/carrierEngine.ts";
 import type { ShipTurnEndAbility } from "../app/shipCatalog.ts";
 
 const ability: ShipTurnEndAbility = {
@@ -53,6 +53,8 @@ test("a destroyed fighter frees capacity while a destroyed carrier cannot launch
   ships = ships.map((ship) => ship.id === "carrier-fighter-1" ? { ...ship, hull: 0 } : ship);
   const replacement = applyCarrierLaunches(ships, createFighter);
   assert.equal(replacement.launches[0]?.fighterId, "carrier-fighter-4");
+  assert.equal(replacement.ships.some((ship) => ship.id === "carrier-fighter-1"), false);
+  assert.equal(replacement.ships.filter(isDisposableCarrierFighter).length, 3);
 
   const destroyed = applyCarrierLaunches([carrier({ hull: 0 })], createFighter);
   assert.equal(destroyed.launches.length, 0);

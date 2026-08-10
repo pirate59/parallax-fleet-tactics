@@ -56,7 +56,7 @@ import {
 } from "./shipCatalog";
 import { shipModelProfileFor, type ShipModelId } from "./shipModels";
 import { createShipHullGeometry } from "./shipGeometry";
-import { applyCarrierLaunches } from "./carrierEngine";
+import { applyCarrierLaunches, isDisposableCarrierFighter } from "./carrierEngine";
 import {
   AI_DOCTRINE_ORDER,
   AI_DOCTRINE_RULES,
@@ -997,6 +997,119 @@ function clearGroup(group: THREE.Group) {
   });
 }
 
+function createNebulaTexture(seed: number, colors: string[]) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  let value = seed >>> 0;
+  const random = () => {
+    value += 0x6d2b79f5;
+    let result = value;
+    result = Math.imul(result ^ (result >>> 15), result | 1);
+    result ^= result + Math.imul(result ^ (result >>> 7), result | 61);
+    return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
+  };
+
+  context.clearRect(0, 0, 512, 512);
+  context.globalCompositeOperation = "lighter";
+  for (let index = 0; index < 34; index += 1) {
+    const x = 110 + random() * 292;
+    const y = 90 + random() * 332;
+    const radius = 48 + random() * 122;
+    const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+    const color = new THREE.Color(colors[index % colors.length]);
+    const red = Math.round(color.r * 255);
+    const green = Math.round(color.g * 255);
+    const blue = Math.round(color.b * 255);
+    gradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, ${0.055 + random() * 0.08})`);
+    gradient.addColorStop(0.42, `rgba(${red}, ${green}, ${blue}, 0.035)`);
+    gradient.addColorStop(1, `rgba(${red}, ${green}, ${blue}, 0)`);
+    context.fillStyle = gradient;
+    context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createSpaceScenery() {
+  const scenery = new THREE.Group();
+  scenery.name = "distant-space-scenery";
+
+  const planet = new THREE.Mesh(
+    new THREE.SphereGeometry(12, 56, 40),
+    new THREE.MeshStandardMaterial({
+      color: "#315a72",
+      emissive: "#071b2a",
+      emissiveIntensity: 0.46,
+      roughness: 0.94,
+      metalness: 0.02,
+    }),
+  );
+  planet.position.set(-52, -10, -70);
+  planet.rotation.set(0.12, -0.48, -0.08);
+  scenery.add(planet);
+
+  const atmosphere = new THREE.Mesh(
+    new THREE.SphereGeometry(12.45, 56, 40),
+    new THREE.MeshBasicMaterial({
+      color: "#62c9eb",
+      transparent: true,
+      opacity: 0.13,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.BackSide,
+    }),
+  );
+  atmosphere.position.copy(planet.position);
+  scenery.add(atmosphere);
+
+  const nightGlow = new THREE.PointLight("#55bce6", 22, 46, 2);
+  nightGlow.position.set(-39, -3, -60);
+  scenery.add(nightGlow);
+
+  const moon = new THREE.Mesh(
+    new THREE.SphereGeometry(3.25, 32, 24),
+    new THREE.MeshStandardMaterial({ color: "#a6a7a2", roughness: 1, metalness: 0 }),
+  );
+  moon.position.set(-34, 12, -62);
+  scenery.add(moon);
+
+  const moonShadow = new THREE.Mesh(
+    new THREE.SphereGeometry(3.29, 32, 24, 0, Math.PI * 0.82),
+    new THREE.MeshBasicMaterial({ color: "#16191f", transparent: true, opacity: 0.62, side: THREE.DoubleSide }),
+  );
+  moonShadow.position.copy(moon.position);
+  moonShadow.rotation.y = 0.68;
+  scenery.add(moonShadow);
+
+  const nebulaLayers = [
+    { position: [49, 16, -78] as Vec3, scale: [52, 36] as const, seed: 17, colors: ["#5f42b8", "#b04497", "#325fd0"] },
+    { position: [59, -4, -72] as Vec3, scale: [43, 29] as const, seed: 41, colors: ["#3d79bc", "#913f91", "#cf5b91"] },
+    { position: [36, 6, -83] as Vec3, scale: [32, 48] as const, seed: 93, colors: ["#294992", "#7b3db5", "#d568a3"] },
+  ];
+  nebulaLayers.forEach((layer) => {
+    const texture = createNebulaTexture(layer.seed, layer.colors);
+    if (!texture) return;
+    const cloud = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: texture,
+      color: "#ffffff",
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      depthTest: true,
+    }));
+    cloud.position.set(...layer.position);
+    cloud.scale.set(layer.scale[0], layer.scale[1], 1);
+    scenery.add(cloud);
+  });
+
+  return scenery;
+}
+
 function addWeaponEnvelope(
   parent: THREE.Group,
   _ship: Ship,
@@ -1180,8 +1293,16 @@ function spawnExplosion(context: SceneContext, position: THREE.Vector3, color: s
 }
 
 function destroyShipVisual(context: SceneContext, ship: Ship) {
-  if (context.wrecks.has(ship.id)) return;
   const liveGroup = context.shipGroups.get(ship.id);
+  if (isDisposableCarrierFighter(ship)) {
+    const position = liveGroup?.position.clone() ?? new THREE.Vector3(...ship.position);
+    if (liveGroup) liveGroup.visible = false;
+    const hud = context.shipHuds.get(ship.id);
+    if (hud) hud.sprite.visible = false;
+    spawnExplosion(context, position, ship.team === "enemy" ? "#ff536b" : "#71ebff");
+    return;
+  }
+  if (context.wrecks.has(ship.id)) return;
   const wreck = createWreck(ship, liveGroup);
   context.wrecks.set(ship.id, wreck);
   context.wreckGroup.add(wreck);
@@ -1316,6 +1437,7 @@ function TacticalScene({
       new THREE.PointsMaterial({ color: "#b9dcf2", size: 0.12, transparent: true, opacity: 0.72, sizeAttenuation: true }),
     );
     scene.add(stars);
+    scene.add(createSpaceScenery());
 
     const planGroup = new THREE.Group();
     const laserGroup = new THREE.Group();
@@ -1544,7 +1666,7 @@ function TacticalScene({
         materials[face]?.color.copy(shieldColor(ship.shields[face], ship.maxShields[face]));
         materials[face]?.emissive.copy(shieldColor(ship.shields[face], ship.maxShields[face]).multiplyScalar(0.55));
       });
-      if (ship.hull <= 0 && !context.wrecks.has(ship.id)) {
+      if (ship.hull <= 0 && !isDisposableCarrierFighter(ship) && !context.wrecks.has(ship.id)) {
         const wreck = createWreck(ship, group);
         context.wrecks.set(ship.id, wreck);
         context.wreckGroup.add(wreck);
