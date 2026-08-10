@@ -38,6 +38,8 @@ const makeShip = (id: string, overrides: Partial<AiCommandShip> = {}): AiCommand
   weaponDamage: 10,
   modelId: "hammerhead",
   modelScale: 1,
+  sizeClass: "cruiser",
+  archetypeId: "generic-cruiser",
   weaponMounts: [createPrimaryWeaponMount("cannon")],
   ...overrides,
 });
@@ -295,7 +297,7 @@ test("damaged defensive AI doubles movement to retreat and keeps weapons safe", 
 
 test("defensive AI finds a legal 3D retreat instead of stalling at a grid corner", () => {
   const ally = makeShip("ally", {
-    position: [20, 0, 20],
+    position: [18.5, 0, 18.5],
     hull: 20,
     shields: shieldsAt(0),
     aiDoctrine: "defensive",
@@ -309,6 +311,76 @@ test("defensive AI finds a legal 3D retreat instead of stalling at a grid corner
   assert.equal(order.mode, "extra-move");
   assert.ok(origin.distanceTo(destination) > 1, "edge retreat should make meaningful progress");
   assert.ok(destination.distanceTo(new THREE.Vector3(...target.position)) >= origin.distanceTo(new THREE.Vector3(...target.position)) - 0.01);
+});
+
+test("carrier fighters with a shared target reserve separate attack lanes", () => {
+  const fighterProfile = { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 } as const;
+  const fighterA = makeShip("wing-a", {
+    modelId: "fighter",
+    modelScale: 0.78,
+    sizeClass: "shuttle",
+    archetypeId: "fighter",
+    position: [-1, 0, 0],
+    spawnedByShipId: "carrier",
+    aiTactics: fighterProfile,
+  });
+  const fighterB = makeShip("wing-b", {
+    modelId: "fighter",
+    modelScale: 0.78,
+    sizeClass: "shuttle",
+    archetypeId: "fighter",
+    position: [1, 0, 0],
+    spawnedByShipId: "carrier",
+    aiTactics: fighterProfile,
+  });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -30] });
+  const fleet = [fighterA, fighterB, target];
+  const first = generateAiCommandOrder(fighterA, fleet, "aggressive", 40, 10, { forcedTargetId: target.id });
+  assert.ok(first);
+  const second = generateAiCommandOrder(fighterB, fleet, "aggressive", 40, 10, {
+    forcedTargetId: target.id,
+    reservedDestinations: { [fighterA.id]: first.destination },
+  });
+  assert.ok(second);
+
+  const separation = new THREE.Vector3(...first.destination).distanceTo(new THREE.Vector3(...second.destination));
+  assert.ok(separation > 1.1, "fighters should fan out instead of stacking on one endpoint");
+});
+
+test("small AI steers its flight path away from a nearby capital ship", () => {
+  const fighter = makeShip("fighter", {
+    modelId: "fighter",
+    modelScale: 0.78,
+    sizeClass: "shuttle",
+    archetypeId: "fighter",
+    position: [0, 0, 0],
+    aiTactics: { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const capital = makeShip("capital", {
+    modelId: "behemoth",
+    modelScale: 1.94,
+    sizeClass: "large",
+    archetypeId: "behemoth",
+    position: [0, 0, -5],
+  });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -30] });
+  const order = generateAiCommandOrder(fighter, [fighter, capital, target], "aggressive", 40, 10, { forcedTargetId: target.id });
+  assert.ok(order);
+  assert.ok(Math.abs(order.destination[0]) > 0.5 || Math.abs(order.destination[1]) > 0.5, "avoidance should create a lateral or vertical lane around the capital ship");
+});
+
+test("healthy Hammerhead AI deliberately uses its reinforced hull for a close ram", () => {
+  const hammerhead = makeShip("hammerhead", {
+    archetypeId: "hammerhead",
+    sizeClass: "cruiser",
+    maxMove: 5,
+    aiTactics: { role: "bow-tank", preferredRangeRatio: 0.62, facingPriority: "expected-threat", survivalHullRatio: 0.5 },
+  });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -5] });
+  const order = generateAiCommandOrder(hammerhead, [hammerhead, target], "standard");
+  assert.ok(order);
+  assert.equal(order.mode, "normal");
+  assert.ok(new THREE.Vector3(...order.destination).distanceTo(new THREE.Vector3(...target.position)) < 0.1);
 });
 
 test("Standard doctrine changes stance as the own-ship and target conditions change", () => {

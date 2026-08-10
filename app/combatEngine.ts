@@ -89,6 +89,7 @@ export type CombatTurnResult<T extends CombatShip> = {
 
 export type CombatResolutionOptions = {
   teamOrder?: Team[];
+  preHitFaces?: Partial<Record<string, ShieldFace[]>>;
 };
 
 export const SHIELD_FACES: ShieldFace[] = ["fore", "aft", "port", "starboard", "dorsal", "ventral"];
@@ -237,7 +238,9 @@ export function resolveCombatTurn<T extends CombatShip>(
   const startingShips = sourceShips.map(cloneShip);
   const results = sourceShips.map(cloneShip);
   const shots: CombatShotEvent[] = [];
-  const hitFaces = new Map<string, Set<ShieldFace>>();
+  const hitFaces = new Map<string, Set<ShieldFace>>(
+    Object.entries(options.preHitFaces ?? {}).map(([id, faces]) => [id, new Set(faces)]),
+  );
   const destroyedByShot = new Set<string>();
   const orderedTeams = options.teamOrder ?? ["player", "ally", "enemy"];
   const teamPriority = Object.fromEntries(

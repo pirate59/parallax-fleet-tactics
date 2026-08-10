@@ -9,6 +9,13 @@ import {
 } from "./combatEngine.ts";
 import { fireStateForMode, movementLimitFor, type FlightMode } from "./orderRules.ts";
 import type { AiTacticalProfile } from "./aiTactics.ts";
+import {
+  clampCollisionPosition,
+  collisionMassFor,
+  collisionRadiusFor,
+  isPersistentWreck,
+} from "./collisionEngine.ts";
+import type { ShipSizeClass } from "./shipSize.ts";
 
 export type AiDoctrine = "aggressive" | "standard" | "defensive";
 
@@ -20,6 +27,7 @@ export type AiCommandShip = CombatShip & {
   aiDoctrine?: AiDoctrine;
   aiTactics?: AiTacticalProfile;
   archetypeId?: string;
+  sizeClass?: ShipSizeClass;
   spawnedByShipId?: string;
   lastTargetId?: string;
 };
@@ -36,6 +44,7 @@ export type AiCommandOrder = {
 
 export type AiCommandOptions = {
   forcedTargetId?: string;
+  reservedDestinations?: Record<string, Vec3>;
 };
 
 export const AI_DOCTRINE_ORDER: AiDoctrine[] = ["aggressive", "standard", "defensive"];
@@ -226,16 +235,69 @@ function clampDestination(
   battlefieldVerticalHalf: number,
 ): Vec3 {
   const origin = new THREE.Vector3(...ship.position);
-  destination.set(
-    clamp(destination.x, -battlefieldHalf, battlefieldHalf),
-    clamp(destination.y, -battlefieldVerticalHalf, battlefieldVerticalHalf),
-    clamp(destination.z, -battlefieldHalf, battlefieldHalf),
-  );
+  destination.set(...clampCollisionPosition(ship, destination, battlefieldHalf, battlefieldVerticalHalf));
   const offset = destination.sub(origin);
   const movementLimit = movementLimitFor(ship.maxMove, mode);
   if (offset.length() > movementLimit) offset.setLength(movementLimit);
   const result = origin.add(offset);
   return [result.x, result.y, result.z];
+}
+
+function collisionSafeDestination(
+  ship: AiCommandShip,
+  ships: AiCommandShip[],
+  destination: Vec3,
+  mode: FlightMode,
+  battlefieldHalf: number,
+  battlefieldVerticalHalf: number,
+  reservedDestinations: Record<string, Vec3>,
+  ramTargetId?: string,
+) {
+  let adjusted = new THREE.Vector3(...destination);
+  const ownMass = collisionMassFor(ship);
+  const obstacles = ships
+    .filter((candidate) => candidate.id !== ship.id && (candidate.hull > 0 || isPersistentWreck(candidate)))
+    .sort((left, right) => left.id.localeCompare(right.id));
+
+  for (let pass = 0; pass < 2; pass += 1) {
+    obstacles.forEach((obstacle) => {
+      if (obstacle.id === ramTargetId) return;
+      const obstaclePosition = new THREE.Vector3(...(reservedDestinations[obstacle.id] ?? obstacle.position));
+      const origin = new THREE.Vector3(...ship.position);
+      const travel = adjusted.clone().sub(origin);
+      const closestTime = travel.lengthSq() <= 1e-8
+        ? 0
+        : clamp(obstaclePosition.clone().sub(origin).dot(travel) / travel.lengthSq(), 0, 1);
+      const closestPoint = origin.clone().addScaledVector(travel, closestTime);
+      const away = closestPoint.clone().sub(obstaclePosition);
+      if (away.lengthSq() <= 1e-8) {
+        const reference = Math.abs(travel.clone().normalize().dot(new THREE.Vector3(0, 1, 0))) > 0.9
+          ? new THREE.Vector3(1, 0, 0)
+          : new THREE.Vector3(0, 1, 0);
+        away.crossVectors(travel.lengthSq() > 1e-8 ? travel : new THREE.Vector3(0, 0, -1), reference);
+      }
+      away.normalize();
+      const obstacleMass = collisionMassFor(obstacle);
+      const largerShipBuffer = obstacle.hull > 0 && obstacleMass > ownMass * 1.05
+        ? 0.85 + Math.min(0.65, (obstacleMass / Math.max(1, ownMass) - 1) * 0.12)
+        : 0.28;
+      const wreckBuffer = obstacle.hull <= 0 ? 0.38 : 0;
+      const minimumDistance = collisionRadiusFor(ship) + collisionRadiusFor(obstacle) + largerShipBuffer + wreckBuffer;
+      const pathDistance = closestPoint.distanceTo(obstaclePosition);
+      const endpointDistance = adjusted.distanceTo(obstaclePosition);
+      if (pathDistance >= minimumDistance && endpointDistance >= minimumDistance) return;
+      const correction = Math.max(minimumDistance - pathDistance, minimumDistance - endpointDistance, 0) + 0.18;
+      adjusted.addScaledVector(away, correction);
+      adjusted = new THREE.Vector3(...clampDestination(
+        ship,
+        adjusted,
+        mode,
+        battlefieldHalf,
+        battlefieldVerticalHalf,
+      ));
+    });
+  }
+  return [adjusted.x, adjusted.y, adjusted.z] as Vec3;
 }
 
 function directionAwayFrom(ship: AiCommandShip, target: AiCommandShip) {
@@ -349,6 +411,16 @@ export function generateAiCommandOrder(
   const canCommitFocus = tactics.facingPriority === "weapon-target"
     || !expectedThreat
     || expectedThreat.id === target.id;
+  const ramCapable = !isDisposable
+    && !hullDamaged
+    && (ship.archetypeId === "hammerhead" || ship.sizeClass === "large");
+  const ramTargetPosition = options.reservedDestinations?.[target.id] ?? target.position;
+  const ramDistance = new THREE.Vector3(...ship.position).distanceTo(new THREE.Vector3(...ramTargetPosition));
+  const rammingOpportunity = ramCapable
+    && effectiveDoctrine !== "defensive"
+    && ownCondition >= 0.58
+    && collisionMassFor(ship) >= collisionMassFor(target)
+    && ramDistance <= movementLimitFor(ship.maxMove, "normal") + collisionRadiusFor(ship) + collisionRadiusFor(target) * 0.72;
 
   let mode: FlightMode = "normal";
   if (effectiveDoctrine === "aggressive") {
@@ -366,6 +438,7 @@ export function generateAiCommandOrder(
   } else if ((!hullDamaged || !expectedThreat) && ownCondition > 0.66 && assessment.hasSolution && assessment.canFinishWithFocus && canCommitFocus) {
     mode = "focus-fire";
   }
+  if (rammingOpportunity) mode = "normal";
 
   const direction = toTarget.lengthSq() > 1e-9
     ? toTarget.normalize()
@@ -374,7 +447,16 @@ export function generateAiCommandOrder(
   let movementDirection = direction.clone();
   let movementFraction = 0;
   let selectedDestination: Vec3 | null = null;
-  if (mode === "extra-move") {
+  if (rammingOpportunity) {
+    movementFraction = 1;
+    selectedDestination = clampDestination(
+      ship,
+      new THREE.Vector3(...ramTargetPosition),
+      mode,
+      battlefieldHalf,
+      battlefieldVerticalHalf,
+    );
+  } else if (mode === "extra-move") {
     const shouldRetreat = effectiveDoctrine === "defensive"
       || imminentDestruction
       || (!isDisposable && !isFighter && (ownCondition < 0.4 || isOutmatched));
@@ -455,8 +537,18 @@ export function generateAiCommandOrder(
 
   const desiredDestination = new THREE.Vector3(...ship.position)
     .addScaledVector(movementDirection, movementLimit * movementFraction);
-  const destination = selectedDestination
+  const rawDestination = selectedDestination
     ?? clampDestination(ship, desiredDestination, mode, battlefieldHalf, battlefieldVerticalHalf);
+  const destination = collisionSafeDestination(
+    ship,
+    ships,
+    rawDestination,
+    mode,
+    battlefieldHalf,
+    battlefieldVerticalHalf,
+    options.reservedDestinations ?? {},
+    rammingOpportunity ? target.id : undefined,
+  );
   const facingTarget = effectiveDoctrine === "standard"
     && tactics.facingPriority === "expected-threat"
     && expectedThreat

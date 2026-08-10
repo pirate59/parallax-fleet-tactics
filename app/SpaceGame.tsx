@@ -99,6 +99,10 @@ import { fleetColorFor } from "./fleetPresentation";
 import { preferredTargetId, rememberOrderedTargets } from "./targetMemory";
 import { spectatorOverviewFor } from "./spectatorCamera";
 import type { AiTacticalProfile } from "./aiTactics";
+import {
+  clampCollisionPosition,
+  resolveMovementCollisions,
+} from "./collisionEngine";
 
 type Phase = "planning" | "executing" | "victory" | "defeat";
 type GameScreen = "menu" | "battle" | "story";
@@ -484,11 +488,12 @@ const distanceBetween = (a: Vec3, b: Vec3) =>
 
 const clampDestination = (ship: Ship, destination: Vec3, mode: FlightMode = "normal"): Vec3 => {
   const origin = new THREE.Vector3(...ship.position);
-  const target = new THREE.Vector3(
-    clamp(destination[0], -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
-    clamp(destination[1], -BATTLEFIELD_VERTICAL_HALF, BATTLEFIELD_VERTICAL_HALF),
-    clamp(destination[2], -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
-  );
+  const target = new THREE.Vector3(...clampCollisionPosition(
+    ship,
+    destination,
+    BATTLEFIELD_HALF,
+    BATTLEFIELD_VERTICAL_HALF,
+  ));
   const offset = target.sub(origin);
   const movementLimit = movementLimitFor(ship.maxMove, mode);
   if (offset.length() > movementLimit) offset.setLength(movementLimit);
@@ -496,11 +501,11 @@ const clampDestination = (ship: Ship, destination: Vec3, mode: FlightMode = "nor
   return [result.x, result.y, result.z];
 };
 
-const isDestinationValid = (ship: Ship, destination: Vec3, mode: FlightMode = "normal") =>
-  distanceBetween(ship.position, destination) <= movementLimitFor(ship.maxMove, mode) + 0.01 &&
-  Math.abs(destination[0]) <= BATTLEFIELD_HALF &&
-  Math.abs(destination[1]) <= BATTLEFIELD_VERTICAL_HALF &&
-  Math.abs(destination[2]) <= BATTLEFIELD_HALF;
+const isDestinationValid = (ship: Ship, destination: Vec3, mode: FlightMode = "normal") => {
+  const bounded = clampCollisionPosition(ship, destination, BATTLEFIELD_HALF, BATTLEFIELD_VERTICAL_HALF);
+  return distanceBetween(ship.position, destination) <= movementLimitFor(ship.maxMove, mode) + 0.01
+    && distanceBetween(bounded, destination) <= 0.01;
+};
 
 const destinationFromManeuver = (
   ship: Ship,
@@ -2910,13 +2915,16 @@ export function SpaceGame() {
     currentShips
       .filter((ship) => ship.controller === "ai" && ship.hull > 0)
       .forEach((ship) => {
+        const reservedDestinations = Object.fromEntries(
+          Object.entries(orders).map(([id, order]) => [id, order.destination]),
+        );
         const order = generateAiCommandOrder(
           ship,
           currentShips,
           ship.aiDoctrine ?? "standard",
           BATTLEFIELD_HALF,
           BATTLEFIELD_VERTICAL_HALF,
-          { forcedTargetId: wingTargets[ship.id] },
+          { forcedTargetId: wingTargets[ship.id], reservedDestinations },
         );
         if (order) orders[ship.id] = order;
       });
@@ -2928,30 +2936,39 @@ export function SpaceGame() {
     if (phase !== "planning" || (!fishtankCommit && (!allReady || !allOrdersValid))) return;
     const npcOrders = generateNpcOrders(ships);
     const allOrders: Record<string, Order> = fishtankCommit ? npcOrders : { ...drafts, ...npcOrders };
-    const endShips = ships.map((ship) => {
+    const intendedShips = ships.map((ship) => {
       const order = allOrders[ship.id];
       return ship.hull > 0 && order ? endStateFor(ship, order) : ship;
     });
+    const collision = resolveMovementCollisions(
+      ships,
+      intendedShips,
+      BATTLEFIELD_HALF,
+      BATTLEFIELD_VERTICAL_HALF,
+    );
     const combat = resolveCombatTurn(
-      endShips,
+      collision.ships,
       allOrders,
-      fishtankCommit ? { teamOrder: fishtankActivationOrder(turn) } : undefined,
+      {
+        ...(fishtankCommit ? { teamOrder: fishtankActivationOrder(turn) } : {}),
+        preHitFaces: collision.hitFaces,
+      },
     );
     setPhase("executing");
     setLog((current) => [
       activeMode === "fishtank"
         ? `Turn ${turn}: both AI fleets released their vectors.`
-        : `Turn ${turn}: vectors move simultaneously; weapons resolve by activation order.`,
+        : `Turn ${turn}: vectors move simultaneously; impacts resolve before ordered fire.`,
       ...current,
     ].slice(0, 8));
     setResolution({
       token: Date.now(),
-      endShips,
+      endShips: collision.ships,
       resolvedShips: combat.ships,
       orders: allOrders,
       shots: combat.shots,
-      outcomes: combat.outcomes,
-      destroyedIds: combat.destroyedIds,
+      outcomes: [...collision.outcomes, ...combat.outcomes],
+      destroyedIds: [...new Set([...collision.destroyedIds, ...combat.destroyedIds])],
     });
   }, [activeMode, allOrdersValid, allReady, drafts, generateNpcOrders, phase, ships, turn]);
 
