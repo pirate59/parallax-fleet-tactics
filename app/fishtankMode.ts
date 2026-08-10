@@ -1,10 +1,21 @@
 import type { AiDoctrine } from "./aiCommandEngine.ts";
 import type { Team, Vec3 } from "./combatEngine.ts";
 import type { WeaponMount } from "./shipCatalog.ts";
+import { fleetColorFor } from "./fleetPresentation.ts";
 
 export const FISHTANK_FLEET_SIZE = 5;
-export const FISHTANK_PLANNING_DELAY_MS = 650;
-export const FISHTANK_RESTART_DELAY_MS = 3200;
+export const FISHTANK_PLANNING_DELAY_MS = 1800;
+export const FISHTANK_RESTART_DELAY_MS = 5200;
+export const FISHTANK_CINEMATIC_TIMINGS = {
+  movement: 2600,
+  cameraApproach: 720,
+  beam: 360,
+  impactHold: 880,
+  destroyedHold: 1450,
+  betweenShots: 210,
+  cameraReturn: 820,
+  quietTurnHold: 760,
+} as const;
 
 type FishtankTemplate = {
   id: string;
@@ -56,11 +67,6 @@ const FLEET_NAMES = {
   enemy: ["Vandal", "Shrike", "Maraud", "Razor", "Warden"],
 } as const;
 
-const FLEET_COLORS = {
-  ally: ["#68d8ff", "#9af2ff", "#58f0c2", "#86c9ff", "#6ea8ff"],
-  enemy: ["#ff6f70", "#ff9a73", "#ff5a88", "#e767a6", "#ff785e"],
-} as const;
-
 /**
  * Builds mirrored five-ship AI fleets from the six canonical hulls. Each match
  * rotates the omitted hull and doctrines so unattended simulations vary.
@@ -86,7 +92,7 @@ export function createFishtankFleet<T extends FishtankTemplate>(templates: reado
         team,
         controller: "ai",
         aiDoctrine: doctrine,
-        color: FLEET_COLORS[team][index],
+        color: fleetColorFor(team, `${template.id}-${index}`),
         position: [...slots[index]] as Vec3,
         rotation: [index % 2 ? 4 : -3, team === "ally" ? -90 : 90, index % 2 ? -5 : 5] as Vec3,
         shields: { ...template.maxShields },

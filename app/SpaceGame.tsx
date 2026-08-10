@@ -72,6 +72,7 @@ import {
   type ShipController,
 } from "./fleetControl";
 import {
+  FISHTANK_CINEMATIC_TIMINGS,
   FISHTANK_FLEET_SIZE,
   FISHTANK_PLANNING_DELAY_MS,
   FISHTANK_RESTART_DELAY_MS,
@@ -85,6 +86,9 @@ import {
   totalDurabilityMultiplier,
   type ShipSizeClass,
 } from "./shipSize";
+import { fleetColorFor } from "./fleetPresentation";
+import { preferredTargetId, rememberOrderedTargets } from "./targetMemory";
+import { spectatorOverviewFor } from "./spectatorCamera";
 
 type Phase = "planning" | "executing" | "victory" | "defeat";
 type GameScreen = "menu" | "battle" | "story";
@@ -127,6 +131,7 @@ type Ship = {
   weaponMounts: WeaponMount[];
   turnEndAbility?: ShipTurnEndAbility;
   spawnedByShipId?: string;
+  lastTargetId?: string;
 };
 
 type Order = {
@@ -281,7 +286,7 @@ function createShipFromArchetype(archetype: ShipArchetype, deployment: ShipDeplo
     name: deployment.name ?? archetype.name,
     callsign: deployment.callsign ?? archetype.callsign,
     className: deployment.className ?? archetype.className,
-    color: deployment.color ?? archetype.color,
+    color: deployment.color ?? fleetColorFor(deployment.team, archetype.id),
     team: deployment.team,
     controller: deployment.controller,
     aiDoctrine: deployment.aiDoctrine,
@@ -469,14 +474,13 @@ const destinationFromManeuver = (
 };
 
 const defaultOrderFor = (ship: Ship, ships: Ship[]): Order => {
-  const firstEnemy = ships.find((candidate) => candidate.team === "enemy" && candidate.hull > 0);
   const defaultDistance = Math.min(ship.maxMove, ship.team === "player" ? 3 : ship.maxMove * 0.55);
   return {
     destination: destinationFromManeuver(ship, defaultDistance, 0, 0, 0, "normal"),
     turn: 0,
     pitch: 0,
     roll: 0,
-    targetId: firstEnemy?.id ?? "",
+    targetId: preferredTargetId(ship, ships),
     fire: true,
     mode: "normal",
   };
@@ -548,7 +552,7 @@ function createStoryStarter() {
     name: archetype.name,
     callsign: archetype.callsign,
     className: archetype.className,
-    color: archetype.color,
+    color: fleetColorFor("player", archetype.id),
     archetypeId: archetype.id,
     modelId: archetype.modelId,
     sizeClass: archetype.sizeClass,
@@ -599,6 +603,7 @@ function createStoryEnemy(kind: StoryEnemyKind, gate: number, index: number, sca
     className: threatId ? `Pursuit ${template.className.toLowerCase()}` : template.className,
     team: "enemy" as Team,
     controller: "ai" as const,
+    color: fleetColorFor("enemy", `${archetypeId}-${index}`),
     position: [...slot] as Vec3,
     rotation: [index % 2 ? -5 : 3, -118 - index * 8, index % 2 ? 6 : -4] as Vec3,
     shields,
@@ -618,7 +623,6 @@ function createRecruitShip(kind: "scout" | "escort" | "gunboat", currentShips: S
   const template = copyShips([sourceTemplate])[0];
   const index = currentShips.filter((ship) => ship.id.startsWith(`recruit-${kind}`)).length + 1;
   const names = { scout: "Morrow", escort: "Vesper", gunboat: "Bastion" } as const;
-  const colors = { scout: "#9af2ff", escort: "#67e7ca", gunboat: "#85c8ff" } as const;
   const slot = STORY_PLAYER_SLOTS[Math.min(currentShips.filter((ship) => ship.team === "player").length, STORY_PLAYER_SLOTS.length - 1)];
   return {
     ...template,
@@ -628,7 +632,7 @@ function createRecruitShip(kind: "scout" | "escort" | "gunboat", currentShips: S
     className: `Volunteer ${template.className.toLowerCase()}`,
     team: "player" as Team,
     ...AI_RECRUIT_CONTROL,
-    color: colors[kind],
+    color: fleetColorFor("player", `${archetypeId}-${index}`),
     position: [...slot.position] as Vec3,
     rotation: [...slot.rotation] as Vec3,
   };
@@ -1208,6 +1212,7 @@ function TacticalScene({
   const selectRef = useRef(onSelect);
   const focusRef = useRef(onCombatFocus);
   const completeRef = useRef(onResolutionComplete);
+  const spectatorViewRef = useRef(0);
 
   useEffect(() => {
     selectRef.current = onSelect;
@@ -1592,8 +1597,16 @@ function TacticalScene({
     const context = contextRef.current;
     if (!context || !cameraCommand.nonce) return;
     if (cameraCommand.kind === "reset") {
-      context.camera.position.set(19, 16, 22);
-      context.controls.target.set(0, 0, 0);
+      if (presentation === "spectator") {
+        const overview = spectatorOverviewFor(ships, context.camera.aspect, spectatorViewRef.current);
+        context.camera.position.set(...overview.position);
+        context.controls.target.set(...overview.target);
+        context.camera.fov = overview.fov;
+        context.camera.updateProjectionMatrix();
+      } else {
+        context.camera.position.set(19, 16, 22);
+        context.controls.target.set(0, 0, 0);
+      }
     } else {
       const ship = ships.find((candidate) => candidate.id === cameraCommand.shipId);
       if (ship) {
@@ -1604,19 +1617,38 @@ function TacticalScene({
       }
     }
     context.controls.update();
-  }, [cameraCommand, ships]);
+  }, [cameraCommand, presentation, ships]);
+
+  useEffect(() => {
+    const context = contextRef.current;
+    if (!context || presentation !== "spectator" || resolution) return;
+    context.controls.maxDistance = 75;
+    spectatorViewRef.current += 1;
+    const overview = spectatorOverviewFor(ships, context.camera.aspect, spectatorViewRef.current);
+    context.camera.position.set(...overview.position);
+    context.controls.target.set(...overview.target);
+    context.camera.fov = overview.fov;
+    context.camera.updateProjectionMatrix();
+    context.controls.update();
+  }, [presentation, resolution, ships]);
 
   useEffect(() => {
     const context = contextRef.current;
     if (!context || !resolution) return;
     let cancelled = false;
     const timers = new Set<ReturnType<typeof setTimeout>>();
-    const tacticalPosition = context.camera.position.clone();
-    const tacticalTarget = context.controls.target.clone();
-    const tacticalFov = context.camera.fov;
+    const spectatorOverview = presentation === "spectator"
+      ? spectatorOverviewFor(resolution.endShips, context.camera.aspect, spectatorViewRef.current + 1)
+      : null;
+    const tacticalPosition = spectatorOverview
+      ? new THREE.Vector3(...spectatorOverview.position)
+      : context.camera.position.clone();
+    const tacticalTarget = spectatorOverview
+      ? new THREE.Vector3(...spectatorOverview.target)
+      : context.controls.target.clone();
+    const tacticalFov = spectatorOverview?.fov ?? context.camera.fov;
     const started = performance.now();
-    const duration = presentation === "spectator" ? 1120 : 1550;
-    const timing = (command: number, spectator: number) => presentation === "spectator" ? spectator : command;
+    const duration = presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.movement : 1550;
     const starts = new Map(
       ships.map((ship) => [
         ship.id,
@@ -1695,7 +1727,7 @@ function TacticalScene({
         .filter((entry): entry is { shot: CombatShotEvent; shooter: Ship; target: Ship } => Boolean(entry.shooter && entry.target));
 
       if (!shots.length) {
-        await delay(timing(420, 260));
+        await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.quietTurnHold : 420);
         context.controls.enabled = true;
         if (!cancelled) completeRef.current(resolution);
         return;
@@ -1725,11 +1757,15 @@ function TacticalScene({
           ? ` · SALVO ${shot.salvoIndex + 1}/2`
           : "";
         focusRef.current({ shooter: shooter.name, target: target.name, team: shooter.team, weapon: `${shot.weapon.name}${focusSuffix}` });
-        await tweenCamera(cameraPosition, lookAt, timing(430, 300));
+        await tweenCamera(
+          cameraPosition,
+          lookAt,
+          presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraApproach : 430,
+        );
         if (cancelled) return;
         clearGroup(context.laserGroup);
         const beam = addCinematicBeam(context.laserGroup, shooter, target, shot);
-        await growBeam(beam, timing(240, 170));
+        await growBeam(beam, presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.beam : 240);
         const hud = context.shipHuds.get(target.id);
         if (hud) updateShipHud(hud, { ...target, hull: shot.hullAfter });
         if (shot.face) {
@@ -1742,14 +1778,26 @@ function TacticalScene({
           }
         }
         if (shot.destroyed) destroyShipVisual(context, target);
-        await delay(shot.destroyed ? timing(760, 520) : timing(540, 340));
+        await delay(
+          presentation === "spectator"
+            ? shot.destroyed
+              ? FISHTANK_CINEMATIC_TIMINGS.destroyedHold
+              : FISHTANK_CINEMATIC_TIMINGS.impactHold
+            : shot.destroyed
+              ? 760
+              : 540,
+        );
         clearGroup(context.laserGroup);
-        await delay(timing(120, 70));
+        await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.betweenShots : 120);
       }
 
       if (cancelled) return;
       focusRef.current(null);
-      await tweenCamera(tacticalPosition, tacticalTarget, timing(520, 360));
+      await tweenCamera(
+        tacticalPosition,
+        tacticalTarget,
+        presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraReturn : 520,
+      );
       context.camera.fov = tacticalFov;
       context.camera.updateProjectionMatrix();
       context.controls.target.copy(tacticalTarget);
@@ -2405,7 +2453,8 @@ export function SpaceGame() {
   }, [activeMode, allOrdersValid, allReady, drafts, generateNpcOrders, phase, ships, turn]);
 
   const resolveCombat = useCallback((finished: Resolution) => {
-    const launched = applyCarrierLaunches(copyShips(finished.resolvedShips), createLaunchedFighter);
+    const rememberedShips = rememberOrderedTargets(finished.resolvedShips, finished.orders);
+    const launched = applyCarrierLaunches(copyShips(rememberedShips), createLaunchedFighter);
     const results = copyShips(launched.ships);
     setShips(results);
     setResolution(null);

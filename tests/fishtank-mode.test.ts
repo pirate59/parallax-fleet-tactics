@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createFishtankFleet, fishtankActivationOrder } from "../app/fishtankMode.ts";
+import {
+  FISHTANK_CINEMATIC_TIMINGS,
+  FISHTANK_PLANNING_DELAY_MS,
+  FISHTANK_RESTART_DELAY_MS,
+  createFishtankFleet,
+  fishtankActivationOrder,
+} from "../app/fishtankMode.ts";
+import { FLEET_COLOR_PALETTES } from "../app/fleetPresentation.ts";
 import { createPrimaryWeaponMount } from "../app/shipCatalog.ts";
 
 const template = (index: number) => ({
@@ -33,6 +40,16 @@ test("Fishtank creates two complete five-ship AI fleets at full strength", () =>
   assert.ok(fleet.every((ship) => ship.hull === ship.maxHull));
   assert.ok(fleet.every((ship) => ship.shields.fore === ship.maxShields.fore));
   assert.equal(new Set(fleet.map((ship) => ship.id)).size, 10);
+  assert.ok(allies.every((ship) => FLEET_COLOR_PALETTES.friendly.includes(ship.color as typeof FLEET_COLOR_PALETTES.friendly[number])));
+  assert.ok(enemies.every((ship) => FLEET_COLOR_PALETTES.enemy.includes(ship.color as typeof FLEET_COLOR_PALETTES.enemy[number])));
+});
+
+test("Fishtank pacing leaves room for cinematic movement and impacts", () => {
+  assert.ok(FISHTANK_PLANNING_DELAY_MS >= 1500);
+  assert.ok(FISHTANK_RESTART_DELAY_MS >= 5000);
+  assert.ok(FISHTANK_CINEMATIC_TIMINGS.movement >= 2500);
+  assert.ok(FISHTANK_CINEMATIC_TIMINGS.cameraApproach > FISHTANK_CINEMATIC_TIMINGS.beam);
+  assert.ok(FISHTANK_CINEMATIC_TIMINGS.destroyedHold > FISHTANK_CINEMATIC_TIMINGS.impactHold);
 });
 
 test("Fishtank alternates which AI fleet receives first activation", () => {
