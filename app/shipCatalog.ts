@@ -1,9 +1,10 @@
-import type { Shields } from "./combatEngine.ts";
+import type { Shields, Vec3 } from "./combatEngine.ts";
 import {
   resolveSizedDurability,
   resolveSizedModelScale,
   type ShipSizeClass,
 } from "./shipSize.ts";
+import type { ShipModelId } from "./shipModels.ts";
 
 export const BASIC_WEAPON_SYSTEMS = {
   cannon: {
@@ -28,12 +29,60 @@ export const BASIC_WEAPON_SYSTEMS = {
 
 export type BasicWeaponKind = keyof typeof BASIC_WEAPON_SYSTEMS;
 
+export const ELITE_WEAPON_KINDS = ["railgun", "turret", "flak"] as const;
+export type EliteWeaponKind = typeof ELITE_WEAPON_KINDS[number];
+export type WeaponKind = BasicWeaponKind | EliteWeaponKind;
+
+export function isEliteWeaponKind(weaponKind: WeaponKind): weaponKind is EliteWeaponKind {
+  return (ELITE_WEAPON_KINDS as readonly string[]).includes(weaponKind);
+}
+
+export type WeaponMount = {
+  id: string;
+  weaponKind: WeaponKind;
+  hardpointId: string;
+};
+
+const DEFAULT_HARDPOINTS: Record<WeaponKind, string> = {
+  cannon: "primary",
+  pulse: "primary",
+  torpedo: "primary",
+  railgun: "primary",
+  turret: "dorsal",
+  flak: "primary",
+};
+
+export function createWeaponMount(
+  weaponKind: WeaponKind,
+  existingMounts: readonly WeaponMount[] = [],
+  hardpointId = DEFAULT_HARDPOINTS[weaponKind],
+): WeaponMount {
+  const sequence = existingMounts.filter((mount) => mount.weaponKind === weaponKind).length + 1;
+  return {
+    id: `${weaponKind}-${sequence}`,
+    weaponKind,
+    hardpointId,
+  };
+}
+
+export function createPrimaryWeaponMount(weaponKind: BasicWeaponKind): WeaponMount {
+  return { id: "primary-1", weaponKind, hardpointId: "primary" };
+}
+
+export type ShipTurnEndAbility = {
+  kind: "launch-fighter";
+  fighterArchetypeId: "fighter";
+  maxActive: number;
+  launchOffsets: Vec3[];
+};
+
 export type ShipArchetype = {
   id: string;
   name: string;
   callsign: string;
   className: string;
   color: string;
+  modelId: ShipModelId;
   sizeClass: ShipSizeClass;
   durabilityMultiplier?: number;
   baseModelScale: number;
@@ -45,24 +94,23 @@ export type ShipArchetype = {
   maxRoll: number;
   weaponRange: number;
   weaponDamage: number;
-  basicWeapon: BasicWeaponKind;
+  weaponMounts: WeaponMount[];
+  turnEndAbility?: ShipTurnEndAbility;
 };
 
-/**
- * Story hulls live in a catalog so future campaign starts, recruits, and unlocks
- * can swap a complete chassis without branching the battle systems. Only the
- * Hammerhead is active in the campaign today; the other entries validate the
- * supported variation points for later ship-selection work.
- */
-export const STORY_SHIP_ARCHETYPES = {
+const behemothRailgun = createWeaponMount("railgun", [], "port-forward");
+
+/** The canonical hull roster used by every game mode. */
+export const SHIP_ARCHETYPES = {
   hammerhead: {
     id: "hammerhead",
     name: "The Hammerhead",
     callsign: "HM-01",
-    className: "Commandeered Halcyon siege frigate",
+    className: "Halcyon siege cruiser",
     color: "#68d8ff",
+    modelId: "hammerhead",
     sizeClass: "cruiser",
-    baseModelScale: 1.12,
+    baseModelScale: 1.08,
     baseShieldCapacity: { fore: 184, aft: 28, port: 78, starboard: 78, dorsal: 64, ventral: 58 },
     baseHull: 120,
     maxMove: 5,
@@ -71,47 +119,122 @@ export const STORY_SHIP_ARCHETYPES = {
     maxRoll: 90,
     weaponRange: 17,
     weaponDamage: 34,
-    basicWeapon: "cannon",
+    weaponMounts: [createPrimaryWeaponMount("cannon")],
   },
-  swiftfin: {
-    id: "swiftfin",
-    name: "Swiftfin",
-    callsign: "SF-03",
-    className: "Light pursuit cutter",
-    color: "#9af2ff",
+  archer: {
+    id: "archer",
+    name: "Archer",
+    callsign: "AR-07",
+    className: "Long-range strike cruiser",
+    color: "#9be8ff",
+    modelId: "archer",
+    sizeClass: "cruiser",
+    baseModelScale: 1,
+    baseShieldCapacity: { fore: 68, aft: 38, port: 48, starboard: 48, dorsal: 42, ventral: 38 },
+    baseHull: 96,
+    maxMove: 5.5,
+    maxTurn: 58,
+    maxPitch: 42,
+    maxRoll: 95,
+    weaponRange: 16,
+    weaponDamage: 30,
+    weaponMounts: [createWeaponMount("railgun")],
+  },
+  hulk: {
+    id: "hulk",
+    name: "Hulk",
+    callsign: "HK-12",
+    className: "Shielded brawler cruiser",
+    color: "#75e0c2",
+    modelId: "hulk",
+    sizeClass: "cruiser",
+    baseModelScale: 1.08,
+    baseShieldCapacity: { fore: 126, aft: 108, port: 118, starboard: 118, dorsal: 112, ventral: 104 },
+    baseHull: 142,
+    maxMove: 4,
+    maxTurn: 46,
+    maxPitch: 34,
+    maxRoll: 72,
+    weaponRange: 16,
+    weaponDamage: 30,
+    weaponMounts: [createWeaponMount("flak")],
+  },
+  fighter: {
+    id: "fighter",
+    name: "Fighter",
+    callsign: "FT-01",
+    className: "Long-range interceptor shuttle",
+    color: "#b4f4ff",
+    modelId: "fighter",
     sizeClass: "shuttle",
     baseModelScale: 1.08,
-    baseShieldCapacity: { fore: 54, aft: 42, port: 40, starboard: 40, dorsal: 34, ventral: 32 },
-    baseHull: 72,
-    maxMove: 9,
-    maxTurn: 100,
-    maxPitch: 72,
-    maxRoll: 180,
-    weaponRange: 15,
-    weaponDamage: 24,
-    basicWeapon: "pulse",
+    baseShieldCapacity: { fore: 42, aft: 28, port: 32, starboard: 32, dorsal: 26, ventral: 24 },
+    baseHull: 68,
+    maxMove: 11,
+    maxTurn: 115,
+    maxPitch: 82,
+    maxRoll: 210,
+    weaponRange: 26,
+    weaponDamage: 22,
+    weaponMounts: [createPrimaryWeaponMount("pulse")],
   },
-  bastion: {
-    id: "bastion",
-    name: "Bastion",
-    callsign: "BS-08",
-    className: "Heavy breach cruiser",
-    color: "#86c9ff",
+  behemoth: {
+    id: "behemoth",
+    name: "Behemoth",
+    callsign: "BH-90",
+    className: "Dreadnought weapons platform",
+    color: "#88a9ff",
+    modelId: "behemoth",
     sizeClass: "large",
-    baseModelScale: 0.95,
-    baseShieldCapacity: { fore: 128, aft: 92, port: 112, starboard: 112, dorsal: 96, ventral: 88 },
-    baseHull: 168,
-    maxMove: 3.75,
-    maxTurn: 38,
+    durabilityMultiplier: 1.5,
+    baseModelScale: 1.05,
+    baseShieldCapacity: { fore: 142, aft: 118, port: 132, starboard: 132, dorsal: 124, ventral: 116 },
+    baseHull: 190,
+    maxMove: 2.75,
+    maxTurn: 28,
+    maxPitch: 20,
+    maxRoll: 38,
+    weaponRange: 16,
+    weaponDamage: 38,
+    weaponMounts: [behemothRailgun, createWeaponMount("flak", [behemothRailgun], "starboard-forward")],
+  },
+  carrier: {
+    id: "carrier",
+    name: "Carrier",
+    callsign: "CV-41",
+    className: "Fleet carrier",
+    color: "#77c9ff",
+    modelId: "carrier",
+    sizeClass: "large",
+    baseModelScale: 1,
+    baseShieldCapacity: { fore: 118, aft: 110, port: 124, starboard: 124, dorsal: 116, ventral: 108 },
+    baseHull: 156,
+    maxMove: 5,
+    maxTurn: 36,
     maxPitch: 28,
-    maxRoll: 60,
-    weaponRange: 14,
-    weaponDamage: 42,
-    basicWeapon: "torpedo",
+    maxRoll: 52,
+    weaponRange: 16,
+    weaponDamage: 0,
+    weaponMounts: [],
+    turnEndAbility: {
+      kind: "launch-fighter",
+      fighterArchetypeId: "fighter",
+      maxActive: 3,
+      launchOffsets: [[-1.15, -0.5, 0.25], [1.15, -0.5, 0.25], [0, -0.65, 1.15]],
+    },
   },
 } satisfies Record<string, ShipArchetype>;
 
-export const STORY_STARTER_ARCHETYPE = STORY_SHIP_ARCHETYPES.hammerhead;
+export type ShipArchetypeId = keyof typeof SHIP_ARCHETYPES;
+
+// Story starts and future unlocks use the same authoritative hull records.
+export const STORY_SHIP_ARCHETYPES = SHIP_ARCHETYPES;
+export const ALL_SHIP_ARCHETYPES = SHIP_ARCHETYPES;
+export const STORY_STARTER_ARCHETYPE = SHIP_ARCHETYPES.hammerhead;
+
+export function shipArchetypeFor(archetypeId: ShipArchetypeId): ShipArchetype {
+  return SHIP_ARCHETYPES[archetypeId];
+}
 
 export function durabilityForArchetype(archetype: ShipArchetype) {
   return resolveSizedDurability(

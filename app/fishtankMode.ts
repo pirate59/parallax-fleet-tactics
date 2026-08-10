@@ -1,5 +1,6 @@
 import type { AiDoctrine } from "./aiCommandEngine.ts";
 import type { Team, Vec3 } from "./combatEngine.ts";
+import type { WeaponMount } from "./shipCatalog.ts";
 
 export const FISHTANK_FLEET_SIZE = 5;
 export const FISHTANK_PLANNING_DELAY_MS = 650;
@@ -20,10 +21,24 @@ type FishtankTemplate = {
   maxShields: Record<string, number>;
   hull: number;
   maxHull: number;
-  eliteWeapons: string[];
+  weaponMounts: WeaponMount[];
 };
 
-const TEMPLATE_ORDER = [0, 1, 5, 4, 3] as const;
+export type FishtankShip<T extends FishtankTemplate> = Omit<
+  T,
+  "team" | "controller" | "aiDoctrine" | "position" | "rotation" | "shields" | "hull" | "weaponMounts"
+> & {
+  team: "ally" | "enemy";
+  controller: "ai";
+  aiDoctrine: AiDoctrine;
+  position: Vec3;
+  rotation: Vec3;
+  shields: T["shields"];
+  hull: number;
+  weaponMounts: WeaponMount[];
+};
+
+const TEMPLATE_ORDER = [0, 1, 2, 3, 4, 5] as const;
 const DOCTRINES: AiDoctrine[] = ["aggressive", "standard", "defensive", "standard", "aggressive"];
 
 const LEFT_SLOTS: Vec3[] = [
@@ -47,11 +62,10 @@ const FLEET_COLORS = {
 } as const;
 
 /**
- * Builds mirrored five-ship AI fleets from the existing prototype hulls. The
- * match number rotates hulls and doctrines so unattended simulations do not
- * repeat the exact same opening on every restart.
+ * Builds mirrored five-ship AI fleets from the six canonical hulls. Each match
+ * rotates the omitted hull and doctrines so unattended simulations vary.
  */
-export function createFishtankFleet<T extends FishtankTemplate>(templates: readonly T[], matchNumber: number): T[] {
+export function createFishtankFleet<T extends FishtankTemplate>(templates: readonly T[], matchNumber: number): FishtankShip<T>[] {
   if (templates.length < 6) throw new Error("Fishtank mode requires six prototype ship templates.");
 
   const buildSide = (team: "ally" | "enemy", slots: Vec3[]) =>
@@ -79,8 +93,8 @@ export function createFishtankFleet<T extends FishtankTemplate>(templates: reado
         maxShields: { ...template.maxShields },
         hull: template.maxHull,
         maxHull: template.maxHull,
-        eliteWeapons: [...template.eliteWeapons],
-      } as T;
+        weaponMounts: template.weaponMounts.map((mount) => ({ ...mount })),
+      } as FishtankShip<T>;
     });
 
   return [...buildSide("ally", LEFT_SLOTS), ...buildSide("enemy", RIGHT_SLOTS)];

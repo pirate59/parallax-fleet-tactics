@@ -37,18 +37,26 @@ import {
   weaponOriginFor,
   weaponProfilesFor,
   type CombatShotEvent,
-  type EliteWeaponKind,
   type ShieldFace,
   type Shields,
   type Team,
   type Vec3,
 } from "./combatEngine";
 import {
+  SHIP_ARCHETYPES,
   STORY_STARTER_ARCHETYPE,
+  createWeaponMount,
   durabilityForArchetype,
+  isEliteWeaponKind,
   modelScaleForArchetype,
-  type BasicWeaponKind,
+  type EliteWeaponKind,
+  type ShipArchetype,
+  type ShipTurnEndAbility,
+  type WeaponMount,
 } from "./shipCatalog";
+import { shipModelProfileFor, type ShipModelId } from "./shipModels";
+import { createShipHullGeometry } from "./shipGeometry";
+import { applyCarrierLaunches } from "./carrierEngine";
 import {
   AI_DOCTRINE_ORDER,
   AI_DOCTRINE_RULES,
@@ -112,11 +120,13 @@ type Ship = {
   weaponRange: number;
   weaponDamage: number;
   archetypeId: string;
+  modelId: ShipModelId;
   sizeClass: ShipSizeClass;
   durabilityMultiplier: number;
-  basicWeapon: BasicWeaponKind;
   modelScale: number;
-  eliteWeapons: EliteWeaponKind[];
+  weaponMounts: WeaponMount[];
+  turnEndAbility?: ShipTurnEndAbility;
+  spawnedByShipId?: string;
 };
 
 type Order = {
@@ -245,178 +255,105 @@ const INITIAL_LOG = [
   "Plot a grid endpoint, set final orientation, then stage both command ships.",
 ];
 
-type SizedShipDraft = Omit<Ship, "shields" | "maxShields" | "hull" | "maxHull" | "modelScale" | "durabilityMultiplier"> & {
-  baseShields: Shields;
-  baseHull: number;
-  baseModelScale: number;
-  durabilityMultiplier?: number;
+type ShipDeployment = {
+  id?: string;
+  name?: string;
+  callsign?: string;
+  className?: string;
+  color?: string;
+  team: Team;
+  controller: ShipController;
+  aiDoctrine?: AiDoctrine;
+  position: Vec3;
+  rotation: Vec3;
 };
 
-function createSizedShip(draft: SizedShipDraft): Ship {
-  const {
-    baseShields,
-    baseHull,
-    baseModelScale,
-    durabilityMultiplier = 1,
-    ...ship
-  } = draft;
-  const durability = resolveSizedDurability(baseHull, baseShields, ship.sizeClass, durabilityMultiplier);
+function createShipFromArchetype(archetype: ShipArchetype, deployment: ShipDeployment): Ship {
+  const durabilityMultiplier = archetype.durabilityMultiplier ?? 1;
+  const durability = resolveSizedDurability(
+    archetype.baseHull,
+    archetype.baseShieldCapacity,
+    archetype.sizeClass,
+    durabilityMultiplier,
+  );
   return {
-    ...ship,
+    id: deployment.id ?? archetype.id,
+    name: deployment.name ?? archetype.name,
+    callsign: deployment.callsign ?? archetype.callsign,
+    className: deployment.className ?? archetype.className,
+    color: deployment.color ?? archetype.color,
+    team: deployment.team,
+    controller: deployment.controller,
+    aiDoctrine: deployment.aiDoctrine,
+    position: [...deployment.position] as Vec3,
+    rotation: [...deployment.rotation] as Vec3,
+    maxMove: archetype.maxMove,
+    maxTurn: archetype.maxTurn,
+    maxPitch: archetype.maxPitch,
+    maxRoll: archetype.maxRoll,
+    weaponRange: archetype.weaponRange,
+    weaponDamage: archetype.weaponDamage,
+    archetypeId: archetype.id,
+    modelId: archetype.modelId,
+    sizeClass: archetype.sizeClass,
     durabilityMultiplier,
     shields: { ...durability.shields },
     maxShields: { ...durability.shields },
     hull: durability.hull,
     maxHull: durability.hull,
-    modelScale: resolveSizedModelScale(baseModelScale, ship.sizeClass),
+    modelScale: resolveSizedModelScale(archetype.baseModelScale, archetype.sizeClass),
+    weaponMounts: archetype.weaponMounts.map((mount) => ({ ...mount })),
+    turnEndAbility: archetype.turnEndAbility ? {
+      ...archetype.turnEndAbility,
+      launchOffsets: archetype.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
+    } : undefined,
   };
 }
 
 const INITIAL_SHIPS: Ship[] = [
-  createSizedShip({
-    id: "aegis",
-    name: "Aegis",
-    callsign: "AX-14",
-    className: "Halcyon frigate",
+  createShipFromArchetype(SHIP_ARCHETYPES.hammerhead, {
+    id: "hammerhead-skirmish",
+    name: "Hammerhead",
     team: "player",
     controller: "player",
-    sizeClass: "cruiser",
-    color: "#68d8ff",
     position: [-9, 0, 5],
     rotation: [0, 36, 0],
-    baseShields: { fore: 92, aft: 56, port: 78, starboard: 78, dorsal: 64, ventral: 58 },
-    baseHull: 120,
-    maxMove: 5,
-    maxTurn: 55,
-    maxPitch: 40,
-    maxRoll: 90,
-    weaponRange: 17,
-    weaponDamage: 34,
-    archetypeId: "halcyon-frigate",
-    basicWeapon: "cannon",
-    baseModelScale: 1,
-    eliteWeapons: [],
   }),
-  createSizedShip({
-    id: "rook",
-    name: "Rook",
-    callsign: "RK-02",
-    className: "Lancer interceptor",
+  createShipFromArchetype(SHIP_ARCHETYPES.fighter, {
+    id: "fighter-skirmish",
     team: "player",
     controller: "player",
-    sizeClass: "shuttle",
-    color: "#9af2ff",
     position: [-10, -3, -4],
     rotation: [8, 50, -8],
-    baseShields: { fore: 58, aft: 36, port: 44, starboard: 44, dorsal: 40, ventral: 35 },
-    baseHull: 82,
-    maxMove: 8,
-    maxTurn: 90,
-    maxPitch: 65,
-    maxRoll: 180,
-    weaponRange: 14,
-    weaponDamage: 24,
-    archetypeId: "lancer-interceptor",
-    basicWeapon: "cannon",
-    baseModelScale: 1,
-    eliteWeapons: [],
   }),
-  createSizedShip({
-    id: "sable",
-    name: "Sable-3",
-    callsign: "NPC-A",
-    className: "Allied escort",
+  createShipFromArchetype(SHIP_ARCHETYPES.carrier, {
+    id: "carrier-skirmish",
     team: "ally",
     controller: "ai",
     aiDoctrine: "standard",
-    sizeClass: "cruiser",
-    color: "#58f0c2",
     position: [-6, 3, 0],
     rotation: [-5, 42, 6],
-    baseShields: { fore: 68, aft: 42, port: 55, starboard: 55, dorsal: 46, ventral: 42 },
-    baseHull: 88,
-    maxMove: 6,
-    maxTurn: 70,
-    maxPitch: 50,
-    maxRoll: 135,
-    weaponRange: 15,
-    weaponDamage: 22,
-    archetypeId: "allied-escort",
-    basicWeapon: "cannon",
-    baseModelScale: 1,
-    eliteWeapons: [],
   }),
-  createSizedShip({
-    id: "vandal",
-    name: "Vandal-1",
-    callsign: "CR-11",
-    className: "Corsair frigate",
+  createShipFromArchetype(SHIP_ARCHETYPES.hulk, {
+    id: "hulk-skirmish",
     team: "enemy",
     controller: "ai",
-    sizeClass: "cruiser",
-    color: "#ff6f70",
     position: [8, 1, -7],
     rotation: [0, -118, 0],
-    baseShields: { fore: 84, aft: 48, port: 68, starboard: 52, dorsal: 58, ventral: 50 },
-    baseHull: 108,
-    maxMove: 5,
-    maxTurn: 58,
-    maxPitch: 42,
-    maxRoll: 90,
-    weaponRange: 16,
-    weaponDamage: 30,
-    archetypeId: "corsair-frigate",
-    basicWeapon: "cannon",
-    baseModelScale: 1,
-    eliteWeapons: [],
   }),
-  createSizedShip({
-    id: "shrike",
-    name: "Shrike-6",
-    callsign: "CR-06",
-    className: "Corsair raider",
+  createShipFromArchetype(SHIP_ARCHETYPES.archer, {
+    id: "archer-skirmish",
     team: "enemy",
     controller: "ai",
-    sizeClass: "shuttle",
-    color: "#ff9a73",
     position: [10, -2, 3],
     rotation: [-4, -108, 7],
-    baseShields: { fore: 56, aft: 30, port: 42, starboard: 48, dorsal: 36, ventral: 32 },
-    baseHull: 76,
-    maxMove: 8,
-    maxTurn: 90,
-    maxPitch: 65,
-    maxRoll: 180,
-    weaponRange: 14,
-    weaponDamage: 23,
-    archetypeId: "corsair-raider",
-    basicWeapon: "cannon",
-    baseModelScale: 1,
-    eliteWeapons: [],
   }),
-  createSizedShip({
-    id: "maraud",
-    name: "Maraud-4",
-    callsign: "CR-24",
-    className: "Corsair gunship",
+  createShipFromArchetype(SHIP_ARCHETYPES.behemoth, {
+    id: "behemoth-skirmish",
     team: "enemy",
     controller: "ai",
-    sizeClass: "cruiser",
-    color: "#ff5a88",
     position: [7, 5, 8],
     rotation: [7, -138, -5],
-    baseShields: { fore: 72, aft: 38, port: 60, starboard: 60, dorsal: 52, ventral: 46 },
-    baseHull: 96,
-    maxMove: 6,
-    maxTurn: 66,
-    maxPitch: 48,
-    maxRoll: 120,
-    weaponRange: 16,
-    weaponDamage: 27,
-    archetypeId: "corsair-gunship",
-    basicWeapon: "cannon",
-    baseModelScale: 1,
-    eliteWeapons: [],
   }),
 ];
 
@@ -574,7 +511,11 @@ function copyShips(ships: Ship[]) {
     ...ship,
     shields: { ...ship.shields },
     maxShields: { ...ship.maxShields },
-    eliteWeapons: [...ship.eliteWeapons],
+    weaponMounts: ship.weaponMounts.map((mount) => ({ ...mount })),
+    turnEndAbility: ship.turnEndAbility ? {
+      ...ship.turnEndAbility,
+      launchOffsets: ship.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
+    } : undefined,
     position: [...ship.position] as Vec3,
     rotation: [...ship.rotation] as Vec3,
   }));
@@ -599,7 +540,7 @@ function createStoryRun(): StoryRun {
 
 function createStoryStarter() {
   const starter = copyShips([INITIAL_SHIPS[0]])[0];
-  const archetype = STORY_STARTER_ARCHETYPE;
+  const archetype: ShipArchetype = STORY_STARTER_ARCHETYPE;
   const durability = durabilityForArchetype(archetype);
   return {
     ...starter,
@@ -609,10 +550,15 @@ function createStoryStarter() {
     className: archetype.className,
     color: archetype.color,
     archetypeId: archetype.id,
+    modelId: archetype.modelId,
     sizeClass: archetype.sizeClass,
     durabilityMultiplier: archetype.durabilityMultiplier ?? 1,
-    basicWeapon: archetype.basicWeapon,
     modelScale: modelScaleForArchetype(archetype),
+    weaponMounts: archetype.weaponMounts.map((mount) => ({ ...mount })),
+    turnEndAbility: archetype.turnEndAbility ? {
+      ...archetype.turnEndAbility,
+      launchOffsets: archetype.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
+    } : undefined,
     shields: { ...durability.shields },
     maxShields: { ...durability.shields },
     hull: durability.hull,
@@ -629,8 +575,10 @@ function createStoryStarter() {
 }
 
 function createStoryEnemy(kind: StoryEnemyKind, gate: number, index: number, scale: number, threatId?: string) {
-  const templateIndex = kind === "raider" ? 4 : kind === "frigate" ? 3 : 5;
-  const template = copyShips([INITIAL_SHIPS[templateIndex]])[0];
+  const archetypeId = kind === "raider" ? "fighter" : kind === "frigate" ? "archer" : "hulk";
+  const sourceTemplate = INITIAL_SHIPS.find((ship) => ship.archetypeId === archetypeId);
+  if (!sourceTemplate) throw new Error(`Missing story enemy archetype: ${archetypeId}`);
+  const template = copyShips([sourceTemplate])[0];
   const names: Record<StoryEnemyKind, string[]> = {
     raider: ["Needle", "Shrike", "Talon", "Razor"],
     frigate: ["Vandal", "Marshal", "Graven", "Palisade"],
@@ -649,12 +597,13 @@ function createStoryEnemy(kind: StoryEnemyKind, gate: number, index: number, sca
     name: threatId ? `${names[kind][3]}-${suffix}` : `${names[kind][index % names[kind].length]}-${suffix}`,
     callsign: threatId ? `PUR-${suffix}` : `WG-${suffix}`,
     className: threatId ? `Pursuit ${template.className.toLowerCase()}` : template.className,
+    team: "enemy" as Team,
     controller: "ai" as const,
     position: [...slot] as Vec3,
     rotation: [index % 2 ? -5 : 3, -118 - index * 8, index % 2 ? 6 : -4] as Vec3,
     shields,
     maxShields: { ...shields },
-    eliteWeapons: [],
+    weaponMounts: template.weaponMounts.map((mount) => ({ ...mount })),
     hull,
     maxHull: hull,
     weaponDamage: Math.max(15, Math.round(template.weaponDamage * damageScale)),
@@ -663,8 +612,10 @@ function createStoryEnemy(kind: StoryEnemyKind, gate: number, index: number, sca
 }
 
 function createRecruitShip(kind: "scout" | "escort" | "gunboat", currentShips: Ship[]) {
-  const templateIndex = kind === "scout" ? 1 : kind === "escort" ? 2 : 5;
-  const template = copyShips([INITIAL_SHIPS[templateIndex]])[0];
+  const archetypeId = kind === "scout" ? "fighter" : kind === "escort" ? "archer" : "hulk";
+  const sourceTemplate = INITIAL_SHIPS.find((ship) => ship.archetypeId === archetypeId);
+  if (!sourceTemplate) throw new Error(`Missing recruit archetype: ${archetypeId}`);
+  const template = copyShips([sourceTemplate])[0];
   const index = currentShips.filter((ship) => ship.id.startsWith(`recruit-${kind}`)).length + 1;
   const names = { scout: "Morrow", escort: "Vesper", gunboat: "Bastion" } as const;
   const colors = { scout: "#9af2ff", escort: "#67e7ca", gunboat: "#85c8ff" } as const;
@@ -680,6 +631,36 @@ function createRecruitShip(kind: "scout" | "escort" | "gunboat", currentShips: S
     color: colors[kind],
     position: [...slot.position] as Vec3,
     rotation: [...slot.rotation] as Vec3,
+  };
+}
+
+function createLaunchedFighter(carrier: Ship, sequence: number, ability: ShipTurnEndAbility): Ship {
+  const archetype = SHIP_ARCHETYPES[ability.fighterArchetypeId];
+  const localOffset = ability.launchOffsets[(sequence - 1) % ability.launchOffsets.length] ?? [0, -0.5, 1];
+  const worldOffset = new THREE.Vector3(...localOffset)
+    .multiplyScalar(carrier.modelScale)
+    .applyQuaternion(quaternionFor(carrier.rotation));
+  const launchPosition = new THREE.Vector3(...carrier.position).add(worldOffset);
+  const fighter = createShipFromArchetype(archetype, {
+    id: `${carrier.id}-fighter-${sequence}`,
+    name: `${carrier.name} Wing-${sequence}`,
+    callsign: `${carrier.callsign}-F${sequence}`,
+    className: `Carrier-launched ${archetype.className.toLowerCase()}`,
+    color: carrier.color,
+    team: carrier.team,
+    controller: "ai",
+    aiDoctrine: carrier.aiDoctrine ?? "aggressive",
+    position: [
+      clamp(launchPosition.x, -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
+      clamp(launchPosition.y, -BATTLEFIELD_VERTICAL_HALF, BATTLEFIELD_VERTICAL_HALF),
+      clamp(launchPosition.z, -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
+    ],
+    rotation: [...carrier.rotation] as Vec3,
+  });
+  return {
+    ...fighter,
+    spawnedByShipId: carrier.id,
+    turnEndAbility: undefined,
   };
 }
 
@@ -747,7 +728,9 @@ function applyStoryEffects(sourceShips: Ship[], effects: StoryEffect[], gate: nu
       return;
     }
     if (effect.kind === "eliteWeapon") {
-      if (!ship.eliteWeapons.includes(effect.weapon)) ship.eliteWeapons.push(effect.weapon);
+      if (!ship.weaponMounts.some((mount) => mount.weaponKind === effect.weapon)) {
+        ship.weaponMounts.push(createWeaponMount(effect.weapon, ship.weaponMounts));
+      }
       return;
     }
     if (effect.stat === "weaponDamage") ship.weaponDamage = clamp(ship.weaponDamage + effect.amount, 12, 180);
@@ -842,7 +825,10 @@ function shieldColor(value: number, maximum: number) {
 
 function createShipGroup(ship: Ship) {
   const root = new THREE.Group();
+  const modelProfile = shipModelProfileFor(ship.modelId);
   root.userData.shipId = ship.id;
+  root.userData.modelId = ship.modelId;
+  root.userData.hudOffsetMultiplier = modelProfile.hudOffsetMultiplier;
   root.scale.setScalar(ship.modelScale);
 
   const bodyMaterial = new THREE.MeshStandardMaterial({
@@ -856,35 +842,35 @@ function createShipGroup(ship: Ship) {
     roughness: 0.35,
     metalness: 0.82,
   });
+  const accentMaterial = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(ship.color).lerp(new THREE.Color("#ffffff"), 0.28),
+    roughness: 0.3,
+    metalness: 0.76,
+    emissive: new THREE.Color(ship.color).multiplyScalar(0.12),
+  });
   const glowMaterial = new THREE.MeshBasicMaterial({ color: ship.team === "enemy" ? "#ff536b" : "#70f3ff" });
+  root.add(createShipHullGeometry(ship.modelId, {
+    body: bodyMaterial,
+    dark: darkMaterial,
+    accent: accentMaterial,
+    glow: glowMaterial,
+  }));
 
-  const hull = new THREE.Mesh(new THREE.ConeGeometry(0.66, 2.9, 6), bodyMaterial);
-  hull.rotation.x = -Math.PI / 2;
-  hull.userData.pickable = true;
-  root.add(hull);
+  const primaryMount = ship.weaponMounts.find((mount) => !isEliteWeaponKind(mount.weaponKind));
+  if (primaryMount) {
+    const hardpoint = modelProfile.weaponHardpoints[primaryMount.hardpointId] ?? modelProfile.weaponHardpoints.primary;
+    const muzzle = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.045, 0.09, 0.28, 10),
+      new THREE.MeshBasicMaterial({ color: ship.team === "enemy" ? "#ff8594" : "#bdf7ff" }),
+    );
+    muzzle.rotation.x = -Math.PI / 2;
+    muzzle.position.set(...hardpoint.position);
+    root.add(muzzle);
+  }
 
-  const wings = new THREE.Mesh(new THREE.BoxGeometry(2.55, 0.12, 0.82), darkMaterial);
-  wings.position.z = 0.35;
-  wings.userData.pickable = true;
-  root.add(wings);
-
-  const spine = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.65, 1.45), darkMaterial);
-  spine.position.set(0, 0.25, 0.15);
-  root.add(spine);
-
-  const cockpit = new THREE.Mesh(new THREE.IcosahedronGeometry(0.35, 0), bodyMaterial.clone());
-  cockpit.position.set(0, 0.34, -0.58);
-  root.add(cockpit);
-
-  const muzzle = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.045, 0.09, 0.28, 10),
-    new THREE.MeshBasicMaterial({ color: ship.team === "enemy" ? "#ff8594" : "#bdf7ff" }),
-  );
-  muzzle.rotation.x = -Math.PI / 2;
-  muzzle.position.z = -1.5;
-  root.add(muzzle);
-
-  ship.eliteWeapons.forEach((weapon, index) => {
+  ship.weaponMounts.filter((mount) => isEliteWeaponKind(mount.weaponKind)).forEach((mount) => {
+    const weapon = mount.weaponKind as EliteWeaponKind;
+    const hardpoint = modelProfile.weaponHardpoints[mount.hardpointId] ?? modelProfile.weaponHardpoints.primary;
     const gunMaterial = new THREE.MeshStandardMaterial({
       color: weapon === "railgun" ? "#d9fbff" : weapon === "turret" ? "#cf9cff" : "#ffb36c",
       emissive: weapon === "railgun" ? "#477785" : weapon === "turret" ? "#5f347d" : "#7b3820",
@@ -894,7 +880,7 @@ function createShipGroup(ship: Ship) {
     });
     if (weapon === "turret") {
       const turret = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), gunMaterial);
-      turret.position.set(0, 0.68, 0.02);
+      turret.position.set(...hardpoint.position);
       root.add(turret);
       return;
     }
@@ -903,30 +889,22 @@ function createShipGroup(ship: Ship) {
       gunMaterial,
     );
     barrel.rotation.x = -Math.PI / 2;
-    barrel.position.set(index % 2 ? 0.28 : -0.28, weapon === "flak" ? 0.08 : 0.22, weapon === "flak" ? -1.25 : -1.55);
+    barrel.position.set(...hardpoint.position);
     root.add(barrel);
   });
 
-  [-0.48, 0.48].forEach((x) => {
+  modelProfile.engineAnchors.forEach(([x, y, z]) => {
     const engine = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.25, 0.65, 10), darkMaterial);
     engine.rotation.x = Math.PI / 2;
-    engine.position.set(x, -0.05, 0.92);
+    engine.position.set(x, y, z);
     root.add(engine);
     const glow = new THREE.Mesh(new THREE.CircleGeometry(0.17, 12), glowMaterial);
-    glow.position.set(x, -0.05, 1.26);
+    glow.position.set(x, y, z + 0.34);
     glow.rotation.y = Math.PI;
     root.add(glow);
   });
 
   const plateGeometry = new THREE.BoxGeometry(0.48, 0.12, 0.24);
-  const platePositions: Record<ShieldFace, Vec3> = {
-    fore: [0, 0.28, -1.12],
-    aft: [0, 0.18, 1.06],
-    port: [-1.02, 0.16, 0.34],
-    starboard: [1.02, 0.16, 0.34],
-    dorsal: [0, 0.58, 0.02],
-    ventral: [0, -0.4, 0.06],
-  };
   const shieldMaterials: Partial<Record<ShieldFace, THREE.MeshStandardMaterial>> = {};
   SHIELD_FACES.forEach((face) => {
     const material = new THREE.MeshStandardMaterial({
@@ -939,15 +917,15 @@ function createShipGroup(ship: Ship) {
       opacity: 0.82,
     });
     const plate = new THREE.Mesh(plateGeometry, material);
-    plate.position.set(...platePositions[face]);
-    if (face === "port" || face === "starboard") plate.rotation.y = Math.PI / 2;
-    if (face === "dorsal" || face === "ventral") plate.rotation.x = Math.PI / 2;
+    const anchor = modelProfile.shieldAnchors[face];
+    plate.position.set(...anchor.position);
+    if (anchor.rotation) plate.rotation.set(...anchor.rotation.map(degrees) as Vec3);
     root.add(plate);
     shieldMaterials[face] = material;
   });
 
   const selectionRing = new THREE.Mesh(
-    new THREE.TorusGeometry(1.7, 0.035, 8, 64),
+    new THREE.TorusGeometry(modelProfile.selectionRadius, 0.035, 8, 64),
     new THREE.MeshBasicMaterial({ color: "#d9f7ff", transparent: true, opacity: 0.9 }),
   );
   selectionRing.rotation.x = Math.PI / 2;
@@ -956,7 +934,7 @@ function createShipGroup(ship: Ship) {
   root.add(selectionRing);
 
   const targetRing = new THREE.Mesh(
-    new THREE.TorusGeometry(1.48, 0.055, 8, 6),
+    new THREE.TorusGeometry(modelProfile.targetRadius, 0.055, 8, 6),
     new THREE.MeshBasicMaterial({ color: "#ff6675", transparent: true, opacity: 0.82 }),
   );
   targetRing.rotation.x = Math.PI / 2;
@@ -1098,6 +1076,7 @@ type ExplosionEffect = {
 
 function createWreck(ship: Ship, liveGroup?: THREE.Group) {
   const wreck = new THREE.Group();
+  const modelProfile = shipModelProfileFor(ship.modelId);
   wreck.userData.shipId = ship.id;
   wreck.userData.spin = new THREE.Vector3(0.0012, -0.0017, 0.001);
   if (liveGroup) {
@@ -1122,12 +1101,12 @@ function createWreck(ship: Ship, liveGroup?: THREE.Group) {
   brokenHull.rotation.x = -Math.PI / 2;
   brokenHull.rotation.z = 0.16;
   brokenHull.position.set(-0.14, 0.03, 0.18);
+  brokenHull.scale.set(...modelProfile.wreck.hullScale);
   wreck.add(brokenHull);
-  [[-0.72, 0.08, 0.35, -0.18], [0.8, -0.12, 0.2, 0.24]].forEach(([x, y, z, rotation]) => {
-    const fragment = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.12, 0.55), charred.clone());
-    fragment.position.set(x, y, z);
-    fragment.rotation.y = rotation;
-    fragment.rotation.z = rotation * 0.7;
+  modelProfile.wreck.fragments.forEach((fragmentProfile) => {
+    const fragment = new THREE.Mesh(new THREE.BoxGeometry(...fragmentProfile.size), charred.clone());
+    fragment.position.set(...fragmentProfile.position);
+    fragment.rotation.set(...fragmentProfile.rotation);
     wreck.add(fragment);
   });
   const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.24, 1), ember);
@@ -1407,7 +1386,8 @@ function TacticalScene({
         const distance = camera.position.distanceTo(group.position);
         const worldPerPixel = 2 * distance * Math.tan(degrees(camera.fov) / 2) / viewportHeight;
         const worldHeight = clamp(worldPerPixel * 46, 0.36, 6.2);
-        const screenUpOffset = clamp(worldPerPixel * 62, 1.65, 7.5);
+        const hudOffsetMultiplier = Number(group.userData.hudOffsetMultiplier ?? 1);
+        const screenUpOffset = clamp(worldPerPixel * 62, 1.65, 7.5) * hudOffsetMultiplier;
         hud.sprite.position.copy(group.position).addScaledVector(hudCameraUp, screenUpOffset);
         hud.sprite.scale.set(worldHeight * (384 / 112), worldHeight, 1);
       });
@@ -1562,11 +1542,18 @@ function TacticalScene({
         path.computeLineDistances();
         context.planGroup.add(path);
 
-        const ghost = new THREE.Mesh(
-          new THREE.ConeGeometry(0.48, 1.8, 6),
-          new THREE.MeshBasicMaterial({ color: ship.color, wireframe: true, transparent: true, opacity: ship.id === selectedShipId ? 0.82 : 0.34 }),
-        );
-        ghost.rotation.x = -Math.PI / 2;
+        const ghostMaterial = new THREE.MeshBasicMaterial({
+          color: ship.color,
+          wireframe: true,
+          transparent: true,
+          opacity: ship.id === selectedShipId ? 0.82 : 0.34,
+        });
+        const ghost = createShipHullGeometry(ship.modelId, {
+          body: ghostMaterial,
+          dark: ghostMaterial,
+          accent: ghostMaterial,
+          glow: ghostMaterial,
+        });
         const ghostRoot = new THREE.Group();
         ghostRoot.position.copy(endPoint);
         ghostRoot.quaternion.copy(quaternionFor(end.rotation));
@@ -2418,10 +2405,14 @@ export function SpaceGame() {
   }, [activeMode, allOrdersValid, allReady, drafts, generateNpcOrders, phase, ships, turn]);
 
   const resolveCombat = useCallback((finished: Resolution) => {
-    const results = copyShips(finished.resolvedShips);
+    const launched = applyCarrierLaunches(copyShips(finished.resolvedShips), createLaunchedFighter);
+    const results = copyShips(launched.ships);
     setShips(results);
     setResolution(null);
-    setLog((current) => [...finished.outcomes, ...current].slice(0, 12));
+    const launchOutcomes = launched.launches.map((launch) =>
+      `${launch.carrierName} launched ${launch.fighterName} at the end of the turn.`,
+    );
+    setLog((current) => [...launchOutcomes, ...finished.outcomes, ...current].slice(0, 12));
 
     const enemyAlive = results.some((ship) => ship.team === "enemy" && ship.hull > 0);
     const playerAlive = results.some((ship) => ship.team === "player" && ship.hull > 0);
@@ -2532,7 +2523,7 @@ export function SpaceGame() {
   const completeStoryGate = useCallback(() => {
     if (!storyRun || storyActionLockRef.current || activeMode !== "story" || phase !== "victory") return;
     storyActionLockRef.current = true;
-    const fleet = retainStoryPlayerFleet(copyShips(ships));
+    const fleet = retainStoryPlayerFleet(copyShips(ships)).filter((ship) => !ship.spawnedByShipId);
     setShips(fleet);
     if (storyRun.gate >= STORY_GATE_COUNT) {
       setStoryRun((current) => current ? {

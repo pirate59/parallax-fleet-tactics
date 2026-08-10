@@ -14,6 +14,13 @@ import {
   type CombatShip,
   type Shields,
 } from "../app/combatEngine.ts";
+import {
+  createPrimaryWeaponMount,
+  createWeaponMount,
+  type BasicWeaponKind,
+  type EliteWeaponKind,
+  type WeaponMount,
+} from "../app/shipCatalog.ts";
 
 const shieldsAt = (value: number): Shields => ({
   fore: value,
@@ -23,6 +30,14 @@ const shieldsAt = (value: number): Shields => ({
   dorsal: value,
   ventral: value,
 });
+
+const weaponMountsFor = (
+  primary: BasicWeaponKind = "cannon",
+  eliteWeapons: EliteWeaponKind[] = [],
+): WeaponMount[] => eliteWeapons.reduce<WeaponMount[]>(
+  (mounts, weapon) => [...mounts, createWeaponMount(weapon, mounts)],
+  [createPrimaryWeaponMount(primary)],
+);
 
 const makeShip = (id: string, overrides: Partial<CombatShip> = {}): CombatShip => ({
   id,
@@ -36,9 +51,9 @@ const makeShip = (id: string, overrides: Partial<CombatShip> = {}): CombatShip =
   maxHull: 100,
   weaponRange: 20,
   weaponDamage: 10,
-  basicWeapon: "cannon",
+  modelId: "hammerhead",
   modelScale: 1,
-  eliteWeapons: [],
+  weaponMounts: weaponMountsFor(),
   ...overrides,
 });
 
@@ -56,7 +71,7 @@ test("weapon mounts preserve the designed damage, range, and arc ratios", () => 
     team: "enemy",
     weaponDamage: 12,
     weaponRange: 40,
-    eliteWeapons: ["railgun", "turret", "flak", "railgun"],
+    weaponMounts: weaponMountsFor("cannon", ["railgun", "turret", "flak"]),
   });
   const profiles = weaponProfilesFor(ship);
 
@@ -74,8 +89,8 @@ test("weapon mounts preserve the designed damage, range, and arc ratios", () => 
 });
 
 test("ship basic-weapon kinds can change a hull's primary battery", () => {
-  const pulse = weaponProfilesFor(makeShip("pulse", { basicWeapon: "pulse" }))[0];
-  const torpedo = weaponProfilesFor(makeShip("torpedo", { basicWeapon: "torpedo" }))[0];
+  const pulse = weaponProfilesFor(makeShip("pulse", { weaponMounts: weaponMountsFor("pulse") }))[0];
+  const torpedo = weaponProfilesFor(makeShip("torpedo", { weaponMounts: weaponMountsFor("torpedo") }))[0];
 
   assert.deepEqual(
     [pulse.name, pulse.damage, pulse.range, pulse.halfArc],
@@ -87,17 +102,38 @@ test("ship basic-weapon kinds can change a hull's primary battery", () => {
   );
 });
 
+test("duplicate installed weapons remain separate mounts", () => {
+  const ship = makeShip("twin-rail", { weaponMounts: weaponMountsFor("cannon", ["railgun", "railgun"]) });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -8], hull: 200, maxHull: 200 });
+  const profiles = weaponProfilesFor(ship);
+
+  assert.deepEqual(profiles.map((profile) => profile.mountId), ["primary-1", "railgun-1", "railgun-2"]);
+  const result = resolveCombatTurn([ship, target], ordersFor([[ship.id, target.id]]));
+  assert.equal(result.shots.length, 3);
+  assert.equal(new Set(result.shots.map((shot) => shot.id)).size, 3);
+});
+
+test("a hull with no installed weapon mounts cannot fire", () => {
+  const carrier = makeShip("carrier", { weaponMounts: [] });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -8] });
+
+  assert.deepEqual(weaponProfilesFor(carrier), []);
+  const result = resolveCombatTurn([carrier, target], ordersFor([[carrier.id, target.id]]));
+  assert.equal(result.shots.length, 0);
+  assert.equal(findShip(result.ships, target.id).hull, target.hull);
+});
+
 test("weapon origins follow per-hull visual scale", () => {
-  const ship = makeShip("scaled", { modelScale: 2, eliteWeapons: ["turret"] });
+  const ship = makeShip("scaled", { modelScale: 2, weaponMounts: weaponMountsFor("cannon", ["turret"]) });
   const [main, turret] = weaponProfilesFor(ship);
 
-  assert.deepEqual(weaponLocalOriginFor(ship, main).toArray(), [0, 0, -2.96]);
-  assert.deepEqual(weaponLocalOriginFor(ship, turret).toArray(), [0, 1.24, 0]);
-  assert.deepEqual(weaponOriginFor(ship, main).toArray(), [0, 0, -2.96]);
+  assert.deepEqual(weaponLocalOriginFor(ship, main).toArray(), [0, 0.04, -3.44]);
+  assert.deepEqual(weaponLocalOriginFor(ship, turret).toArray(), [0, 1.24, -0.1]);
+  assert.deepEqual(weaponOriginFor(ship, main).toArray(), [0, 0.04, -3.44]);
 });
 
 test("focus fire queues two complete salvos with unique deterministic events", () => {
-  const attacker = makeShip("focus", { eliteWeapons: ["railgun", "turret", "flak"] });
+  const attacker = makeShip("focus", { weaponMounts: weaponMountsFor("cannon", ["railgun", "turret", "flak"]) });
   const target = makeShip("target", { team: "enemy", position: [0, 0, -7], hull: 300, maxHull: 300 });
   const result = resolveCombatTurn([attacker, target], {
     [attacker.id]: { targetId: target.id, fire: false, mode: "focus-fire" },
@@ -155,7 +191,7 @@ test("shield facings are selected from the exact weapon origin", () => {
   const target = makeShip("target", { team: "enemy" });
   const attacker = makeShip("attacker", {
     position: [0, -0.2, 0],
-    eliteWeapons: ["turret"],
+    weaponMounts: weaponMountsFor("cannon", ["turret"]),
   });
   const turret = weaponProfilesFor(attacker).find((weapon) => weapon.kind === "turret");
   assert.ok(turret);
@@ -292,7 +328,7 @@ test("a later destroyed ship loses every queued mount and salvo", () => {
     hull: 10,
     maxHull: 10,
     weaponDamage: 4,
-    eliteWeapons: ["railgun", "turret", "flak"],
+    weaponMounts: weaponMountsFor("cannon", ["railgun", "turret", "flak"]),
   });
   const result = resolveCombatTurn(
     [player, enemy],
@@ -334,7 +370,7 @@ test("a living ship wastes its activation when an earlier ship destroys its assi
 test("multiple mounts produce one event each and exactly one fatal event per target", () => {
   const attacker = makeShip("attacker", {
     weaponDamage: 10,
-    eliteWeapons: ["railgun", "turret", "flak"],
+    weaponMounts: weaponMountsFor("cannon", ["railgun", "turret", "flak"]),
   });
   const target = makeShip("target", {
     team: "enemy",

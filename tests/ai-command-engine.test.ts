@@ -8,6 +8,7 @@ import {
   type AiCommandShip,
 } from "../app/aiCommandEngine.ts";
 import type { Shields } from "../app/combatEngine.ts";
+import { createPrimaryWeaponMount } from "../app/shipCatalog.ts";
 
 const shieldsAt = (value: number): Shields => ({
   fore: value,
@@ -34,9 +35,9 @@ const makeShip = (id: string, overrides: Partial<AiCommandShip> = {}): AiCommand
   maxRoll: 90,
   weaponRange: 20,
   weaponDamage: 10,
-  basicWeapon: "cannon",
+  modelId: "hammerhead",
   modelScale: 1,
-  eliteWeapons: [],
+  weaponMounts: [createPrimaryWeaponMount("cannon")],
   ...overrides,
 });
 
