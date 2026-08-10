@@ -103,6 +103,11 @@ type AudioSettings = {
   musicVolume: number;
 };
 
+type OverlayLabelSettings = {
+  showShipNames: boolean;
+  showHealth: boolean;
+};
+
 type Ship = {
   id: string;
   name: string;
@@ -249,6 +254,11 @@ const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   soundVolume: 72,
   musicEnabled: true,
   musicVolume: 48,
+};
+
+const DEFAULT_OVERLAY_LABELS: OverlayLabelSettings = {
+  showShipNames: true,
+  showHealth: true,
 };
 
 const TEAM_LABELS: Record<Team, string> = {
@@ -760,6 +770,7 @@ type ShipHudHandle = {
   texture: THREE.CanvasTexture;
   context: CanvasRenderingContext2D;
   lastKey: string;
+  enabled: boolean;
 };
 
 function hullHealthColor(ratio: number) {
@@ -768,47 +779,54 @@ function hullHealthColor(ratio: number) {
   return "#61e9bd";
 }
 
-function updateShipHud(handle: ShipHudHandle, ship: Ship) {
-  const key = `${ship.name}|${ship.color}|${ship.hull}|${ship.maxHull}`;
+function updateShipHud(handle: ShipHudHandle, ship: Ship, labels: OverlayLabelSettings) {
+  const key = `${ship.name}|${ship.color}|${ship.hull}|${ship.maxHull}|${labels.showShipNames}|${labels.showHealth}`;
   if (handle.lastKey === key) return;
   handle.lastKey = key;
+  handle.enabled = labels.showShipNames || labels.showHealth;
 
   const { context } = handle;
   const ratio = clamp(ship.hull / Math.max(1, ship.maxHull), 0, 1);
   const percentage = Math.round(ratio * 100);
   context.clearRect(0, 0, 384, 112);
 
-  context.fillStyle = "rgba(5, 11, 19, 0.9)";
-  context.beginPath();
-  context.roundRect(8, 6, 368, 50, 11);
-  context.fill();
-  context.strokeStyle = ship.color;
-  context.lineWidth = 2;
-  context.stroke();
-  context.fillStyle = "#eff9ff";
-  context.font = "600 27px ui-monospace, monospace";
-  context.textAlign = "center";
-  context.fillText(ship.name.toUpperCase(), 192, 40);
+  if (labels.showShipNames) {
+    context.fillStyle = "rgba(5, 11, 19, 0.9)";
+    context.beginPath();
+    context.roundRect(8, 6, 368, 50, 11);
+    context.fill();
+    context.strokeStyle = ship.color;
+    context.lineWidth = 2;
+    context.stroke();
+    context.fillStyle = "#eff9ff";
+    context.font = "600 27px ui-monospace, monospace";
+    context.textAlign = "center";
+    context.fillText(ship.name.toUpperCase(), 192, 40);
+  }
 
-  context.fillStyle = "rgba(5, 11, 19, 0.92)";
-  context.fillRect(12, 66, 360, 18);
-  context.fillStyle = hullHealthColor(ratio);
-  context.fillRect(12, 66, 360 * ratio, 18);
-  context.strokeStyle = "rgba(223, 244, 252, 0.46)";
-  context.lineWidth = 2;
-  context.strokeRect(12, 66, 360, 18);
+  if (labels.showHealth) {
+    const barY = labels.showShipNames ? 66 : 28;
+    const textY = labels.showShipNames ? 105 : 67;
+    context.fillStyle = "rgba(5, 11, 19, 0.92)";
+    context.fillRect(12, barY, 360, 18);
+    context.fillStyle = hullHealthColor(ratio);
+    context.fillRect(12, barY, 360 * ratio, 18);
+    context.strokeStyle = "rgba(223, 244, 252, 0.46)";
+    context.lineWidth = 2;
+    context.strokeRect(12, barY, 360, 18);
 
-  context.font = "600 17px ui-monospace, monospace";
-  context.textAlign = "left";
-  context.fillStyle = "#9eb8c5";
-  context.fillText("HULL", 12, 105);
-  context.textAlign = "right";
-  context.fillStyle = "#edf8fc";
-  context.fillText(`${Math.round(ship.hull)} / ${ship.maxHull} · ${percentage}%`, 372, 105);
+    context.font = "600 17px ui-monospace, monospace";
+    context.textAlign = "left";
+    context.fillStyle = "#9eb8c5";
+    context.fillText("HULL", 12, textY);
+    context.textAlign = "right";
+    context.fillStyle = "#edf8fc";
+    context.fillText(`${Math.round(ship.hull)} / ${ship.maxHull} · ${percentage}%`, 372, textY);
+  }
   handle.texture.needsUpdate = true;
 }
 
-function createShipHud(ship: Ship) {
+function createShipHud(ship: Ship, labels: OverlayLabelSettings) {
   const canvas = document.createElement("canvas");
   canvas.width = 384;
   canvas.height = 112;
@@ -820,8 +838,8 @@ function createShipHud(ship: Ship) {
     new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false }),
   );
   sprite.renderOrder = 30;
-  const handle: ShipHudHandle = { sprite, texture, context, lastKey: "" };
-  updateShipHud(handle, ship);
+  const handle: ShipHudHandle = { sprite, texture, context, lastKey: "", enabled: true };
+  updateShipHud(handle, ship, labels);
   return handle;
 }
 
@@ -1198,6 +1216,7 @@ function TacticalScene({
   onSelect,
   onCombatFocus,
   onResolutionComplete,
+  overlayLabels,
   presentation = "command",
 }: {
   ships: Ship[];
@@ -1210,6 +1229,7 @@ function TacticalScene({
   onSelect: (id: string) => void;
   onCombatFocus: (focus: CombatFocus | null) => void;
   onResolutionComplete: (resolution: Resolution) => void;
+  overlayLabels: OverlayLabelSettings;
   presentation?: "command" | "spectator";
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -1217,13 +1237,15 @@ function TacticalScene({
   const selectRef = useRef(onSelect);
   const focusRef = useRef(onCombatFocus);
   const completeRef = useRef(onResolutionComplete);
+  const overlayLabelsRef = useRef(overlayLabels);
   const spectatorViewRef = useRef(0);
 
   useEffect(() => {
     selectRef.current = onSelect;
     focusRef.current = onCombatFocus;
     completeRef.current = onResolutionComplete;
-  }, [onSelect, onCombatFocus, onResolutionComplete]);
+    overlayLabelsRef.current = overlayLabels;
+  }, [onSelect, onCombatFocus, onResolutionComplete, overlayLabels]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -1391,7 +1413,7 @@ function TacticalScene({
       hudCameraUp.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
       shipHuds.forEach((hud, id) => {
         const group = shipGroups.get(id);
-        hud.sprite.visible = Boolean(group?.visible);
+        hud.sprite.visible = Boolean(group?.visible && hud.enabled);
         if (!group?.visible) return;
         const distance = camera.position.distanceTo(group.position);
         const worldPerPixel = 2 * distance * Math.tan(degrees(camera.fov) / 2) / viewportHeight;
@@ -1495,15 +1517,15 @@ function TacticalScene({
       }
       let hud = context.shipHuds.get(ship.id);
       if (!hud) {
-        hud = createShipHud(ship) ?? undefined;
+        hud = createShipHud(ship, overlayLabels) ?? undefined;
         if (hud) {
           context.shipHuds.set(ship.id, hud);
           context.scene.add(hud.sprite);
         }
       }
       if (hud) {
-        updateShipHud(hud, ship);
-        hud.sprite.visible = ship.hull > 0;
+        updateShipHud(hud, ship, overlayLabels);
+        hud.sprite.visible = ship.hull > 0 && hud.enabled;
       }
       if (!resolution) {
         group.position.set(...ship.position);
@@ -1596,7 +1618,7 @@ function TacticalScene({
           }
         }
       });
-  }, [ships, drafts, staged, selectedShipId, selectedTargetId, resolution]);
+  }, [ships, drafts, staged, selectedShipId, selectedTargetId, resolution, overlayLabels]);
 
   useEffect(() => {
     const context = contextRef.current;
@@ -1772,7 +1794,7 @@ function TacticalScene({
         const beam = addCinematicBeam(context.laserGroup, shooter, target, shot);
         await growBeam(beam, presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.beam : 240);
         const hud = context.shipHuds.get(target.id);
-        if (hud) updateShipHud(hud, { ...target, hull: shot.hullAfter });
+        if (hud) updateShipHud(hud, { ...target, hull: shot.hullAfter }, overlayLabelsRef.current);
         if (shot.face) {
           const group = context.shipGroups.get(target.id);
           const materials = group?.userData.shieldMaterials as Partial<Record<ShieldFace, THREE.MeshStandardMaterial>> | undefined;
@@ -2245,6 +2267,7 @@ export function SpaceGame() {
   const [activeMode, setActiveMode] = useState<GameMode>("skirmish");
   const [storyRun, setStoryRun] = useState<StoryRun | null>(null);
   const [audioSettings, setAudioSettings] = useState<AudioSettings>(DEFAULT_AUDIO_SETTINGS);
+  const [overlayLabels, setOverlayLabels] = useState<OverlayLabelSettings>(DEFAULT_OVERLAY_LABELS);
   const [audioSettingsHydrated, setAudioSettingsHydrated] = useState(false);
   const [ships, setShips] = useState<Ship[]>(() => copyShips(INITIAL_SHIPS));
   const [selectedShipId, setSelectedShipId] = useState("aegis");
@@ -2806,6 +2829,27 @@ export function SpaceGame() {
           )}
         </div>
         <div className="topbar-actions">
+          <fieldset className="overlay-label-toggles">
+            <legend>Overlay labels</legend>
+            <label>
+              <input
+                type="checkbox"
+                checked={overlayLabels.showShipNames}
+                aria-label="Show ship names"
+                onChange={(event) => setOverlayLabels((current) => ({ ...current, showShipNames: event.target.checked }))}
+              />
+              <span>Ship names</span>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={overlayLabels.showHealth}
+                aria-label="Show ship health"
+                onChange={(event) => setOverlayLabels((current) => ({ ...current, showHealth: event.target.checked }))}
+              />
+              <span>Health</span>
+            </label>
+          </fieldset>
           <button className="quiet-button" type="button" onClick={returnToMenu}>Main menu</button>
           <button className="quiet-button" type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : activeMode === "fishtank" ? "New match" : "Restart"}</button>
         </div>
@@ -2824,6 +2868,7 @@ export function SpaceGame() {
             onSelect={selectShip}
             onCombatFocus={setCombatFocus}
             onResolutionComplete={resolveCombat}
+            overlayLabels={overlayLabels}
             presentation={activeMode === "fishtank" ? "spectator" : "command"}
           />
 
