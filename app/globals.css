@@ -1208,6 +1208,16 @@ input:focus-visible {
   opacity: 0.82;
 }
 
+.fishtank-ship-bar.cinematic-active {
+  position: relative;
+  z-index: 2;
+  border-color: #f7fdff;
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  box-shadow: 0 0 18px currentColor, inset 0 0 7px rgba(255, 255, 255, 0.38);
+  transform: scaleX(1.12) scaleY(1.35);
+}
+
 .fishtank-carrier-reserve {
   display: grid;
   grid-template-columns: repeat(3, 3px);
@@ -1676,6 +1686,107 @@ kbd {
   color: var(--coral);
 }
 
+.resolution-banner.collision {
+  min-width: 310px;
+  border-color: rgba(255, 182, 80, 0.62);
+  background: rgba(25, 14, 8, 0.92);
+  box-shadow: 0 0 110px rgba(255, 129, 46, 0.2);
+}
+
+.resolution-banner.collision > span {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #ffd18e;
+  border-radius: 0;
+  background: rgba(255, 154, 65, 0.32);
+  box-shadow: 0 0 22px rgba(255, 145, 58, 0.62);
+  transform: rotate(45deg);
+  animation: collision-pulse 0.36s infinite alternate;
+}
+
+.resolution-banner.collision small {
+  color: #ffc16f;
+}
+
+.cinematic-participant-cards {
+  position: absolute;
+  z-index: 9;
+  right: 18px;
+  bottom: 118px;
+  left: 18px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 320px;
+  pointer-events: none;
+}
+
+[data-mode="fishtank"] .cinematic-participant-cards {
+  bottom: 118px;
+}
+
+.cinematic-ship-card {
+  width: min(270px, 28vw);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 11px 13px;
+  border: 1px solid rgba(105, 223, 255, 0.46);
+  background: linear-gradient(120deg, rgba(7, 24, 34, 0.94), rgba(4, 10, 17, 0.86));
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.46), 0 0 30px rgba(88, 222, 255, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.cinematic-ship-card.right {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.cinematic-ship-card.enemy {
+  border-color: rgba(255, 105, 119, 0.54);
+  background: linear-gradient(240deg, rgba(38, 12, 18, 0.94), rgba(12, 7, 11, 0.88));
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.46), 0 0 30px rgba(255, 85, 105, 0.09);
+}
+
+.cinematic-participant-cards.collision .cinematic-ship-card {
+  border-color: rgba(255, 183, 82, 0.58);
+  background: linear-gradient(120deg, rgba(35, 20, 10, 0.94), rgba(12, 10, 9, 0.88));
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.46), 0 0 34px rgba(255, 142, 55, 0.1);
+}
+
+.cinematic-ship-card small,
+.cinematic-ship-card span {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.11em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cinematic-ship-card small {
+  color: #7195a5;
+  font-size: var(--type-label);
+}
+
+.cinematic-participant-cards.collision .cinematic-ship-card small {
+  color: #d89b52;
+}
+
+.cinematic-ship-card strong {
+  overflow: hidden;
+  color: #eefbff;
+  font-size: var(--type-body-lg);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cinematic-ship-card span {
+  color: #8aa4b2;
+  font-size: var(--type-meta);
+}
+
 .resolution-banner div {
   display: flex;
   flex-direction: column;
@@ -1821,6 +1932,12 @@ kbd {
   left: 0;
   height: 2px;
   background: var(--cyan);
+}
+
+.ship-tabs button.cinematic-active {
+  z-index: 2;
+  background: linear-gradient(90deg, rgba(255, 185, 82, 0.18), rgba(105, 223, 255, 0.08));
+  box-shadow: inset 0 0 0 1px rgba(255, 217, 157, 0.52), 0 0 18px rgba(255, 165, 71, 0.14);
 }
 
 .ship-tabs button.destroyed {
@@ -3031,6 +3148,11 @@ input[type="range"]::-moz-range-thumb {
   to { opacity: 0.4; transform: scale(0.8); }
 }
 
+@keyframes collision-pulse {
+  from { opacity: 0.58; transform: rotate(45deg) scale(0.78); }
+  to { opacity: 1; transform: rotate(45deg) scale(1.14); }
+}
+
 @media (max-width: 1260px) {
   .menu-content {
     grid-template-columns: minmax(240px, 0.65fr) minmax(500px, 1.35fr);
@@ -3171,6 +3293,10 @@ input[type="range"]::-moz-range-thumb {
   .dock-title {
     display: none;
   }
+
+  [data-mode="fishtank"] .cinematic-participant-cards {
+    bottom: 174px;
+  }
 }
 
 @media (max-width: 1040px) {
@@ -3286,6 +3412,26 @@ input[type="range"]::-moz-range-thumb {
 
   .resolution-banner {
     bottom: 96px;
+  }
+
+  .cinematic-participant-cards {
+    right: 8px;
+    bottom: 148px;
+    left: 8px;
+    gap: 8px;
+  }
+
+  [data-mode="fishtank"] .cinematic-participant-cards {
+    bottom: 178px;
+  }
+
+  .cinematic-ship-card {
+    width: calc(50% - 4px);
+    padding: 8px 9px;
+  }
+
+  .cinematic-ship-card strong {
+    font-size: var(--type-small);
   }
 
   .command-panel {

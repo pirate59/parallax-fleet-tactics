@@ -102,6 +102,7 @@ import type { AiTacticalProfile } from "./aiTactics";
 import {
   clampCollisionPosition,
   resolveMovementCollisions,
+  type MovementCollisionEvent,
 } from "./collisionEngine";
 
 type Phase = "planning" | "executing" | "victory" | "defeat";
@@ -172,6 +173,7 @@ type Resolution = {
   endShips: Ship[];
   resolvedShips: Ship[];
   orders: Record<string, Order>;
+  collisions: MovementCollisionEvent[];
   shots: CombatShotEvent[];
   outcomes: string[];
   destroyedIds: string[];
@@ -183,12 +185,28 @@ type CameraCommand = {
   shipId?: string;
 };
 
-type CombatFocus = {
-  shooter: string;
-  target: string;
+type CinematicShipSummary = {
+  id: string;
+  name: string;
+  className: string;
+  sizeClass: ShipSizeClass;
   team: Team;
-  weapon: string;
 };
+
+type CombatFocus = {
+  kind: "weapon" | "collision";
+  left: CinematicShipSummary;
+  right: CinematicShipSummary;
+  detail: string;
+};
+
+const cinematicSummaryFor = (ship: Ship): CinematicShipSummary => ({
+  id: ship.id,
+  name: ship.name,
+  className: ship.className,
+  sizeClass: ship.sizeClass,
+  team: ship.team,
+});
 
 type PendingStoryThreat = {
   id: string;
@@ -1421,9 +1439,10 @@ function createWreck(ship: Ship, liveGroup?: THREE.Group) {
   return wreck;
 }
 
-function spawnExplosion(context: SceneContext, position: THREE.Vector3, color: string) {
+function spawnExplosion(context: SceneContext, position: THREE.Vector3, color: string, scale = 1, duration = 1750) {
   const root = new THREE.Group();
   root.position.copy(position);
+  root.scale.setScalar(scale);
   const flash = new THREE.Mesh(
     new THREE.IcosahedronGeometry(0.82, 2),
     new THREE.MeshBasicMaterial({ color: "#fff4cf", transparent: true, opacity: 1, depthWrite: false }),
@@ -1453,7 +1472,7 @@ function spawnExplosion(context: SceneContext, position: THREE.Vector3, color: s
   );
   root.add(flash, shock, particles);
   context.explosionGroup.add(root);
-  context.explosions.push({ root, flash, shock, particles, velocities, startedAt: performance.now(), duration: 1750 });
+  context.explosions.push({ root, flash, shock, particles, velocities, startedAt: performance.now(), duration });
 }
 
 function destroyShipVisual(context: SceneContext, ship: Ship) {
@@ -1521,7 +1540,12 @@ function isolateCombatParticipants(
   context.shipHuds.forEach((hud, id) => {
     hud.sprite.visible = participants.has(id) && (snapshot.shipHuds.get(id) ?? hud.sprite.visible);
   });
-  context.wreckGroup.visible = false;
+  let hasVisibleWreck = false;
+  context.wrecks.forEach((wreck, id) => {
+    wreck.visible = participants.has(id) && (snapshot.wrecks.get(id) ?? wreck.visible);
+    if (wreck.visible) hasVisibleWreck = true;
+  });
+  context.wreckGroup.visible = hasVisibleWreck;
 }
 
 function restoreCombatVisibility(
@@ -2094,6 +2118,86 @@ function TacticalScene({
       });
     };
 
+    const visuallyDestroyedIds = new Set<string>();
+    const ensureCombatVisibility = () => {
+      if (!combatVisibility) combatVisibility = captureCombatVisibility(context);
+      return combatVisibility;
+    };
+
+    const finishCinematic = async () => {
+      if (cancelled) return;
+      focusRef.current(null);
+      if (combatVisibility) {
+        restoreCombatVisibility(context, combatVisibility, resolution.destroyedIds);
+        combatVisibility = null;
+      }
+      await tweenCamera(
+        tacticalPosition,
+        tacticalTarget,
+        presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraReturn : 520,
+      );
+      context.camera.fov = tacticalFov;
+      context.camera.updateProjectionMatrix();
+      context.controls.target.copy(tacticalTarget);
+      context.controls.enabled = true;
+      context.controls.update();
+      if (!cancelled) completeRef.current(resolution);
+    };
+
+    const playCollisions = async () => {
+      if (!resolution.collisions.length) return;
+      context.camera.fov = 42;
+      context.camera.updateProjectionMatrix();
+      const visibility = ensureCombatVisibility();
+
+      for (const collision of resolution.collisions) {
+        if (cancelled) return;
+        const shipA = resolution.endShips.find((ship) => ship.id === collision.shipAId);
+        const shipB = resolution.endShips.find((ship) => ship.id === collision.shipBId);
+        if (!shipA || !shipB) continue;
+        isolateCombatParticipants(context, visibility, shipA.id, shipB.id);
+        const positionFor = (ship: Ship) => context.wrecks.get(ship.id)?.position.clone()
+          ?? context.shipGroups.get(ship.id)?.position.clone()
+          ?? new THREE.Vector3(...ship.position);
+        const positionA = positionFor(shipA);
+        const positionB = positionFor(shipB);
+        const midpoint = positionA.clone().lerp(positionB, 0.5);
+        const direction = positionB.clone().sub(positionA);
+        if (direction.lengthSq() <= 1e-8) direction.set(0, 0, -1);
+        direction.normalize();
+        const upReference = Math.abs(direction.dot(new THREE.Vector3(0, 1, 0))) > 0.92
+          ? new THREE.Vector3(0, 0, 1)
+          : new THREE.Vector3(0, 1, 0);
+        const side = new THREE.Vector3().crossVectors(direction, upReference).normalize();
+        const lift = new THREE.Vector3().crossVectors(side, direction).normalize();
+        const cameraDistance = clamp(positionA.distanceTo(positionB) * 1.5 + 4.5, 7, 12);
+        const cameraPosition = midpoint.clone().addScaledVector(side, cameraDistance).addScaledVector(lift, 3.1);
+        focusRef.current({
+          kind: "collision",
+          left: cinematicSummaryFor(shipA),
+          right: cinematicSummaryFor(shipB),
+          detail: collision.kind === "wreck"
+            ? `WRECK IMPACT · ${Math.max(collision.damageToA, collision.damageToB)} DAMAGE`
+            : `HULL IMPACT · ${collision.damageToA}/${collision.damageToB} DAMAGE`,
+        });
+        await tweenCamera(
+          cameraPosition,
+          midpoint,
+          presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraApproach : 430,
+        );
+        if (cancelled) return;
+        spawnExplosion(context, midpoint, "#ffb45a", collision.kind === "wreck" ? 0.38 : 0.56, 920);
+        [shipA, shipB].forEach((ship) => {
+          if (!resolution.destroyedIds.includes(ship.id) || visuallyDestroyedIds.has(ship.id)) return;
+          visuallyDestroyedIds.add(ship.id);
+          destroyShipVisual(context, ship);
+        });
+        await delay(presentation === "spectator" ? 980 : 720);
+        focusRef.current(null);
+        await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.betweenShots : 120);
+      }
+    };
+
     const playSalvos = async () => {
       const shots = resolution.shots
         .filter((shot) => shot.valid)
@@ -2106,20 +2210,18 @@ function TacticalScene({
 
       if (!shots.length) {
         await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.quietTurnHold : 420);
-        context.controls.enabled = true;
-        if (!cancelled) completeRef.current(resolution);
+        await finishCinematic();
         return;
       }
 
       context.camera.fov = 42;
       context.camera.updateProjectionMatrix();
-      combatVisibility = captureCombatVisibility(context);
-      const visuallyDestroyedIds = new Set<string>();
+      const visibility = ensureCombatVisibility();
 
       for (const { shot, shooter, target } of shots) {
         if (cancelled) return;
         if (visuallyDestroyedIds.has(target.id)) continue;
-        isolateCombatParticipants(context, combatVisibility, shooter.id, target.id);
+        isolateCombatParticipants(context, visibility, shooter.id, target.id);
         const muzzle = weaponOriginFor(shooter, shot.weapon);
         const targetPoint = new THREE.Vector3(...target.position);
         const direction = targetPoint.clone().sub(muzzle).normalize();
@@ -2138,7 +2240,12 @@ function TacticalScene({
         const focusSuffix = resolution.orders[shot.shooterId]?.mode === "focus-fire"
           ? ` · SALVO ${shot.salvoIndex + 1}/2`
           : "";
-        focusRef.current({ shooter: shooter.name, target: target.name, team: shooter.team, weapon: `${shot.weapon.name}${focusSuffix}` });
+        focusRef.current({
+          kind: "weapon",
+          left: cinematicSummaryFor(shooter),
+          right: cinematicSummaryFor(target),
+          detail: `${shot.weapon.name}${focusSuffix}`,
+        });
         await tweenCamera(
           cameraPosition,
           lookAt,
@@ -2176,21 +2283,12 @@ function TacticalScene({
         await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.betweenShots : 120);
       }
 
-      if (cancelled) return;
-      focusRef.current(null);
-      restoreCombatVisibility(context, combatVisibility, resolution.destroyedIds);
-      combatVisibility = null;
-      await tweenCamera(
-        tacticalPosition,
-        tacticalTarget,
-        presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraReturn : 520,
-      );
-      context.camera.fov = tacticalFov;
-      context.camera.updateProjectionMatrix();
-      context.controls.target.copy(tacticalTarget);
-      context.controls.enabled = true;
-      context.controls.update();
-      if (!cancelled) completeRef.current(resolution);
+      await finishCinematic();
+    };
+
+    const playResolutionCinematics = async () => {
+      await playCollisions();
+      if (!cancelled) await playSalvos();
     };
 
     context.controls.enabled = false;
@@ -2211,7 +2309,7 @@ function TacticalScene({
         requestAnimationFrame(animateMovement);
         return;
       }
-      void playSalvos();
+      void playResolutionCinematics();
     };
     requestAnimationFrame(animateMovement);
 
@@ -2233,7 +2331,7 @@ function TacticalScene({
   return <div className="three-mount" ref={mountRef} />;
 }
 
-function FishtankFleetBars({ ships }: { ships: Ship[] }) {
+function FishtankFleetBars({ ships, highlightedIds }: { ships: Ship[]; highlightedIds: ReadonlySet<string> }) {
   const rows = createFishtankStatusRows(ships);
   return (
     <ol className="fishtank-fleet-bars">
@@ -2249,7 +2347,7 @@ function FishtankFleetBars({ ships }: { ships: Ship[] }) {
               <span className="fishtank-carrier-wing" aria-label={`${fighters.length} active fighters launched by ${ship.name}`}>
                 {fighters.map(({ fighter, healthPercentage: fighterHealth }) => (
                   <span
-                    className="fishtank-ship-bar carrier-fighter"
+                    className={`fishtank-ship-bar carrier-fighter ${highlightedIds.has(fighter.id) ? "cinematic-active" : ""}`}
                     data-size="shuttle"
                     key={fighter.id}
                     role="img"
@@ -2261,7 +2359,7 @@ function FishtankFleetBars({ ships }: { ships: Ship[] }) {
               </span>
             )}
             <span
-              className={`fishtank-ship-bar ${ship.hull <= 0 ? "destroyed" : ""}`}
+              className={`fishtank-ship-bar ${ship.hull <= 0 ? "destroyed" : ""} ${highlightedIds.has(ship.id) ? "cinematic-active" : ""}`}
               data-size={ship.sizeClass}
               role="img"
               aria-label={`${ship.name}, size ${sizeCode}, ${Math.round(healthPercentage)} percent hull${ship.hull <= 0 ? ", destroyed" : ""}`}
@@ -2806,6 +2904,7 @@ export function SpaceGame() {
   const alliedNPCs = ships.filter((ship) => ship.controller === "ai" && ship.team !== "enemy" && ship.hull > 0);
   const selectedTargetId = selectedDraft?.targetId ?? "";
   const selectedTarget = ships.find((ship) => ship.id === selectedTargetId && ship.team === "enemy" && ship.hull > 0);
+  const cinematicShipIds = new Set(combatFocus ? [combatFocus.left.id, combatFocus.right.id] : []);
   const readyCount = livingCommandShips.filter((ship) => staged.has(ship.id)).length;
   const isCommandOrderValid = (ship: Ship) => {
     const order = drafts[ship.id];
@@ -2966,6 +3065,7 @@ export function SpaceGame() {
       endShips: collision.ships,
       resolvedShips: combat.ships,
       orders: allOrders,
+      collisions: collision.collisions,
       shots: combat.shots,
       outcomes: [...collision.outcomes, ...combat.outcomes],
       destroyedIds: [...new Set([...collision.destroyedIds, ...combat.destroyedIds])],
@@ -3447,17 +3547,17 @@ export function SpaceGame() {
               <div className="fishtank-team azure">
                 <span>AZURE AI</span>
                 <strong>{livingFishtankAllies.length}<small> ACTIVE · {FISHTANK_FLEET_SIZE} CORE</small></strong>
-                <FishtankFleetBars ships={fishtankAllies} />
+                <FishtankFleetBars ships={fishtankAllies} highlightedIds={cinematicShipIds} />
               </div>
               <div className="fishtank-director" aria-live="polite">
                 <small>MATCH {String(fishtankMatch).padStart(2, "0")} · TURN {String(turn).padStart(2, "0")}</small>
-                <strong>{phase === "planning" ? "AI ORDERS CALCULATING" : phase === "executing" ? combatFocus ? "WEAPON ACTIVATION" : "SIMULTANEOUS MOVEMENT" : "MATCH COMPLETE"}</strong>
-                <span>{phase === "planning" ? "Next movement phase imminent" : phase === "executing" ? combatFocus ? `${combatFocus.shooter} engaging ${combatFocus.target}` : "Both fleets have committed" : "Preparing a fresh simulation"}</span>
+                <strong>{phase === "planning" ? "AI ORDERS CALCULATING" : phase === "executing" ? combatFocus ? combatFocus.kind === "collision" ? "COLLISION EVENT" : "WEAPON ACTIVATION" : "SIMULTANEOUS MOVEMENT" : "MATCH COMPLETE"}</strong>
+                <span>{phase === "planning" ? "Next movement phase imminent" : phase === "executing" ? combatFocus ? `${combatFocus.left.name} · ${combatFocus.right.name}` : "Both fleets have committed" : "Preparing a fresh simulation"}</span>
               </div>
               <div className="fishtank-team crimson">
                 <span>CRIMSON AI</span>
                 <strong>{livingFishtankEnemies.length}<small> ACTIVE · {FISHTANK_FLEET_SIZE} CORE</small></strong>
-                <FishtankFleetBars ships={fishtankEnemies} />
+                <FishtankFleetBars ships={fishtankEnemies} highlightedIds={cinematicShipIds} />
               </div>
             </section>
           )}
@@ -3487,12 +3587,27 @@ export function SpaceGame() {
             </div>
           )}
 
+          {phase === "executing" && combatFocus && (
+            <div className={`cinematic-participant-cards ${combatFocus.kind}`} aria-live="polite">
+              <article className={`cinematic-ship-card left ${combatFocus.left.team}`}>
+                <small>{combatFocus.kind === "collision" ? "CONTACT A" : "FIRING SHIP"}</small>
+                <strong>{combatFocus.left.name}</strong>
+                <span>{SHIP_SIZE_PROFILES[combatFocus.left.sizeClass].label} · {combatFocus.left.className}</span>
+              </article>
+              <article className={`cinematic-ship-card right ${combatFocus.right.team}`}>
+                <small>{combatFocus.kind === "collision" ? "CONTACT B" : "TARGET SHIP"}</small>
+                <strong>{combatFocus.right.name}</strong>
+                <span>{SHIP_SIZE_PROFILES[combatFocus.right.sizeClass].label} · {combatFocus.right.className}</span>
+              </article>
+            </div>
+          )}
+
           {phase === "executing" && (
-            <div className={`resolution-banner ${combatFocus ? `firing ${combatFocus.team}` : "moving"}`} role="status">
+            <div className={`resolution-banner ${combatFocus ? `${combatFocus.kind === "collision" ? "collision" : "firing"} ${combatFocus.left.team}` : "moving"}`} role="status">
               <span />
               <div>
-                <small>{combatFocus ? `${combatFocus.weapon.toUpperCase()} DISCHARGE` : "ORDERS RELEASED"}</small>
-                <strong>{combatFocus ? `${combatFocus.shooter} → ${combatFocus.target}` : "Resolving all vectors"}</strong>
+                <small>{combatFocus ? combatFocus.kind === "collision" ? "COLLISION DETECTED" : `${combatFocus.detail.toUpperCase()} DISCHARGE` : "ORDERS RELEASED"}</small>
+                <strong>{combatFocus ? `${combatFocus.left.name} ${combatFocus.kind === "collision" ? "◆" : "→"} ${combatFocus.right.name}` : "Resolving all vectors"}</strong>
               </div>
             </div>
           )}
@@ -3534,7 +3649,7 @@ export function SpaceGame() {
                 <button
                   type="button"
                   key={ship.id}
-                  className={`${selectedShipId === ship.id ? "selected" : ""} ${ship.hull <= 0 ? "destroyed" : ""}`}
+                  className={`${selectedShipId === ship.id ? "selected" : ""} ${ship.hull <= 0 ? "destroyed" : ""} ${cinematicShipIds.has(ship.id) ? "cinematic-active" : ""}`}
                   onClick={() => ship.hull > 0 && setSelectedShipId(ship.id)}
                 >
                   <span className="ship-index">0{index + 1}</span>
