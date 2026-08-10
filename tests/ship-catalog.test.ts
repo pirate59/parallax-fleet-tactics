@@ -37,6 +37,15 @@ test("the canonical roster contains the six designed hull roles", () => {
   assert.equal(durabilityForArchetype(SHIP_ARCHETYPES.fighter).hull, 34);
   assert.equal(SHIP_ARCHETYPES.fighter.maxMove, 11);
   assert.deepEqual(SHIP_ARCHETYPES.behemoth.weaponMounts.map((mount) => mount.weaponKind), ["railgun", "flak"]);
+  assert.deepEqual(SHIP_ARCHETYPES.behemoth.passiveTraits, [{
+    kind: "autonomous-turret",
+    name: "Turrets",
+    weaponKind: "cannon",
+    hardpointId: "dorsal",
+    rangeMultiplier: 0.5,
+    damageMultiplier: 1,
+    targetPriority: "weakest",
+  }]);
   assert.equal(durabilityForArchetype(SHIP_ARCHETYPES.behemoth).multiplier, 3);
   assert.equal(SHIP_ARCHETYPES.carrier.weaponMounts.length, 0);
   assert.equal(SHIP_ARCHETYPES.carrier.turnEndAbility?.maxActive, 3);

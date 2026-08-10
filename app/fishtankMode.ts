@@ -1,6 +1,6 @@
 import type { AiDoctrine } from "./aiCommandEngine.ts";
 import type { Team, Vec3 } from "./combatEngine.ts";
-import type { WeaponMount } from "./shipCatalog.ts";
+import type { ShipPassiveTrait, WeaponMount } from "./shipCatalog.ts";
 import { fleetColorFor } from "./fleetPresentation.ts";
 
 export const FISHTANK_FLEET_SIZE = 5;
@@ -33,6 +33,7 @@ type FishtankTemplate = {
   hull: number;
   maxHull: number;
   weaponMounts: WeaponMount[];
+  passiveTraits?: ShipPassiveTrait[];
 };
 
 export type FishtankShip<T extends FishtankTemplate> = Omit<
@@ -100,6 +101,7 @@ export function createFishtankFleet<T extends FishtankTemplate>(templates: reado
         hull: template.maxHull,
         maxHull: template.maxHull,
         weaponMounts: template.weaponMounts.map((mount) => ({ ...mount })),
+        passiveTraits: template.passiveTraits?.map((trait) => ({ ...trait })),
       } as FishtankShip<T>;
     });
 

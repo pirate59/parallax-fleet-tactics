@@ -5,6 +5,7 @@ import {
   BASIC_WEAPON_SYSTEMS,
   type BasicWeaponKind,
   type EliteWeaponKind,
+  type ShipPassiveTrait,
   type WeaponKind,
   type WeaponMount,
 } from "./shipCatalog.ts";
@@ -30,6 +31,7 @@ export type CombatShip = {
   modelId: ShipModelId;
   modelScale: number;
   weaponMounts: WeaponMount[];
+  passiveTraits?: ShipPassiveTrait[];
   spawnedByShipId?: string;
 };
 
@@ -40,7 +42,7 @@ export type CombatOrder = {
 };
 
 export type WeaponProfile = {
-  kind: "main" | EliteWeaponKind;
+  kind: "main" | EliteWeaponKind | "passive-turret";
   weaponKind: WeaponKind;
   mountId: string;
   hardpointId: string;
@@ -105,6 +107,7 @@ const cloneShip = <T extends CombatShip>(ship: T): T => ({
   shields: { ...ship.shields },
   maxShields: { ...ship.maxShields },
   weaponMounts: ship.weaponMounts.map((mount) => ({ ...mount })),
+  passiveTraits: ship.passiveTraits?.map((trait) => ({ ...trait })),
 }) as T;
 
 export function weaponProfilesFor(ship: CombatShip): WeaponProfile[] {
@@ -159,6 +162,20 @@ export function weaponProfilesFor(ship: CombatShip): WeaponProfile[] {
       color: ship.team === "enemy" ? "#ff5f7b" : "#71ebff",
     };
   });
+}
+
+export function passiveWeaponProfilesFor(ship: CombatShip): WeaponProfile[] {
+  return (ship.passiveTraits ?? []).map((trait, index) => ({
+    kind: "passive-turret" as const,
+    weaponKind: trait.weaponKind,
+    mountId: `passive-${trait.kind}-${index + 1}`,
+    hardpointId: trait.hardpointId,
+    name: "Autonomous cannon turret",
+    damage: Math.round(ship.weaponDamage * trait.damageMultiplier),
+    range: ship.weaponRange * BASIC_WEAPON_SYSTEMS.cannon.rangeMultiplier * trait.rangeMultiplier,
+    halfArc: 180,
+    color: ship.team === "enemy" ? "#ffae72" : "#8df2d0",
+  }));
 }
 
 export function weaponLocalOriginFor(ship: CombatShip, weapon: WeaponProfile) {
@@ -243,118 +260,168 @@ export function resolveCombatTurn<T extends CombatShip>(
 
   type WeaponActivation = {
     shooter: T;
-    target: T;
-    shots: PendingShot[];
+    orderedTarget?: T;
+    orderedShots: PendingShot[];
+    passiveWeapons: WeaponProfile[];
+  };
+
+  const pendingShotFor = (
+    shooter: T,
+    target: T,
+    weapon: WeaponProfile,
+    salvoIndex: number,
+    mountIndex: number,
+  ): PendingShot => {
+    const origin = weaponOriginFor(shooter, weapon);
+    const solution = shotSolutionForWeapon(shooter, target, weapon);
+    return {
+      shooter,
+      target,
+      weapon,
+      salvoIndex,
+      mountIndex,
+      origin,
+      solution,
+      face: solution.valid ? shieldFaceForOrigin(target, origin) : null,
+    };
+  };
+
+  const remainingDurability = (ship: T) => ship.hull
+    + SHIELD_FACES.reduce((sum, face) => sum + ship.shields[face], 0);
+  const maximumDurability = (ship: T) => ship.maxHull
+    + SHIELD_FACES.reduce((sum, face) => sum + ship.maxShields[face], 0);
+  const isHostile = (shooter: T, candidate: T) => shooter.team === "enemy"
+    ? candidate.team !== "enemy"
+    : candidate.team === "enemy";
+  const weakestTargetInRange = (shooter: T, weapon: WeaponProfile) => results
+    .filter((candidate) => candidate.id !== shooter.id && candidate.hull > 0 && isHostile(shooter, candidate))
+    .filter((candidate) => shotSolutionForWeapon(shooter, candidate, weapon).valid)
+    .sort((left, right) => {
+      const conditionDifference = (remainingDurability(left) / Math.max(1, maximumDurability(left)))
+        - (remainingDurability(right) / Math.max(1, maximumDurability(right)));
+      if (Math.abs(conditionDifference) > ZERO_DISTANCE_EPSILON) return conditionDifference;
+      return remainingDurability(left) - remainingDurability(right) || left.id.localeCompare(right.id);
+    })[0];
+
+  const commitShot = (pending: PendingShot) => {
+    const { shooter, target: targetAtFire, weapon, salvoIndex, mountIndex, origin, solution, face } = pending;
+    const target = resultById.get(targetAtFire.id);
+    if (!target) return;
+    const sequence = shots.length;
+
+    const eventBase = {
+      id: `${shooter.id}:${salvoIndex}:${mountIndex}:${weapon.mountId}:${target.id}`,
+      sequence,
+      salvoIndex,
+      mountIndex,
+      shooterId: shooter.id,
+      targetId: target.id,
+      weapon,
+      origin: [origin.x, origin.y, origin.z] as Vec3,
+      distance: solution.distance,
+    };
+    if (!solution.valid || !face) {
+      shots.push({
+        ...eventBase,
+        valid: false,
+        missReason: solution.inRange ? "arc" : "range",
+        face: null,
+        shieldBefore: 0,
+        shieldAfter: 0,
+        hullBefore: target.hull,
+        hullAfter: target.hull,
+        destroyed: false,
+      });
+      return;
+    }
+
+    const shieldBefore = Math.max(0, target.shields[face]);
+    const hullBefore = Math.max(0, target.hull);
+    const damage = Math.max(0, weapon.damage);
+    const absorbed = Math.min(shieldBefore, damage);
+    const overflow = damage - absorbed;
+    target.shields[face] = Math.max(0, shieldBefore - damage);
+    target.hull = Math.max(0, hullBefore - overflow);
+    const faces = hitFaces.get(target.id) ?? new Set<ShieldFace>();
+    faces.add(face);
+    hitFaces.set(target.id, faces);
+
+    const destroyed = !destroyedByShot.has(target.id) && hullBefore > 0 && target.hull <= 0;
+    if (destroyed) destroyedByShot.add(target.id);
+    shots.push({
+      ...eventBase,
+      valid: true,
+      missReason: null,
+      face,
+      shieldBefore,
+      shieldAfter: target.shields[face],
+      hullBefore,
+      hullAfter: target.hull,
+      destroyed,
+    });
   };
 
   // Movement has already resolved simultaneously before this function runs.
   // Weapon geometry is therefore frozen at those final positions, while each
   // ship's survival is checked when its ordered activation begins.
   const activations: WeaponActivation[] = startingShips
-    .filter((shooter) => shooter.hull > 0 && salvosForOrder(orders[shooter.id]) > 0 && orders[shooter.id]?.targetId)
+    .filter((shooter) => shooter.hull > 0 && (
+      (salvosForOrder(orders[shooter.id]) > 0 && Boolean(orders[shooter.id]?.targetId))
+      || passiveWeaponProfilesFor(shooter).length > 0
+    ))
     .sort((left, right) => {
       const teamDifference = teamPriority[left.team] - teamPriority[right.team];
       if (teamDifference !== 0) return teamDifference;
       const indexDifference = (sourceIndex.get(left.id) ?? 0) - (sourceIndex.get(right.id) ?? 0);
       return indexDifference !== 0 ? indexDifference : left.id.localeCompare(right.id);
     })
-    .flatMap((shooter) => {
-      const target = startingById.get(orders[shooter.id].targetId);
-      if (!target || target.hull <= 0) return [];
-
+    .map((shooter) => {
+      const order = orders[shooter.id];
+      const target = order?.targetId ? startingById.get(order.targetId) : undefined;
       const weapons = weaponProfilesFor(shooter);
-      const salvoCount = salvosForOrder(orders[shooter.id]);
+      const salvoCount = target?.hull && target.hull > 0 ? salvosForOrder(order) : 0;
       const pendingShots: PendingShot[] = [];
       for (let salvoIndex = 0; salvoIndex < salvoCount; salvoIndex += 1) {
         weapons.forEach((weapon, mountIndex) => {
-          const origin = weaponOriginFor(shooter, weapon);
-          const solution = shotSolutionForWeapon(shooter, target, weapon);
-          pendingShots.push({
-            shooter,
-            target,
-            weapon,
-            salvoIndex,
-            mountIndex,
-            origin,
-            solution,
-            face: solution.valid ? shieldFaceForOrigin(target, origin) : null,
-          });
+          if (target) pendingShots.push(pendingShotFor(shooter, target, weapon, salvoIndex, mountIndex));
         });
       }
-      return [{ shooter, target, shots: pendingShots }];
+      return {
+        shooter,
+        orderedTarget: target,
+        orderedShots: pendingShots,
+        passiveWeapons: passiveWeaponProfilesFor(shooter),
+      };
     });
 
   const suppressedActivations: string[] = [];
   activations.forEach((activation) => {
     const liveShooter = resultById.get(activation.shooter.id);
     if (!liveShooter || liveShooter.hull <= 0) {
-      suppressedActivations.push(`${activation.shooter.name} destroyed before weapon activation — ordered fire cancelled.`);
+      suppressedActivations.push(`${activation.shooter.name} destroyed before weapon activation — ordered and autonomous fire cancelled.`);
       return;
     }
-    const liveTarget = resultById.get(activation.target.id);
-    if (!liveTarget || liveTarget.hull <= 0) {
+    const liveTarget = activation.orderedTarget ? resultById.get(activation.orderedTarget.id) : undefined;
+    if (activation.orderedShots.length > 0 && (!liveTarget || liveTarget.hull <= 0)) {
       suppressedActivations.push(`${activation.shooter.name} held fire — assigned target already destroyed.`);
-      return;
+    } else {
+      // Once an ordered activation begins, every installed mount and Focus Fire
+      // salvo is committed even if an earlier shot destroys the assigned target.
+      activation.orderedShots.forEach(commitShot);
     }
 
-    // Once an activation begins, every installed mount and Focus Fire salvo is
-    // committed even if an earlier shot in that same activation destroys the target.
-    activation.shots.forEach((pending) => {
-      const { shooter, target: targetAtFire, weapon, salvoIndex, mountIndex, origin, solution, face } = pending;
-      const target = resultById.get(targetAtFire.id);
+    // Autonomous traits acquire after ordered fire, ignore ship orientation and
+    // always choose the weakest currently living hostile inside their own range.
+    activation.passiveWeapons.forEach((weapon, passiveIndex) => {
+      const target = weakestTargetInRange(liveShooter, weapon);
       if (!target) return;
-      const sequence = shots.length;
-
-      const eventBase = {
-        id: `${shooter.id}:${salvoIndex}:${mountIndex}:${weapon.mountId}:${target.id}`,
-        sequence,
-        salvoIndex,
-        mountIndex,
-        shooterId: shooter.id,
-        targetId: target.id,
+      commitShot(pendingShotFor(
+        liveShooter,
+        target,
         weapon,
-        origin: [origin.x, origin.y, origin.z] as Vec3,
-        distance: solution.distance,
-      };
-      if (!solution.valid || !face) {
-        shots.push({
-          ...eventBase,
-          valid: false,
-          missReason: solution.inRange ? "arc" : "range",
-          face: null,
-          shieldBefore: 0,
-          shieldAfter: 0,
-          hullBefore: target.hull,
-          hullAfter: target.hull,
-          destroyed: false,
-        });
-        return;
-      }
-
-      const shieldBefore = Math.max(0, target.shields[face]);
-      const hullBefore = Math.max(0, target.hull);
-      const damage = Math.max(0, weapon.damage);
-      const absorbed = Math.min(shieldBefore, damage);
-      const overflow = damage - absorbed;
-      target.shields[face] = Math.max(0, shieldBefore - damage);
-      target.hull = Math.max(0, hullBefore - overflow);
-      const faces = hitFaces.get(target.id) ?? new Set<ShieldFace>();
-      faces.add(face);
-      hitFaces.set(target.id, faces);
-
-      const destroyed = !destroyedByShot.has(target.id) && hullBefore > 0 && target.hull <= 0;
-      if (destroyed) destroyedByShot.add(target.id);
-      shots.push({
-        ...eventBase,
-        valid: true,
-        missReason: null,
-        face,
-        shieldBefore,
-        shieldAfter: target.shields[face],
-        hullBefore,
-        hullAfter: target.hull,
-        destroyed,
-      });
+        0,
+        activation.orderedShots.length + passiveIndex,
+      ));
     });
   });
 
@@ -375,7 +442,9 @@ export function resolveCombatTurn<T extends CombatShip>(
     const shooter = startingShips.find((ship) => ship.id === shot.shooterId);
     const target = startingShips.find((ship) => ship.id === shot.targetId);
     if (!shooter || !target) return "Unknown firing event.";
-    const salvoLabel = orders[shot.shooterId]?.mode === "focus-fire" ? ` salvo ${shot.salvoIndex + 1}` : "";
+    const salvoLabel = shot.weapon.kind !== "passive-turret" && orders[shot.shooterId]?.mode === "focus-fire"
+      ? ` salvo ${shot.salvoIndex + 1}`
+      : "";
     if (!shot.valid) return `${shooter.name}: ${shot.weapon.name}${salvoLabel} lost — target escaped ${shot.missReason === "range" ? "range" : "firing arc"}.`;
     const hullDamage = shot.hullBefore - shot.hullAfter;
     return `${shooter.name}'s ${shot.weapon.name}${salvoLabel} hit ${target.name} ${shot.face} shield for ${Math.round(shot.weapon.damage)}${hullDamage > 0 ? ` (${Math.round(hullDamage)} hull)` : ""}.`;

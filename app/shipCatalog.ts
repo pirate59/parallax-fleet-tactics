@@ -44,6 +44,16 @@ export type WeaponMount = {
   hardpointId: string;
 };
 
+export type ShipPassiveTrait = {
+  kind: "autonomous-turret";
+  name: "Turrets";
+  weaponKind: "cannon";
+  hardpointId: string;
+  rangeMultiplier: number;
+  damageMultiplier: number;
+  targetPriority: "weakest";
+};
+
 const DEFAULT_HARDPOINTS: Record<WeaponKind, string> = {
   cannon: "primary",
   pulse: "primary",
@@ -99,6 +109,7 @@ export type ShipArchetype = {
   weaponRange: number;
   weaponDamage: number;
   weaponMounts: WeaponMount[];
+  passiveTraits?: ShipPassiveTrait[];
   aiTactics: AiTacticalProfile;
   turnEndAbility?: ShipTurnEndAbility;
 };
@@ -206,6 +217,15 @@ export const SHIP_ARCHETYPES = {
     weaponRange: 16,
     weaponDamage: 38,
     weaponMounts: [behemothRailgun, createWeaponMount("flak", [behemothRailgun], "starboard-forward")],
+    passiveTraits: [{
+      kind: "autonomous-turret",
+      name: "Turrets",
+      weaponKind: "cannon",
+      hardpointId: "dorsal",
+      rangeMultiplier: 0.5,
+      damageMultiplier: 1,
+      targetPriority: "weakest",
+    }],
     aiTactics: { role: "heavy-platform", preferredRangeRatio: 0.72, facingPriority: "expected-threat", survivalHullRatio: 0.55 },
   },
   carrier: {

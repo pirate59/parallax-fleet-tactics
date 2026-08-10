@@ -2461,6 +2461,49 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: 0 0 8px rgba(97, 233, 189, 0.3);
 }
 
+.passive-trait-status {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 9px 10px;
+  border: 1px solid rgba(141, 242, 208, 0.28);
+  background: linear-gradient(120deg, rgba(67, 185, 151, 0.09), rgba(82, 148, 177, 0.035));
+}
+
+.passive-trait-status span,
+.passive-trait-status strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--type-label);
+  letter-spacing: 0.1em;
+}
+
+.passive-trait-status span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #8df2d0;
+}
+
+.passive-trait-status span i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #8df2d0;
+  box-shadow: 0 0 9px rgba(141, 242, 208, 0.6);
+}
+
+.passive-trait-status strong {
+  color: #c6f7e7;
+  font-weight: 500;
+}
+
+.passive-trait-status p {
+  margin: 0;
+  color: #7fa69c;
+  font-size: var(--type-small);
+  line-height: 1.45;
+}
+
 .forecast {
   display: flex;
   align-items: center;

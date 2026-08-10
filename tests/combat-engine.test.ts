@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   BASE_WEAPON_HALF_ARC,
   SHIELD_FACES,
+  passiveWeaponProfilesFor,
   resolveCombatTurn,
   shieldFaceForHit,
   shieldFaceForOrigin,
@@ -19,6 +20,7 @@ import {
   createWeaponMount,
   type BasicWeaponKind,
   type EliteWeaponKind,
+  type ShipPassiveTrait,
   type WeaponMount,
 } from "../app/shipCatalog.ts";
 
@@ -38,6 +40,16 @@ const weaponMountsFor = (
   (mounts, weapon) => [...mounts, createWeaponMount(weapon, mounts)],
   [createPrimaryWeaponMount(primary)],
 );
+
+const autonomousTurret: ShipPassiveTrait = {
+  kind: "autonomous-turret",
+  name: "Turrets",
+  weaponKind: "cannon",
+  hardpointId: "dorsal",
+  rangeMultiplier: 0.5,
+  damageMultiplier: 1,
+  targetPriority: "weakest",
+};
 
 const makeShip = (id: string, overrides: Partial<CombatShip> = {}): CombatShip => ({
   id,
@@ -144,6 +156,74 @@ test("focus fire queues two complete salvos with unique deterministic events", (
   assert.deepEqual(result.shots.map((shot) => shot.mountIndex), [0, 1, 2, 3, 0, 1, 2, 3]);
   assert.equal(new Set(result.shots.map((shot) => shot.id)).size, 8);
   assert.equal(findShip(result.ships, target.id).hull, 140);
+});
+
+test("autonomous turrets use cannon damage at half range with a full firing arc", () => {
+  const behemoth = makeShip("behemoth", {
+    weaponDamage: 38,
+    weaponRange: 16,
+    passiveTraits: [autonomousTurret],
+  });
+  const [turret] = passiveWeaponProfilesFor(behemoth);
+
+  assert.deepEqual(
+    [turret.kind, turret.weaponKind, turret.name, turret.damage, turret.range, turret.halfArc],
+    ["passive-turret", "cannon", "Autonomous cannon turret", 38, 8, 180],
+  );
+});
+
+test("autonomous turrets ignore orientation and independently select the weakest hostile in range", () => {
+  const behemoth = makeShip("behemoth", {
+    rotation: [0, 180, 0],
+    passiveTraits: [autonomousTurret],
+  });
+  const orderedTarget = makeShip("ordered-target", {
+    team: "enemy",
+    position: [0, 0, -6],
+  });
+  const weakestTarget = makeShip("weakest-target", {
+    team: "enemy",
+    position: [6, 0, 0],
+    hull: 30,
+    maxHull: 100,
+  });
+  const result = resolveCombatTurn(
+    [behemoth, orderedTarget, weakestTarget],
+    ordersFor([[behemoth.id, orderedTarget.id]]),
+  );
+  const turretShot = result.shots.find((shot) => shot.weapon.kind === "passive-turret");
+
+  assert.ok(turretShot);
+  assert.equal(turretShot.targetId, weakestTarget.id);
+  assert.equal(turretShot.valid, true);
+});
+
+test("autonomous turrets fire once during Extra Move and are not duplicated by Focus Fire", () => {
+  const behemoth = makeShip("behemoth", { passiveTraits: [autonomousTurret] });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -6], hull: 200, maxHull: 200 });
+  const extraMove = resolveCombatTurn([behemoth, target], {
+    [behemoth.id]: { targetId: target.id, fire: false, mode: "extra-move" },
+  });
+  const focusFire = resolveCombatTurn([behemoth, target], {
+    [behemoth.id]: { targetId: target.id, fire: true, mode: "focus-fire" },
+  });
+
+  assert.deepEqual(extraMove.shots.map((shot) => shot.weapon.kind), ["passive-turret"]);
+  assert.equal(focusFire.shots.filter((shot) => shot.weapon.kind === "main").length, 2);
+  assert.equal(focusFire.shots.filter((shot) => shot.weapon.kind === "passive-turret").length, 1);
+});
+
+test("an autonomous turret can acquire without a core target order and stays silent outside half range", () => {
+  const behemoth = makeShip("behemoth", { passiveTraits: [autonomousTurret] });
+  const nearby = makeShip("nearby", { team: "enemy", position: [0, 0, -6] });
+  const distant = makeShip("distant", { team: "enemy", position: [0, 0, -12] });
+
+  const acquired = resolveCombatTurn([behemoth, nearby], {});
+  const outOfRange = resolveCombatTurn([behemoth, distant], {});
+
+  assert.equal(acquired.shots.length, 1);
+  assert.equal(acquired.shots[0].targetId, nearby.id);
+  assert.equal(outOfRange.shots.length, 0);
 });
 
 test("extra move forces weapons safe even when a stale order says fire", () => {
@@ -315,7 +395,7 @@ test("a ship destroyed before its weapon activation does not fire", () => {
   assert.ok(result.outcomes.some((outcome) => outcome.includes("destroyed before weapon activation")));
 });
 
-test("a later destroyed ship loses every queued mount and salvo", () => {
+test("a later destroyed ship loses every queued mount, salvo, and autonomous turret shot", () => {
   const player = makeShip("player", {
     hull: 100,
     maxHull: 100,
@@ -329,6 +409,7 @@ test("a later destroyed ship loses every queued mount and salvo", () => {
     maxHull: 10,
     weaponDamage: 4,
     weaponMounts: weaponMountsFor("cannon", ["railgun", "turret", "flak"]),
+    passiveTraits: [autonomousTurret],
   });
   const result = resolveCombatTurn(
     [player, enemy],

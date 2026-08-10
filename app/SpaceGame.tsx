@@ -31,6 +31,7 @@ import {
 } from "./orderRules";
 import {
   SHIELD_FACES,
+  passiveWeaponProfilesFor,
   resolveCombatTurn,
   shotSolutionForWeapon,
   weaponLocalOriginFor,
@@ -51,6 +52,7 @@ import {
   modelScaleForArchetype,
   type EliteWeaponKind,
   type ShipArchetype,
+  type ShipPassiveTrait,
   type ShipTurnEndAbility,
   type WeaponMount,
 } from "./shipCatalog";
@@ -137,6 +139,7 @@ type Ship = {
   durabilityMultiplier: number;
   modelScale: number;
   weaponMounts: WeaponMount[];
+  passiveTraits?: ShipPassiveTrait[];
   aiTactics: AiTacticalProfile;
   turnEndAbility?: ShipTurnEndAbility;
   fighterReserveRemaining?: number;
@@ -323,6 +326,7 @@ function createShipFromArchetype(archetype: ShipArchetype, deployment: ShipDeplo
     maxHull: durability.hull,
     modelScale: resolveSizedModelScale(archetype.baseModelScale, archetype.sizeClass),
     weaponMounts: archetype.weaponMounts.map((mount) => ({ ...mount })),
+    passiveTraits: archetype.passiveTraits?.map((trait) => ({ ...trait })),
     aiTactics: { ...archetype.aiTactics },
     turnEndAbility: archetype.turnEndAbility ? {
       ...archetype.turnEndAbility,
@@ -533,6 +537,7 @@ function copyShips(ships: Ship[]) {
     shields: { ...ship.shields },
     maxShields: { ...ship.maxShields },
     weaponMounts: ship.weaponMounts.map((mount) => ({ ...mount })),
+    passiveTraits: ship.passiveTraits?.map((trait) => ({ ...trait })),
     aiTactics: { ...ship.aiTactics },
     turnEndAbility: ship.turnEndAbility ? {
       ...ship.turnEndAbility,
@@ -577,6 +582,7 @@ function createStoryStarter() {
     durabilityMultiplier: archetype.durabilityMultiplier ?? 1,
     modelScale: modelScaleForArchetype(archetype),
     weaponMounts: archetype.weaponMounts.map((mount) => ({ ...mount })),
+    passiveTraits: archetype.passiveTraits?.map((trait) => ({ ...trait })),
     aiTactics: { ...archetype.aiTactics },
     turnEndAbility: archetype.turnEndAbility ? {
       ...archetype.turnEndAbility,
@@ -929,6 +935,26 @@ function createShipGroup(ship: Ship) {
     root.add(barrel);
   });
 
+  (ship.passiveTraits ?? []).filter((trait) => trait.kind === "autonomous-turret").forEach((trait) => {
+    const hardpoint = modelProfile.weaponHardpoints[trait.hardpointId] ?? modelProfile.weaponHardpoints.dorsal;
+    const turretMaterial = new THREE.MeshStandardMaterial({
+      color: ship.team === "enemy" ? "#ffae72" : "#8df2d0",
+      emissive: ship.team === "enemy" ? "#783b20" : "#245f55",
+      emissiveIntensity: 0.72,
+      metalness: 0.78,
+      roughness: 0.24,
+    });
+    const turretRoot = new THREE.Group();
+    turretRoot.position.set(...hardpoint.position);
+    const housing = new THREE.Mesh(new THREE.SphereGeometry(0.25, 12, 8), turretMaterial);
+    housing.scale.y = 0.62;
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.065, 0.72, 10), turretMaterial);
+    barrel.rotation.x = -Math.PI / 2;
+    barrel.position.z = -0.34;
+    turretRoot.add(housing, barrel);
+    root.add(turretRoot);
+  });
+
   modelProfile.engineAnchors.forEach(([x, y, z]) => {
     const engine = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.25, 0.65, 10), darkMaterial);
     engine.rotation.x = Math.PI / 2;
@@ -1127,14 +1153,15 @@ function addWeaponEnvelope(
   const envelopeRoot = new THREE.Group();
   envelopeRoot.position.set(...end.position);
   envelopeRoot.quaternion.copy(quaternionFor(end.rotation));
-  weaponProfilesFor(end).forEach((weapon, index) => {
+  [...weaponProfilesFor(end), ...passiveWeaponProfilesFor(end)].forEach((weapon, index) => {
+    const isPassive = weapon.kind === "passive-turret";
     const solution = target ? shotSolutionForWeapon(end, target, weapon) : null;
-    const color = !armed ? "#456779" : solution?.valid ? "#62edbd" : weapon.color;
+    const color = isPassive ? weapon.color : !armed ? "#456779" : solution?.valid ? "#62edbd" : weapon.color;
     const origin = weaponLocalOriginFor(end, weapon);
     if (weapon.halfArc >= 180) {
       const sphere = new THREE.Mesh(
         new THREE.SphereGeometry(weapon.range, 28, 18),
-        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: armed ? 0.16 : 0.06, wireframe: true, depthWrite: false }),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: isPassive || armed ? 0.16 : 0.06, wireframe: true, depthWrite: false }),
       );
       sphere.position.copy(origin);
       envelopeRoot.add(sphere);
@@ -3043,6 +3070,8 @@ export function SpaceGame() {
   const translationDisabled = controlsDisabled || selectedFlightMode === "focus-fire";
   const weaponControlDisabled = controlsDisabled || selectedFlightMode !== "normal";
   const selectedWeapons = weaponProfilesFor(selectedShip);
+  const selectedPassiveWeapons = passiveWeaponProfilesFor(selectedShip);
+  const hasAutonomousTurret = selectedPassiveWeapons.length > 0;
   const selectedSalvos = selectedDraft ? salvosForOrder(selectedDraft) : 1;
   const batteryDamage = selectedWeapons.reduce((sum, weapon) => sum + weapon.damage, 0) * selectedSalvos;
   const formattedMovementLimit = Number.isInteger(movementLimit) ? String(movementLimit) : movementLimit.toFixed(1);
@@ -3342,7 +3371,7 @@ export function SpaceGame() {
                 </fieldset>
                 <div id={`stance-status-${selectedShip.id}`} className="stance-status" data-stance={selectedFlightMode} role="status" aria-live="polite">
                   <strong>{selectedFlightRule.label}</strong>
-                  <span>{selectedFlightMode === "focus-fire" ? "0 KM · DOUBLE VOLLEY · TRANSLATION LOCKED" : selectedFlightMode === "extra-move" ? `${formattedMovementLimit} KM · WEAPONS OFFLINE` : `${formattedMovementLimit} KM · SINGLE VOLLEY AVAILABLE`}</span>
+                  <span>{selectedFlightMode === "focus-fire" ? "0 KM · DOUBLE VOLLEY · TRANSLATION LOCKED" : selectedFlightMode === "extra-move" ? `${formattedMovementLimit} KM · MAIN BATTERY OFFLINE${hasAutonomousTurret ? " · TURRETS ACTIVE" : ""}` : `${formattedMovementLimit} KM · SINGLE VOLLEY AVAILABLE`}</span>
                   <p>{selectedFlightRule.description}</p>
                 </div>
               </section>
@@ -3379,9 +3408,16 @@ export function SpaceGame() {
                 <div className="section-heading stepped"><span><b>04</b>WEAPON BATTERY</span><strong>{selectedSalvos ? `${batteryDamage} DAMAGE · ${selectedSalvos} SALVO${selectedSalvos === 1 ? "" : "S"}` : "WEAPONS OFFLINE"}</strong></div>
                 <button type="button" className={`weapon-toggle ${selectedDraft.fire ? "armed" : ""} ${selectedFlightMode}`} disabled={weaponControlDisabled} onClick={() => updateDraft({ fire: !selectedDraft.fire })}>
                   <i />
-                  <span>{selectedFlightMode === "focus-fire" ? `${selectedWeapons.length} MOUNTS · DOUBLE VOLLEY` : selectedFlightMode === "extra-move" ? "WEAPONS AUTOMATICALLY SAFE" : selectedDraft.fire ? `${selectedWeapons.length} GUN${selectedWeapons.length === 1 ? "" : "S"} ARMED` : "HOLD FIRE"}</span>
+                  <span>{selectedFlightMode === "focus-fire" ? `${selectedWeapons.length} MOUNTS · DOUBLE VOLLEY` : selectedFlightMode === "extra-move" ? hasAutonomousTurret ? "MAIN BATTERY SAFE · TURRETS ACTIVE" : "WEAPONS AUTOMATICALLY SAFE" : selectedDraft.fire ? `${selectedWeapons.length} GUN${selectedWeapons.length === 1 ? "" : "S"} ARMED` : "HOLD FIRE"}</span>
                   <b>{selectedFlightMode === "focus-fire" ? "2×" : selectedFlightMode === "extra-move" ? "DRIVE" : selectedDraft.fire ? "LIVE" : "SAFE"}</b>
                 </button>
+                {hasAutonomousTurret && (
+                  <div className="passive-trait-status">
+                    <span><i />PASSIVE TRAIT · TURRETS</span>
+                    <strong>{selectedPassiveWeapons[0].damage} DAMAGE · {selectedPassiveWeapons[0].range.toFixed(1)} KM · 360°</strong>
+                    <p>Fires once every activation at the weakest hostile in range, independent of orientation, target orders, and flight mode.</p>
+                  </div>
+                )}
               </section>
             </>
           ) : selectedShip.controller === "ai" && selectedShip.team !== "enemy" ? (
