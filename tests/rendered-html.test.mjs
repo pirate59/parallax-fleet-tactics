@@ -33,6 +33,9 @@ test("server-renders the Parallax main menu", async () => {
   assert.match(html, /Skirmish Mode/);
   assert.match(html, /Endless Mode/);
   assert.match(html, /Hardcore Mode/);
+  assert.match(html, /Fishtank Mode/);
+  assert.match(html, /data-game-mode="fishtank"/);
+  assert.match(html, /Automated simulation ready/i);
   assert.match(html, /Sound effects/);
   assert.match(html, /Music/);
   assert.match(html, /INITIALIZE\s*(?:<!-- -->)?SKIRMISH MODE/);

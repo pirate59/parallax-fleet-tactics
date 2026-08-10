@@ -58,10 +58,17 @@ import {
   retainStoryPlayerFleet,
   type ShipController,
 } from "./fleetControl";
+import {
+  FISHTANK_FLEET_SIZE,
+  FISHTANK_PLANNING_DELAY_MS,
+  FISHTANK_RESTART_DELAY_MS,
+  createFishtankFleet,
+  fishtankActivationOrder,
+} from "./fishtankMode";
 
 type Phase = "planning" | "executing" | "victory" | "defeat";
 type GameScreen = "menu" | "battle" | "story";
-type GameMode = "story" | "skirmish" | "endless" | "hardcore";
+type GameMode = "story" | "skirmish" | "endless" | "hardcore" | "fishtank";
 type StoryStage = "briefing" | "combat" | "salvage" | "encounter" | "outcome" | "won" | "lost";
 
 type AudioSettings = {
@@ -195,6 +202,14 @@ const MODE_OPTIONS: Array<{
     category: "Iron fleet",
     description: "Take command with harsher damage, no resets, and consequences that carry forward.",
     status: "Iron-fleet framework",
+  },
+  {
+    id: "fishtank",
+    number: "05",
+    label: "Fishtank Mode",
+    category: "AI spectator battle",
+    description: "Watch two autonomous five-ship fleets plot, move, and exchange ordered fire without command input.",
+    status: "Automated simulation ready",
   },
 ];
 
@@ -1154,6 +1169,7 @@ function TacticalScene({
   onSelect,
   onCombatFocus,
   onResolutionComplete,
+  presentation = "command",
 }: {
   ships: Ship[];
   drafts: Record<string, Order>;
@@ -1165,6 +1181,7 @@ function TacticalScene({
   onSelect: (id: string) => void;
   onCombatFocus: (focus: CombatFocus | null) => void;
   onResolutionComplete: (resolution: Resolution) => void;
+  presentation?: "command" | "spectator";
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const contextRef = useRef<SceneContext | null>(null);
@@ -1570,7 +1587,8 @@ function TacticalScene({
     const tacticalTarget = context.controls.target.clone();
     const tacticalFov = context.camera.fov;
     const started = performance.now();
-    const duration = 1550;
+    const duration = presentation === "spectator" ? 1120 : 1550;
+    const timing = (command: number, spectator: number) => presentation === "spectator" ? spectator : command;
     const starts = new Map(
       ships.map((ship) => [
         ship.id,
@@ -1649,7 +1667,7 @@ function TacticalScene({
         .filter((entry): entry is { shot: CombatShotEvent; shooter: Ship; target: Ship } => Boolean(entry.shooter && entry.target));
 
       if (!shots.length) {
-        await delay(420);
+        await delay(timing(420, 260));
         context.controls.enabled = true;
         if (!cancelled) completeRef.current(resolution);
         return;
@@ -1679,11 +1697,11 @@ function TacticalScene({
           ? ` · SALVO ${shot.salvoIndex + 1}/2`
           : "";
         focusRef.current({ shooter: shooter.name, target: target.name, team: shooter.team, weapon: `${shot.weapon.name}${focusSuffix}` });
-        await tweenCamera(cameraPosition, lookAt, 430);
+        await tweenCamera(cameraPosition, lookAt, timing(430, 300));
         if (cancelled) return;
         clearGroup(context.laserGroup);
         const beam = addCinematicBeam(context.laserGroup, shooter, target, shot);
-        await growBeam(beam, 240);
+        await growBeam(beam, timing(240, 170));
         const hud = context.shipHuds.get(target.id);
         if (hud) updateShipHud(hud, { ...target, hull: shot.hullAfter });
         if (shot.face) {
@@ -1696,14 +1714,14 @@ function TacticalScene({
           }
         }
         if (shot.destroyed) destroyShipVisual(context, target);
-        await delay(shot.destroyed ? 760 : 540);
+        await delay(shot.destroyed ? timing(760, 520) : timing(540, 340));
         clearGroup(context.laserGroup);
-        await delay(120);
+        await delay(timing(120, 70));
       }
 
       if (cancelled) return;
       focusRef.current(null);
-      await tweenCamera(tacticalPosition, tacticalTarget, 520);
+      await tweenCamera(tacticalPosition, tacticalTarget, timing(520, 360));
       context.camera.fov = tacticalFov;
       context.camera.updateProjectionMatrix();
       context.controls.target.copy(tacticalTarget);
@@ -1746,7 +1764,7 @@ function TacticalScene({
       context.camera.updateProjectionMatrix();
       context.controls.update();
     };
-  }, [resolution, ships]);
+  }, [presentation, resolution, ships]);
 
   return <div className="three-mount" ref={mountRef} />;
 }
@@ -1863,7 +1881,7 @@ function MainMenu({
           <span className="brand-mark" aria-hidden="true"><i /><i /></span>
           <div><strong>PARALLAX</strong><span>Fleet tactics command</span></div>
         </div>
-        <div className="menu-system-status"><i /><span>COMMAND LINK ONLINE</span><strong>BUILD 0.5.0</strong></div>
+        <div className="menu-system-status"><i /><span>COMMAND LINK ONLINE</span><strong>BUILD 0.6.0</strong></div>
       </header>
 
       <div className="menu-content">
@@ -1890,7 +1908,7 @@ function MainMenu({
                 className={`mode-card ${selectedMode === mode.id ? "selected" : ""} ${mode.id === "hardcore" ? "hardcore" : ""}`}
                 aria-pressed={selectedMode === mode.id}
                 data-game-mode={mode.id}
-                data-mode-status={mode.id === "story" ? "ready" : "framework"}
+                data-mode-status={mode.id === "story" || mode.id === "fishtank" ? "ready" : "framework"}
                 data-story-gates={mode.id === "story" ? STORY_GATE_COUNT : undefined}
                 onClick={() => onSelectMode(mode.id)}
               >
@@ -1908,7 +1926,7 @@ function MainMenu({
             <span><small>SELECTED · {selected.category.toUpperCase()}</small><strong>INITIALIZE {selected.label.toUpperCase()}</strong></span>
             <b aria-hidden="true">→</b>
           </button>
-          <p className="mode-footnote">Story Mode now runs a complete 10-gate escape. Skirmish, Endless, and Hardcore currently open the tactical prototype.</p>
+          <p className="mode-footnote">Story Mode runs the complete escape campaign. Fishtank Mode runs unattended AI-versus-AI fleet simulations.</p>
         </section>
 
         <aside className="audio-panel" aria-labelledby="audio-title">
@@ -2158,7 +2176,9 @@ export function SpaceGame() {
   const [combatFocus, setCombatFocus] = useState<CombatFocus | null>(null);
   const [cameraCommand, setCameraCommand] = useState<CameraCommand>({ kind: "reset", nonce: 0 });
   const [helpOpen, setHelpOpen] = useState(true);
+  const [fishtankMatch, setFishtankMatch] = useState(0);
   const storyActionLockRef = useRef(false);
+  const fishtankMatchRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -2324,17 +2344,27 @@ export function SpaceGame() {
     return orders;
   }, []);
 
-  const executeTurn = () => {
-    if (!allReady || !allOrdersValid || phase !== "planning") return;
+  const executeTurn = useCallback((automatic = false) => {
+    const fishtankCommit = activeMode === "fishtank" && automatic;
+    if (phase !== "planning" || (!fishtankCommit && (!allReady || !allOrdersValid))) return;
     const npcOrders = generateNpcOrders(ships);
-    const allOrders: Record<string, Order> = { ...drafts, ...npcOrders };
+    const allOrders: Record<string, Order> = fishtankCommit ? npcOrders : { ...drafts, ...npcOrders };
     const endShips = ships.map((ship) => {
       const order = allOrders[ship.id];
       return ship.hull > 0 && order ? endStateFor(ship, order) : ship;
     });
-    const combat = resolveCombatTurn(endShips, allOrders);
+    const combat = resolveCombatTurn(
+      endShips,
+      allOrders,
+      fishtankCommit ? { teamOrder: fishtankActivationOrder(turn) } : undefined,
+    );
     setPhase("executing");
-    setLog((current) => [`Turn ${turn}: vectors move simultaneously; weapons resolve by activation order.`, ...current].slice(0, 8));
+    setLog((current) => [
+      activeMode === "fishtank"
+        ? `Turn ${turn}: both AI fleets released their vectors.`
+        : `Turn ${turn}: vectors move simultaneously; weapons resolve by activation order.`,
+      ...current,
+    ].slice(0, 8));
     setResolution({
       token: Date.now(),
       endShips,
@@ -2344,7 +2374,7 @@ export function SpaceGame() {
       outcomes: combat.outcomes,
       destroyedIds: combat.destroyedIds,
     });
-  };
+  }, [activeMode, allOrdersValid, allReady, drafts, generateNpcOrders, phase, ships, turn]);
 
   const resolveCombat = useCallback((finished: Resolution) => {
     const results = copyShips(finished.resolvedShips);
@@ -2354,6 +2384,7 @@ export function SpaceGame() {
 
     const enemyAlive = results.some((ship) => ship.team === "enemy" && ship.hull > 0);
     const playerAlive = results.some((ship) => ship.team === "player" && ship.hull > 0);
+    const fishtankAllyAlive = results.some((ship) => ship.team === "ally" && ship.hull > 0);
     if (activeMode === "story" && !playerAlive) {
       setPhase("defeat");
       setStoryRun((current) => current ? {
@@ -2368,7 +2399,11 @@ export function SpaceGame() {
       setPhase("victory");
       return;
     }
-    if (!playerAlive) {
+    if (activeMode === "fishtank" && !fishtankAllyAlive) {
+      setPhase("defeat");
+      return;
+    }
+    if (activeMode !== "fishtank" && !playerAlive) {
       setPhase("defeat");
       return;
     }
@@ -2407,6 +2442,20 @@ export function SpaceGame() {
     setActiveMode("story");
     setSelectedMode("story");
     setScreen("story");
+  }, [loadCombatState]);
+
+  const startFishtankMatch = useCallback(() => {
+    const nextMatch = fishtankMatchRef.current + 1;
+    fishtankMatchRef.current = nextMatch;
+    setFishtankMatch(nextMatch);
+    setStoryRun(null);
+    loadCombatState(createFishtankFleet(INITIAL_SHIPS, nextMatch), [
+      `Fishtank match ${String(nextMatch).padStart(2, "0")}: two autonomous five-ship fleets connected.`,
+      "AI captains are calculating the opening movement phase.",
+    ]);
+    setActiveMode("fishtank");
+    setSelectedMode("fishtank");
+    setScreen("battle");
   }, [loadCombatState]);
 
   const enterStoryGate = useCallback((gate: number) => {
@@ -2520,9 +2569,13 @@ export function SpaceGame() {
       startStoryCampaign();
       return;
     }
+    if (mode === "fishtank") {
+      startFishtankMatch();
+      return;
+    }
     resetGame();
     setScreen("battle");
-  }, [resetGame, startStoryCampaign]);
+  }, [resetGame, startFishtankMatch, startStoryCampaign]);
 
   const returnToMenu = useCallback(() => {
     resetGame();
@@ -2535,10 +2588,27 @@ export function SpaceGame() {
       startStoryCampaign();
       return;
     }
+    if (activeMode === "fishtank") {
+      startFishtankMatch();
+      return;
+    }
     resetGame();
-  }, [activeMode, resetGame, startStoryCampaign]);
+  }, [activeMode, resetGame, startFishtankMatch, startStoryCampaign]);
+
+  useEffect(() => {
+    if (activeMode !== "fishtank" || screen !== "battle" || phase !== "planning" || resolution) return;
+    const timer = window.setTimeout(() => executeTurn(true), FISHTANK_PLANNING_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [activeMode, executeTurn, phase, resolution, screen]);
+
+  useEffect(() => {
+    if (activeMode !== "fishtank" || screen !== "battle" || (phase !== "victory" && phase !== "defeat")) return;
+    const timer = window.setTimeout(startFishtankMatch, FISHTANK_RESTART_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [activeMode, phase, screen, startFishtankMatch]);
 
   const selectShip = useCallback((id: string) => {
+    if (activeMode === "fishtank") return;
     const clicked = ships.find((ship) => ship.id === id);
     if (!clicked) return;
     if (clicked.team !== "enemy" && clicked.hull > 0) {
@@ -2548,7 +2618,7 @@ export function SpaceGame() {
     if (selectedShip?.controller === "player" && clicked.team === "enemy" && clicked.hull > 0) {
       updateDraft({ targetId: id });
     }
-  }, [ships, selectedShip, updateDraft]);
+  }, [activeMode, ships, selectedShip, updateDraft]);
 
   useEffect(() => {
     if (screen !== "battle") return;
@@ -2616,9 +2686,13 @@ export function SpaceGame() {
   const plannedTargetDistance = selectedTarget && selectedDraft
     ? distanceBetween(selectedDraft.destination, selectedTarget.position)
     : null;
+  const fishtankAllies = ships.filter((ship) => ship.team === "ally");
+  const fishtankEnemies = ships.filter((ship) => ship.team === "enemy");
+  const livingFishtankAllies = fishtankAllies.filter((ship) => ship.hull > 0);
+  const livingFishtankEnemies = fishtankEnemies.filter((ship) => ship.hull > 0);
 
   return (
-    <main className="game-shell" data-story-phase={activeMode === "story" ? "combat" : undefined} data-gate={activeMode === "story" ? storyRun?.gate : undefined} data-total-gates={activeMode === "story" ? STORY_GATE_COUNT : undefined}>
+    <main className="game-shell" data-mode={activeMode} data-story-phase={activeMode === "story" ? "combat" : undefined} data-gate={activeMode === "story" ? storyRun?.gate : undefined} data-total-gates={activeMode === "story" ? STORY_GATE_COUNT : undefined}>
       <header className="topbar">
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true"><i /><i /></span>
@@ -2631,23 +2705,25 @@ export function SpaceGame() {
           <span className={`phase-dot ${phase}`} />
           <div>
             <small>TURN {String(turn).padStart(2, "0")}</small>
-            <strong>{phase === "executing" ? "MOVEMENT + ACTIVATIONS" : phase.toUpperCase()}</strong>
+            <strong>{phase === "executing" ? "MOVEMENT + ACTIVATIONS" : activeMode === "fishtank" && phase === "planning" ? "AI CALCULATING" : phase.toUpperCase()}</strong>
           </div>
         </div>
         <div className="mission-brief">
           {activeMode === "story" && storyRun ? (
             <><small>STORY ESCAPE · WARP GATE {String(storyRun.gate).padStart(2, "0")} / {STORY_GATE_COUNT}</small><span>{STORY_GATE_CONFIGS[storyRun.gate - 1]?.name} · {STORY_GATE_CONFIGS[storyRun.gate - 1]?.threat}</span></>
+          ) : activeMode === "fishtank" ? (
+            <><small>AUTONOMOUS TEST CHAMBER · MATCH {String(fishtankMatch).padStart(2, "0")}</small><span>AZURE AI {livingFishtankAllies.length} · {livingFishtankEnemies.length} CRIMSON AI</span></>
           ) : (
             <><small>{activeModeInfo.category.toUpperCase()} · KESTREL REACH</small><span>{activeModeInfo.label} · Prototype encounter</span></>
           )}
         </div>
         <div className="topbar-actions">
           <button className="quiet-button" type="button" onClick={returnToMenu}>Main menu</button>
-          <button className="quiet-button" type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : "Restart"}</button>
+          <button className="quiet-button" type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : activeMode === "fishtank" ? "New match" : "Restart"}</button>
         </div>
       </header>
 
-      <section className="battle-layout">
+      <section className={`battle-layout ${activeMode === "fishtank" ? "fishtank-layout" : ""}`}>
         <div className="viewport-panel">
           <TacticalScene
             ships={ships}
@@ -2660,8 +2736,10 @@ export function SpaceGame() {
             onSelect={selectShip}
             onCombatFocus={setCombatFocus}
             onResolutionComplete={resolveCombat}
+            presentation={activeMode === "fishtank" ? "spectator" : "command"}
           />
 
+          {activeMode !== "fishtank" && (
           <section className="tactical-telemetry" aria-label="Selected ship shielding and target details">
             <div className="tactical-telemetry__ship">
               <div className="telemetry-heading">
@@ -2727,11 +2805,32 @@ export function SpaceGame() {
               )}
             </div>
           </section>
+          )}
 
           <div className="viewport-heading">
-            <span>TACTICAL VOLUME</span>
-            <strong>40 × 14 × 40 KM</strong>
+            <span>{activeMode === "fishtank" ? "AUTONOMOUS VOLUME" : "TACTICAL VOLUME"}</span>
+            <strong>{activeMode === "fishtank" ? "5 vs 5 · AI vs AI" : "40 × 14 × 40 KM"}</strong>
           </div>
+
+          {activeMode === "fishtank" && (
+            <section className="fishtank-scoreboard" aria-label="Fishtank fleet status">
+              <div className="fishtank-team azure">
+                <span>AZURE AI</span>
+                <strong>{livingFishtankAllies.length}<small> / {FISHTANK_FLEET_SIZE} ACTIVE</small></strong>
+                <ol>{fishtankAllies.map((ship) => <li key={ship.id} className={ship.hull <= 0 ? "destroyed" : ""} aria-label={`${ship.name} ${ship.hull <= 0 ? "destroyed" : "active"}`} />)}</ol>
+              </div>
+              <div className="fishtank-director" aria-live="polite">
+                <small>MATCH {String(fishtankMatch).padStart(2, "0")} · TURN {String(turn).padStart(2, "0")}</small>
+                <strong>{phase === "planning" ? "AI ORDERS CALCULATING" : phase === "executing" ? combatFocus ? "WEAPON ACTIVATION" : "SIMULTANEOUS MOVEMENT" : "MATCH COMPLETE"}</strong>
+                <span>{phase === "planning" ? "Next movement phase imminent" : phase === "executing" ? combatFocus ? `${combatFocus.shooter} engaging ${combatFocus.target}` : "Both fleets have committed" : "Preparing a fresh simulation"}</span>
+              </div>
+              <div className="fishtank-team crimson">
+                <span>CRIMSON AI</span>
+                <strong>{livingFishtankEnemies.length}<small> / {FISHTANK_FLEET_SIZE} ACTIVE</small></strong>
+                <ol>{fishtankEnemies.map((ship) => <li key={ship.id} className={ship.hull <= 0 ? "destroyed" : ""} aria-label={`${ship.name} ${ship.hull <= 0 ? "destroyed" : "active"}`} />)}</ol>
+              </div>
+            </section>
+          )}
 
           {activeMode === "story" && storyRun && (
             <div className="story-combat-progress" aria-label={`Warp gate ${storyRun.gate} of ${STORY_GATE_COUNT}`}>
@@ -2741,13 +2840,13 @@ export function SpaceGame() {
             </div>
           )}
 
-          <div className="camera-tools" aria-label="Camera controls">
+          {activeMode !== "fishtank" && <div className="camera-tools" aria-label="Camera controls">
             <button type="button" disabled={phase === "executing"} onClick={() => setCameraCommand({ kind: "focus", shipId: selectedShipId, nonce: Date.now() })}>Focus <kbd>F</kbd></button>
             <button type="button" disabled={phase === "executing"} onClick={() => setCameraCommand({ kind: "reset", nonce: Date.now() })}>Reset <kbd>1</kbd></button>
             <button type="button" className={helpOpen ? "active" : ""} onClick={() => setHelpOpen((open) => !open)}>Controls</button>
-          </div>
+          </div>}
 
-          {helpOpen && (
+          {activeMode !== "fishtank" && helpOpen && (
             <div className="help-card">
               <button type="button" aria-label="Close camera help" onClick={() => setHelpOpen(false)}>×</button>
               <strong>CAMERA</strong>
@@ -2768,12 +2867,20 @@ export function SpaceGame() {
             </div>
           )}
 
-          {(phase === "victory" || phase === "defeat") && activeMode !== "story" && (
+          {(phase === "victory" || phase === "defeat") && activeMode !== "story" && activeMode !== "fishtank" && (
             <div className="end-state">
               <small>SKIRMISH COMPLETE</small>
               <h2>{phase === "victory" ? "Formation broken" : "Command ships lost"}</h2>
               <p>{phase === "victory" ? "The Kestrel Reach is secure." : "Replot the engagement and try a new vector."}</p>
               <button type="button" onClick={resetGame}>Run another {activeModeInfo.label.toLowerCase()}</button>
+            </div>
+          )}
+
+          {(phase === "victory" || phase === "defeat") && activeMode === "fishtank" && (
+            <div className={`end-state fishtank-end ${phase}`}>
+              <small>FISHTANK MATCH {String(fishtankMatch).padStart(2, "0")} COMPLETE</small>
+              <h2>{phase === "victory" ? "Azure fleet prevails" : "Crimson fleet prevails"}</h2>
+              <p>A fresh five-versus-five simulation is entering the chamber.</p>
             </div>
           )}
 
@@ -2787,7 +2894,7 @@ export function SpaceGame() {
             </div>
           )}
 
-          <div className="fleet-dock" aria-label="Player fleet orders">
+          {activeMode !== "fishtank" && <div className="fleet-dock" aria-label="Player fleet orders">
             <div className="dock-title">
               <small>COMMAND WING</small>
               <strong>{livingCommandShips.length ? `${readyCount}/${livingCommandShips.length} VECTORS STAGED` : "AI WING AUTONOMOUS"}</strong>
@@ -2806,14 +2913,14 @@ export function SpaceGame() {
                 </button>
               ))}
             </div>
-            <button className="execute-button" type="button" disabled={!allReady || phase !== "planning"} onClick={executeTurn}>
+            <button className="execute-button" type="button" disabled={!allReady || phase !== "planning"} onClick={() => executeTurn()}>
               <span>{phase === "executing" ? "RESOLVING" : allReady ? (livingCommandShips.length ? "EXECUTE TURN" : "EXECUTE AI TURN") : `${livingCommandShips.length - readyCount} ORDER${livingCommandShips.length - readyCount === 1 ? "" : "S"} NEEDED`}</span>
               <b aria-hidden="true">→</b>
             </button>
-          </div>
+          </div>}
         </div>
 
-        <aside className="command-panel">
+        {activeMode !== "fishtank" && <aside className="command-panel">
           {selectedShip.controller === "player" && selectedDraft && (
             <div className="command-confirmation">
               <button className={`stage-button ${staged.has(selectedShip.id) ? "staged" : ""}`} type="button" disabled={controlsDisabled || !orderReady} aria-describedby={`stance-status-${selectedShip.id} plot-status-${selectedShip.id}`} onClick={() => setStaged((current) => new Set(current).add(selectedShip.id))}>
@@ -2931,7 +3038,7 @@ export function SpaceGame() {
             </ol>
             {alliedNPCs.length > 0 && <div className="ally-status"><i /><span>AI WING · {alliedNPCs.length} AUTONOMOUS</span><strong>{Math.round((alliedNPCs.reduce((sum, ship) => sum + shipConditionScore(ship), 0) / alliedNPCs.length) * 100)}%</strong></div>}
           </section>
-        </aside>
+        </aside>}
       </section>
     </main>
   );

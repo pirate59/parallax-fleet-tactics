@@ -75,6 +75,10 @@ export type CombatTurnResult<T extends CombatShip> = {
   destroyedIds: string[];
 };
 
+export type CombatResolutionOptions = {
+  teamOrder?: Team[];
+};
+
 export const SHIELD_FACES: ShieldFace[] = ["fore", "aft", "port", "starboard", "dorsal", "ventral"];
 export const BASE_WEAPON_HALF_ARC = BASIC_WEAPON_SYSTEMS.cannon.halfArc;
 export const SHIELD_REGEN_HIT = 5;
@@ -192,13 +196,20 @@ export function shieldFaceForHit(
   return shieldFaceForOrigin(target, weaponOriginFor(attacker, weapon));
 }
 
-export function resolveCombatTurn<T extends CombatShip>(sourceShips: T[], orders: Record<string, CombatOrder>): CombatTurnResult<T> {
+export function resolveCombatTurn<T extends CombatShip>(
+  sourceShips: T[],
+  orders: Record<string, CombatOrder>,
+  options: CombatResolutionOptions = {},
+): CombatTurnResult<T> {
   const startingShips = sourceShips.map(cloneShip);
   const results = sourceShips.map(cloneShip);
   const shots: CombatShotEvent[] = [];
   const hitFaces = new Map<string, Set<ShieldFace>>();
   const destroyedByShot = new Set<string>();
-  const teamPriority: Record<Team, number> = { player: 0, ally: 1, enemy: 2 };
+  const orderedTeams = options.teamOrder ?? ["player", "ally", "enemy"];
+  const teamPriority = Object.fromEntries(
+    orderedTeams.map((team, index) => [team, index]),
+  ) as Record<Team, number>;
   const startingById = new Map(startingShips.map((ship) => [ship.id, ship]));
   const resultById = new Map(results.map((ship) => [ship.id, ship]));
   const sourceIndex = new Map(startingShips.map((ship, index) => [ship.id, index]));
