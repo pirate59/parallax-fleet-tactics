@@ -378,3 +378,24 @@ test("volley order and event snapshots do not depend on order-object insertion o
   assert.deepEqual(first.shots.map((shot) => shot.shooterId), [playerTwo.id, playerOne.id, enemy.id]);
   assert.deepEqual(ships, snapshot, "the pure resolver must not mutate source ships");
 });
+
+test("battle modes can alternate team activation priority without changing default combat", () => {
+  const ally = makeShip("ally", { team: "ally", hull: 10, maxHull: 10, weaponDamage: 20 });
+  const enemy = makeShip("enemy", {
+    team: "enemy",
+    position: [0, 0, -5],
+    rotation: [0, 180, 0],
+    hull: 10,
+    maxHull: 10,
+    weaponDamage: 20,
+  });
+  const orders = ordersFor([[ally.id, enemy.id], [enemy.id, ally.id]]);
+
+  const allyFirst = resolveCombatTurn([ally, enemy], orders);
+  const enemyFirst = resolveCombatTurn([ally, enemy], orders, { teamOrder: ["enemy", "ally", "player"] });
+
+  assert.equal(findShip(allyFirst.ships, enemy.id).hull, 0);
+  assert.equal(findShip(allyFirst.ships, ally.id).hull, 10);
+  assert.equal(findShip(enemyFirst.ships, ally.id).hull, 0);
+  assert.equal(findShip(enemyFirst.ships, enemy.id).hull, 10);
+});

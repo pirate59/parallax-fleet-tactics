@@ -397,6 +397,14 @@ input:focus-visible {
   border-color: var(--coral);
 }
 
+.mode-card[data-game-mode="fishtank"] {
+  grid-column: 1 / -1;
+  min-height: 132px;
+  background:
+    linear-gradient(110deg, rgba(74, 202, 242, 0.055), transparent 44%, rgba(255, 91, 126, 0.045)),
+    rgba(7, 17, 27, 0.66);
+}
+
 .mode-number {
   color: #4c6878;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -834,6 +842,17 @@ input:focus-visible {
   grid-template-columns: minmax(0, 1fr) 354px;
 }
 
+.battle-layout.fishtank-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+[data-mode="fishtank"] .viewport-panel {
+  background:
+    radial-gradient(ellipse at 28% 48%, rgba(24, 121, 161, 0.2), transparent 38%),
+    radial-gradient(ellipse at 76% 48%, rgba(155, 36, 73, 0.17), transparent 36%),
+    linear-gradient(140deg, #07101a 0%, #040910 54%, #100910 100%);
+}
+
 .viewport-panel {
   position: relative;
   min-width: 0;
@@ -902,6 +921,129 @@ input:focus-visible {
 .viewport-heading strong {
   color: #b5d1df;
   font-weight: 500;
+}
+
+.fishtank-scoreboard {
+  position: absolute;
+  z-index: 7;
+  right: 18px;
+  bottom: 18px;
+  left: 18px;
+  min-height: 88px;
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(260px, 0.85fr) minmax(190px, 1fr);
+  align-items: stretch;
+  border: 1px solid rgba(111, 181, 209, 0.22);
+  background: rgba(4, 11, 18, 0.82);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(16px);
+  pointer-events: none;
+}
+
+.fishtank-team,
+.fishtank-director {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 13px 18px;
+}
+
+.fishtank-team > span,
+.fishtank-director small,
+.fishtank-director strong,
+.fishtank-team strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.14em;
+}
+
+.fishtank-team > span {
+  font-size: var(--type-label);
+}
+
+.fishtank-team strong {
+  margin-top: 5px;
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.fishtank-team strong small {
+  color: #6e8796;
+  font-size: var(--type-meta);
+  font-weight: 500;
+}
+
+.fishtank-team ol {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fishtank-team li {
+  width: 24px;
+  height: 4px;
+  background: currentColor;
+  box-shadow: 0 0 9px currentColor;
+  transition: opacity 220ms ease;
+}
+
+.fishtank-team li.destroyed {
+  opacity: 0.15;
+  box-shadow: none;
+}
+
+.fishtank-team.azure {
+  color: var(--cyan);
+}
+
+.fishtank-team.crimson {
+  align-items: flex-end;
+  color: var(--coral);
+  text-align: right;
+}
+
+.fishtank-director {
+  align-items: center;
+  border-right: 1px solid rgba(111, 181, 209, 0.14);
+  border-left: 1px solid rgba(111, 181, 209, 0.14);
+  text-align: center;
+}
+
+.fishtank-director small {
+  color: #648091;
+  font-size: var(--type-meta);
+}
+
+.fishtank-director strong {
+  margin-top: 5px;
+  color: #e1f6fc;
+  font-size: var(--type-control);
+}
+
+.fishtank-director span {
+  max-width: 320px;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #7692a2;
+  font-size: var(--type-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.end-state.fishtank-end {
+  animation: fishtankResult 320ms ease-out both;
+}
+
+.end-state.fishtank-end.defeat {
+  border-color: rgba(255, 109, 121, 0.42);
+  box-shadow: 0 24px 100px rgba(0, 0, 0, 0.6), 0 0 100px rgba(255, 82, 112, 0.1);
+}
+
+@keyframes fishtankResult {
+  from { opacity: 0; transform: translate(-50%, -54%) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, -60%) scale(1); }
 }
 
 .tactical-telemetry {
@@ -2688,6 +2830,10 @@ input[type="range"]::-moz-range-thumb {
     min-height: 140px;
   }
 
+  .mode-card[data-game-mode="fishtank"] {
+    grid-column: auto;
+  }
+
   .audio-panel {
     display: block;
   }
@@ -2848,6 +2994,24 @@ input[type="range"]::-moz-range-thumb {
   .command-confirmation {
     top: 58px;
   }
+
+  [data-mode="fishtank"] .viewport-panel {
+    height: calc(100dvh - 58px);
+    min-height: 620px;
+  }
+
+  .fishtank-scoreboard {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .fishtank-director {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    min-height: 54px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(111, 181, 209, 0.14);
+    border-left: 0;
+  }
 }
 
 @media (max-width: 560px) {
@@ -2932,6 +3096,25 @@ input[type="range"]::-moz-range-thumb {
 
   .command-panel {
     display: block;
+  }
+
+  .fishtank-scoreboard {
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+  }
+
+  .fishtank-team,
+  .fishtank-director {
+    padding: 10px 12px;
+  }
+
+  .fishtank-team strong {
+    font-size: 19px;
+  }
+
+  .fishtank-team li {
+    width: 14px;
   }
 
   .attitude-row {

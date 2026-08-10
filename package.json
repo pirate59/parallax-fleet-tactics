@@ -9,7 +9,7 @@
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/story-engine.test.ts tests/maneuver-engine.test.ts tests/combat-engine.test.ts tests/ship-catalog.test.ts tests/order-rules.test.ts tests/ai-command-engine.test.ts tests/fleet-control.test.ts",
+    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/story-engine.test.ts tests/maneuver-engine.test.ts tests/combat-engine.test.ts tests/ship-catalog.test.ts tests/ship-size.test.ts tests/order-rules.test.ts tests/ai-command-engine.test.ts tests/fleet-control.test.ts tests/fishtank-mode.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
