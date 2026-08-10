@@ -1,4 +1,4 @@
-import type { EliteWeaponKind } from "./combatEngine";
+import type { EliteWeaponKind } from "./shipCatalog";
 
 export type StoryStat = "weaponDamage" | "weaponRange" | "maxMove" | "maxHull";
 

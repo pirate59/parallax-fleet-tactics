@@ -1,13 +1,19 @@
 import * as THREE from "three";
 import { shipQuaternionForRotation } from "./maneuverEngine.ts";
 import { salvosForOrder, type FlightMode } from "./orderRules.ts";
-import { BASIC_WEAPON_SYSTEMS, type BasicWeaponKind } from "./shipCatalog.ts";
+import {
+  BASIC_WEAPON_SYSTEMS,
+  type BasicWeaponKind,
+  type EliteWeaponKind,
+  type WeaponKind,
+  type WeaponMount,
+} from "./shipCatalog.ts";
+import { shipModelProfileFor, type ShipModelId } from "./shipModels.ts";
 
 export type Vec3 = [number, number, number];
 export type Team = "player" | "ally" | "enemy";
 export type ShieldFace = "fore" | "aft" | "port" | "starboard" | "dorsal" | "ventral";
 export type Shields = Record<ShieldFace, number>;
-export type EliteWeaponKind = "railgun" | "turret" | "flak";
 
 export type CombatShip = {
   id: string;
@@ -21,9 +27,9 @@ export type CombatShip = {
   maxHull: number;
   weaponRange: number;
   weaponDamage: number;
-  basicWeapon: BasicWeaponKind;
+  modelId: ShipModelId;
   modelScale: number;
-  eliteWeapons: EliteWeaponKind[];
+  weaponMounts: WeaponMount[];
 };
 
 export type CombatOrder = {
@@ -34,6 +40,9 @@ export type CombatOrder = {
 
 export type WeaponProfile = {
   kind: "main" | EliteWeaponKind;
+  weaponKind: WeaponKind;
+  mountId: string;
+  hardpointId: string;
   name: string;
   damage: number;
   range: number;
@@ -94,61 +103,67 @@ const cloneShip = <T extends CombatShip>(ship: T): T => ({
   rotation: [...ship.rotation] as Vec3,
   shields: { ...ship.shields },
   maxShields: { ...ship.maxShields },
-  eliteWeapons: [...ship.eliteWeapons],
+  weaponMounts: ship.weaponMounts.map((mount) => ({ ...mount })),
 }) as T;
 
 export function weaponProfilesFor(ship: CombatShip): WeaponProfile[] {
-  const basicWeapon = BASIC_WEAPON_SYSTEMS[ship.basicWeapon];
-  const profiles: WeaponProfile[] = [{
-    kind: "main",
-    name: basicWeapon.name,
-    damage: Math.round(ship.weaponDamage * basicWeapon.damageMultiplier),
-    range: ship.weaponRange * basicWeapon.rangeMultiplier,
-    halfArc: basicWeapon.halfArc,
-    color: ship.team === "enemy" ? "#ff5f7b" : "#71ebff",
-  }];
-
-  [...new Set(ship.eliteWeapons)].forEach((kind) => {
-    if (kind === "railgun") {
-      profiles.push({
-        kind,
+  return ship.weaponMounts.map((mount) => {
+    const shared = {
+      weaponKind: mount.weaponKind,
+      mountId: mount.id,
+      hardpointId: mount.hardpointId,
+    };
+    if (mount.weaponKind === "railgun") {
+      return {
+        ...shared,
+        kind: "railgun" as const,
         name: "Rail gun",
         damage: ship.weaponDamage,
         range: ship.weaponRange * 3,
         halfArc: BASE_WEAPON_HALF_ARC * 0.3,
         color: "#d9fbff",
-      });
+      };
     }
-    if (kind === "turret") {
-      profiles.push({
-        kind,
+    if (mount.weaponKind === "turret") {
+      return {
+        ...shared,
+        kind: "turret" as const,
         name: "Omni turret",
         damage: ship.weaponDamage,
         range: ship.weaponRange * 0.75,
         halfArc: 180,
         color: "#cf9cff",
-      });
+      };
     }
-    if (kind === "flak") {
-      profiles.push({
-        kind,
+    if (mount.weaponKind === "flak") {
+      return {
+        ...shared,
+        kind: "flak" as const,
         name: "Flak cannon",
         damage: ship.weaponDamage * 5,
         range: ship.weaponRange * 0.3,
         halfArc: BASE_WEAPON_HALF_ARC,
         color: "#ffb36c",
-      });
+      };
     }
-  });
 
-  return profiles;
+    const basicWeapon = BASIC_WEAPON_SYSTEMS[mount.weaponKind as BasicWeaponKind];
+    return {
+      ...shared,
+      kind: "main" as const,
+      name: basicWeapon.name,
+      damage: Math.round(ship.weaponDamage * basicWeapon.damageMultiplier),
+      range: ship.weaponRange * basicWeapon.rangeMultiplier,
+      halfArc: basicWeapon.halfArc,
+      color: ship.team === "enemy" ? "#ff5f7b" : "#71ebff",
+    };
+  });
 }
 
 export function weaponLocalOriginFor(ship: CombatShip, weapon: WeaponProfile) {
-  return (weapon.kind === "turret"
-    ? new THREE.Vector3(0, 0.62, 0)
-    : new THREE.Vector3(0, 0, -1.48))
-    .multiplyScalar(ship.modelScale);
+  const model = shipModelProfileFor(ship.modelId);
+  const hardpoint = model.weaponHardpoints[weapon.hardpointId] ?? model.weaponHardpoints.primary;
+  return new THREE.Vector3(...hardpoint.position).multiplyScalar(ship.modelScale);
 }
 
 export function weaponOriginFor(ship: CombatShip, weapon: WeaponProfile) {
@@ -290,7 +305,7 @@ export function resolveCombatTurn<T extends CombatShip>(
       const sequence = shots.length;
 
       const eventBase = {
-        id: `${shooter.id}:${salvoIndex}:${mountIndex}:${weapon.kind}:${target.id}`,
+        id: `${shooter.id}:${salvoIndex}:${mountIndex}:${weapon.mountId}:${target.id}`,
         sequence,
         salvoIndex,
         mountIndex,

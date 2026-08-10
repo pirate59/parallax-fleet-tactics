@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createFishtankFleet, fishtankActivationOrder } from "../app/fishtankMode.ts";
+import { createPrimaryWeaponMount } from "../app/shipCatalog.ts";
 
 const template = (index: number) => ({
   id: `template-${index}`,
@@ -16,7 +17,7 @@ const template = (index: number) => ({
   maxShields: { fore: 10, aft: 10, port: 10, starboard: 10, dorsal: 10, ventral: 10 },
   hull: 100,
   maxHull: 100,
-  eliteWeapons: [] as string[],
+  weaponMounts: [createPrimaryWeaponMount("cannon")],
 });
 
 test("Fishtank creates two complete five-ship AI fleets at full strength", () => {
