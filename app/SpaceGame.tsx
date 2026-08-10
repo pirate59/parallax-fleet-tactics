@@ -111,6 +111,14 @@ import {
   STORY_BATTLEFIELD,
   type BattlefieldBounds,
 } from "./battlefieldConfig";
+import {
+  ANIMATION_SPEED_OPTIONS,
+  DEFAULT_ANIMATION_SPEED,
+  animationSpeedAt,
+  animationSpeedIndex,
+  scaledAnimationDuration,
+  type AnimationSpeed,
+} from "./animationSpeed";
 
 type Phase = "planning" | "executing" | "victory" | "defeat";
 type GameScreen = "menu" | "battle" | "story";
@@ -1608,14 +1616,14 @@ function spawnExplosion(context: SceneContext, position: THREE.Vector3, color: s
   context.explosions.push({ root, flash, shock, particles, velocities, startedAt: performance.now(), duration });
 }
 
-function destroyShipVisual(context: SceneContext, ship: Ship) {
+function destroyShipVisual(context: SceneContext, ship: Ship, explosionDuration = 1750) {
   const liveGroup = context.shipGroups.get(ship.id);
   if (isDisposableCarrierFighter(ship)) {
     const position = liveGroup?.position.clone() ?? new THREE.Vector3(...ship.position);
     if (liveGroup) liveGroup.visible = false;
     const hud = context.shipHuds.get(ship.id);
     if (hud) hud.sprite.visible = false;
-    spawnExplosion(context, position, ship.team === "enemy" ? "#ff536b" : "#71ebff");
+    spawnExplosion(context, position, ship.team === "enemy" ? "#ff536b" : "#71ebff", 1, explosionDuration);
     return;
   }
   if (context.wrecks.has(ship.id)) return;
@@ -1625,7 +1633,7 @@ function destroyShipVisual(context: SceneContext, ship: Ship) {
   if (liveGroup) liveGroup.visible = false;
   const hud = context.shipHuds.get(ship.id);
   if (hud) hud.sprite.visible = false;
-  spawnExplosion(context, wreck.position, ship.team === "enemy" ? "#ff536b" : "#71ebff");
+  spawnExplosion(context, wreck.position, ship.team === "enemy" ? "#ff536b" : "#71ebff", 1, explosionDuration);
 }
 
 type SceneContext = {
@@ -1791,6 +1799,7 @@ function TacticalScene({
   onCombatFocus,
   onResolutionComplete,
   overlayLabels,
+  animationSpeed,
   modelVariant,
   battlefieldBounds,
   showFleetStations,
@@ -1807,6 +1816,7 @@ function TacticalScene({
   onCombatFocus: (focus: CombatFocus | null) => void;
   onResolutionComplete: (resolution: Resolution) => void;
   overlayLabels: OverlayLabelSettings;
+  animationSpeed: AnimationSpeed;
   modelVariant: ShipModelVariant;
   battlefieldBounds: BattlefieldBounds;
   showFleetStations: boolean;
@@ -1818,7 +1828,7 @@ function TacticalScene({
   const focusRef = useRef(onCombatFocus);
   const completeRef = useRef(onResolutionComplete);
   const overlayLabelsRef = useRef(overlayLabels);
-  const spectatorViewRef = useRef(0);
+  const overviewViewRef = useRef(0);
 
   useEffect(() => {
     selectRef.current = onSelect;
@@ -2244,7 +2254,7 @@ function TacticalScene({
         const overview = spectatorOverviewFor(
           overviewSubjects(ships, showFleetStations),
           context.camera.aspect,
-          spectatorViewRef.current,
+          overviewViewRef.current,
         );
         context.camera.position.set(...overview.position);
         context.controls.target.set(...overview.target);
@@ -2270,11 +2280,10 @@ function TacticalScene({
     const context = contextRef.current;
     if (!context || presentation !== "spectator" || resolution) return;
     context.controls.maxDistance = showFleetStations ? 170 : 75;
-    spectatorViewRef.current += 1;
     const overview = spectatorOverviewFor(
       overviewSubjects(ships, showFleetStations),
       context.camera.aspect,
-      spectatorViewRef.current,
+      overviewViewRef.current,
     );
     context.camera.position.set(...overview.position);
     context.controls.target.set(...overview.target);
@@ -2289,22 +2298,25 @@ function TacticalScene({
     let cancelled = false;
     let combatVisibility: CombatVisibilitySnapshot | null = null;
     const timers = new Set<ReturnType<typeof setTimeout>>();
-    const spectatorOverview = presentation === "spectator"
+    const hasCinematicEvent = resolution.collisions.length > 0 || resolution.shots.some((shot) => shot.valid);
+    if (hasCinematicEvent) overviewViewRef.current += 1;
+    const returnOverview = presentation === "spectator" || hasCinematicEvent
       ? spectatorOverviewFor(
         overviewSubjects(resolution.endShips, showFleetStations),
         context.camera.aspect,
-        spectatorViewRef.current + 1,
+        overviewViewRef.current,
       )
       : null;
-    const tacticalPosition = spectatorOverview
-      ? new THREE.Vector3(...spectatorOverview.position)
+    const tacticalPosition = returnOverview
+      ? new THREE.Vector3(...returnOverview.position)
       : context.camera.position.clone();
-    const tacticalTarget = spectatorOverview
-      ? new THREE.Vector3(...spectatorOverview.target)
+    const tacticalTarget = returnOverview
+      ? new THREE.Vector3(...returnOverview.target)
       : context.controls.target.clone();
-    const tacticalFov = spectatorOverview?.fov ?? context.camera.fov;
+    const tacticalFov = returnOverview?.fov ?? context.camera.fov;
+    const scaled = (milliseconds: number) => scaledAnimationDuration(milliseconds, animationSpeed);
     const started = performance.now();
-    const duration = presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.movement : 1550;
+    const duration = scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.movement : 1550);
     const starts = new Map(
       ships.map((ship) => [
         ship.id,
@@ -2388,7 +2400,7 @@ function TacticalScene({
       await tweenCamera(
         tacticalPosition,
         tacticalTarget,
-        presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraReturn : 520,
+        scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraReturn : 520),
       );
       context.camera.fov = tacticalFov;
       context.camera.updateProjectionMatrix();
@@ -2437,10 +2449,10 @@ function TacticalScene({
         await tweenCamera(
           cameraPosition,
           midpoint,
-          presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraApproach : 430,
+          scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraApproach : 430),
         );
         if (cancelled) return;
-        spawnExplosion(context, midpoint, "#ffb45a", collision.kind === "wreck" ? 0.38 : 0.56, 920);
+        spawnExplosion(context, midpoint, "#ffb45a", collision.kind === "wreck" ? 0.38 : 0.56, scaled(920));
         spawnDamageNumber(
           context,
           positionA,
@@ -2448,7 +2460,7 @@ function TacticalScene({
           collision.hullDamageToA > 0 ? "hull" : "shield",
           collision.hullDamageToA > 0 ? "IMPACT · HULL" : "IMPACT · SHIELD",
           -0.35,
-          presentation === "spectator" ? 1700 : 1350,
+          scaled(presentation === "spectator" ? 1700 : 1350),
         );
         spawnDamageNumber(
           context,
@@ -2457,16 +2469,16 @@ function TacticalScene({
           collision.hullDamageToB > 0 ? "hull" : "shield",
           collision.hullDamageToB > 0 ? "IMPACT · HULL" : "IMPACT · SHIELD",
           0.35,
-          presentation === "spectator" ? 1700 : 1350,
+          scaled(presentation === "spectator" ? 1700 : 1350),
         );
         [shipA, shipB].forEach((ship) => {
           if (!resolution.destroyedIds.includes(ship.id) || visuallyDestroyedIds.has(ship.id)) return;
           visuallyDestroyedIds.add(ship.id);
-          destroyShipVisual(context, ship);
+          destroyShipVisual(context, ship, scaled(1750));
         });
-        await delay(presentation === "spectator" ? 980 : 720);
+        await delay(scaled(presentation === "spectator" ? 980 : 720));
         focusRef.current(null);
-        await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.betweenShots : 120);
+        await delay(scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.betweenShots : 120));
       }
     };
 
@@ -2481,7 +2493,7 @@ function TacticalScene({
         .filter((entry): entry is { shot: CombatShotEvent; shooter: Ship; target: Ship } => Boolean(entry.shooter && entry.target));
 
       if (!shots.length) {
-        await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.quietTurnHold : 420);
+        await delay(scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.quietTurnHold : 420));
         await finishCinematic();
         return;
       }
@@ -2521,12 +2533,12 @@ function TacticalScene({
         await tweenCamera(
           cameraPosition,
           lookAt,
-          presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraApproach : 430,
+          scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraApproach : 430),
         );
         if (cancelled) return;
         clearGroup(context.laserGroup);
         const beam = addCinematicBeam(context.laserGroup, shooter, target, shot);
-        await growBeam(beam, presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.beam : 240);
+        await growBeam(beam, scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.beam : 240));
         const shieldDamage = Math.max(0, shot.shieldBefore - shot.shieldAfter);
         const hullDamage = Math.max(0, shot.hullBefore - shot.hullAfter);
         spawnDamageNumber(
@@ -2536,7 +2548,7 @@ function TacticalScene({
           "shield",
           "SHIELD",
           hullDamage > 0 ? -0.55 : 0,
-          presentation === "spectator" ? 1650 : 1300,
+          scaled(presentation === "spectator" ? 1650 : 1300),
         );
         spawnDamageNumber(
           context,
@@ -2545,7 +2557,7 @@ function TacticalScene({
           "hull",
           "HULL",
           shieldDamage > 0 ? 0.55 : 0,
-          presentation === "spectator" ? 1650 : 1300,
+          scaled(presentation === "spectator" ? 1650 : 1300),
         );
         const hud = context.shipHuds.get(target.id);
         if (hud) updateShipHud(hud, { ...target, hull: shot.hullAfter }, overlayLabelsRef.current);
@@ -2560,19 +2572,19 @@ function TacticalScene({
         }
         if (shot.destroyed) {
           visuallyDestroyedIds.add(target.id);
-          destroyShipVisual(context, target);
+          destroyShipVisual(context, target, scaled(1750));
         }
         await delay(
-          presentation === "spectator"
+          scaled(presentation === "spectator"
             ? shot.destroyed
               ? FISHTANK_CINEMATIC_TIMINGS.destroyedHold
               : FISHTANK_CINEMATIC_TIMINGS.impactHold
             : shot.destroyed
               ? 760
-              : 540,
+              : 540),
         );
         clearGroup(context.laserGroup);
-        await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.betweenShots : 120);
+        await delay(scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.betweenShots : 120));
       }
 
       await finishCinematic();
@@ -2618,7 +2630,7 @@ function TacticalScene({
       context.camera.updateProjectionMatrix();
       context.controls.update();
     };
-  }, [presentation, resolution, ships, showFleetStations]);
+  }, [animationSpeed, presentation, resolution, ships, showFleetStations]);
 
   return <div className="three-mount" ref={mountRef} />;
 }
@@ -3103,6 +3115,7 @@ export function SpaceGame() {
   const [audioSettings, setAudioSettings] = useState<AudioSettings>(DEFAULT_AUDIO_SETTINGS);
   const [modelVariant, setModelVariant] = useState<ShipModelVariant>("classic");
   const [overlayLabels, setOverlayLabels] = useState<OverlayLabelSettings>(DEFAULT_OVERLAY_LABELS);
+  const [animationSpeed, setAnimationSpeed] = useState<AnimationSpeed>(DEFAULT_ANIMATION_SPEED);
   const [audioSettingsHydrated, setAudioSettingsHydrated] = useState(false);
   const [modelVariantHydrated, setModelVariantHydrated] = useState(false);
   const [ships, setShips] = useState<Ship[]>(() => copyShips(INITIAL_SHIPS));
@@ -3609,15 +3622,21 @@ export function SpaceGame() {
 
   useEffect(() => {
     if (activeMode !== "fishtank" || screen !== "battle" || phase !== "planning" || resolution) return;
-    const timer = window.setTimeout(() => executeTurn(true), FISHTANK_PLANNING_DELAY_MS);
+    const timer = window.setTimeout(
+      () => executeTurn(true),
+      scaledAnimationDuration(FISHTANK_PLANNING_DELAY_MS, animationSpeed),
+    );
     return () => window.clearTimeout(timer);
-  }, [activeMode, executeTurn, phase, resolution, screen]);
+  }, [activeMode, animationSpeed, executeTurn, phase, resolution, screen]);
 
   useEffect(() => {
     if (activeMode !== "fishtank" || screen !== "battle" || (phase !== "victory" && phase !== "defeat")) return;
-    const timer = window.setTimeout(startFishtankMatch, FISHTANK_RESTART_DELAY_MS);
+    const timer = window.setTimeout(
+      startFishtankMatch,
+      scaledAnimationDuration(FISHTANK_RESTART_DELAY_MS, animationSpeed),
+    );
     return () => window.clearTimeout(timer);
-  }, [activeMode, phase, screen, startFishtankMatch]);
+  }, [activeMode, animationSpeed, phase, screen, startFishtankMatch]);
 
   const selectShip = useCallback((id: string) => {
     if (activeMode === "fishtank") return;
@@ -3757,6 +3776,21 @@ export function SpaceGame() {
               <span>Health</span>
             </label>
           </fieldset>
+          <label className={`animation-speed-control ${phase === "executing" ? "locked" : ""}`}>
+            <span>Speed</span>
+            <input
+              type="range"
+              min="0"
+              max={String(ANIMATION_SPEED_OPTIONS.length - 1)}
+              step="1"
+              value={animationSpeedIndex(animationSpeed)}
+              disabled={phase === "executing"}
+              aria-label="Animation speed"
+              aria-valuetext={`${animationSpeed} times speed`}
+              onChange={(event) => setAnimationSpeed(animationSpeedAt(Number(event.target.value)))}
+            />
+            <output>{animationSpeed}×</output>
+          </label>
           <button className="quiet-button" type="button" onClick={returnToMenu}>Main menu</button>
           <button className="quiet-button" type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : activeMode === "fishtank" ? "New match" : "Restart"}</button>
         </div>
@@ -3776,6 +3810,7 @@ export function SpaceGame() {
             onCombatFocus={setCombatFocus}
             onResolutionComplete={resolveCombat}
             overlayLabels={overlayLabels}
+            animationSpeed={animationSpeed}
             modelVariant={modelVariant}
             battlefieldBounds={battlefieldBounds}
             showFleetStations={showFleetStations}

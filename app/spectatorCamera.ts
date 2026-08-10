@@ -63,8 +63,16 @@ export function spectatorOverviewFor(
   const limitingHalfAngle = Math.min(verticalHalfAngle, horizontalHalfAngle);
   const distance = clamp((radius / Math.sin(limitingHalfAngle)) * 1.12, 28, 150);
 
-  const angle = 0.72 + (viewVariant % 4) * 0.16;
-  const rawDirection = [Math.cos(angle), 0.58, Math.sin(angle)] as Vec3;
+  const viewpoints = [
+    [0.72, 0.58],
+    [2.24, 0.7],
+    [-0.84, 0.52],
+    [-2.38, 0.76],
+    [1.42, 0.62],
+    [-1.68, 0.68],
+  ] as const;
+  const [angle, elevation] = viewpoints[((viewVariant % viewpoints.length) + viewpoints.length) % viewpoints.length];
+  const rawDirection = [Math.cos(angle), elevation, Math.sin(angle)] as Vec3;
   const directionLength = Math.hypot(...rawDirection);
   const direction = rawDirection.map((value) => value / directionLength) as Vec3;
   const position = target.map((value, index) => value + direction[index] * distance) as Vec3;

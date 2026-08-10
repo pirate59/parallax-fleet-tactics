@@ -24,3 +24,14 @@ test("spectator overview pulls back for a wider battle", () => {
 
   assert.ok(spectatorOverviewFor(wideFleet, 16 / 9).distance > spectatorOverviewFor(compactFleet, 16 / 9).distance);
 });
+
+test("successive overview variants use distinct cinematic sides while preserving framing distance", () => {
+  const views = Array.from({ length: 6 }, (_, index) => spectatorOverviewFor(compactFleet, 16 / 9, index));
+  const positions = new Set(views.map((view) => view.position.map((value) => value.toFixed(3)).join(",")));
+
+  assert.equal(positions.size, 6);
+  views.forEach((view) => {
+    assert.ok(view.position[1] > view.target[1]);
+    assert.equal(view.distance, views[0].distance);
+  });
+});

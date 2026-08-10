@@ -1006,6 +1006,44 @@ input:focus-visible {
   color: #d8f5f3;
 }
 
+.animation-speed-control {
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: auto 82px 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.015);
+  color: #86a2b3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--type-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.animation-speed-control input {
+  width: 82px;
+  margin: 0;
+  accent-color: var(--mint);
+  cursor: pointer;
+}
+
+.animation-speed-control output {
+  color: #d8f5f3;
+  font-weight: 700;
+  text-align: right;
+}
+
+.animation-speed-control.locked {
+  opacity: 0.54;
+}
+
+.animation-speed-control.locked input {
+  cursor: wait;
+}
+
 .battle-layout {
   min-height: 0;
   flex: 1;
@@ -3375,6 +3413,21 @@ input[type="range"]::-moz-range-thumb {
     font-size: 9px;
   }
 
+  .animation-speed-control {
+    grid-template-columns: 68px 30px;
+    gap: 4px;
+    padding: 0 7px;
+    font-size: 9px;
+  }
+
+  .animation-speed-control > span {
+    display: none;
+  }
+
+  .animation-speed-control input {
+    width: 68px;
+  }
+
   .battle-layout {
     display: block;
   }
@@ -3618,6 +3671,16 @@ input[type="range"]::-moz-range-thumb {
     display: none;
   }
 
+  .animation-speed-control {
+    min-height: 36px;
+    grid-template-columns: 52px 28px;
+    padding: 0 5px;
+  }
+
+  .animation-speed-control input {
+    width: 52px;
+  }
+
   .viewport-panel,
   [data-mode="fishtank"] .viewport-panel {
     height: calc(100svh - var(--portrait-header-height));
@@ -3818,6 +3881,16 @@ input[type="range"]::-moz-range-thumb {
 
   .overlay-label-toggles label span {
     display: none;
+  }
+
+  .animation-speed-control {
+    grid-template-columns: 42px 27px;
+    gap: 2px;
+    padding: 0 4px;
+  }
+
+  .animation-speed-control input {
+    width: 42px;
   }
 }
 
