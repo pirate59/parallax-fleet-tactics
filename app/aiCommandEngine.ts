@@ -21,6 +21,7 @@ export type AiCommandShip = CombatShip & {
   aiTactics?: AiTacticalProfile;
   archetypeId?: string;
   spawnedByShipId?: string;
+  lastTargetId?: string;
 };
 
 export type AiCommandOrder = {
@@ -31,6 +32,10 @@ export type AiCommandOrder = {
   targetId: string;
   fire: boolean;
   mode: FlightMode;
+};
+
+export type AiCommandOptions = {
+  forcedTargetId?: string;
 };
 
 export const AI_DOCTRINE_ORDER: AiDoctrine[] = ["aggressive", "standard", "defensive"];
@@ -122,6 +127,52 @@ export function chooseAiTarget(ship: AiCommandShip, ships: AiCommandShip[], doct
   return targetCandidates(ship, ships)
     .map((target) => ({ target, score: targetScore(ship, target, effectiveDoctrine) }))
     .sort((left, right) => right.score - left.score || left.target.id.localeCompare(right.target.id))[0]?.target;
+}
+
+/** Assigns every surviving fighter from one carrier to a single persistent target. */
+export function carrierWingTargetAssignments(ships: AiCommandShip[]) {
+  const wings = new Map<string, AiCommandShip[]>();
+  ships
+    .filter((ship) => ship.hull > 0 && ship.spawnedByShipId)
+    .forEach((fighter) => {
+      const wing = wings.get(fighter.spawnedByShipId!) ?? [];
+      wing.push(fighter);
+      wings.set(fighter.spawnedByShipId!, wing);
+    });
+
+  const assignments: Record<string, string> = {};
+  wings.forEach((unsortedWing) => {
+    const wing = [...unsortedWing].sort((left, right) => left.id.localeCompare(right.id));
+    const targets = targetCandidates(wing[0], ships);
+    if (!targets.length) return;
+
+    const rememberedCounts = new Map<string, number>();
+    wing.forEach((fighter) => {
+      if (!fighter.lastTargetId || !targets.some((target) => target.id === fighter.lastTargetId)) return;
+      rememberedCounts.set(fighter.lastTargetId, (rememberedCounts.get(fighter.lastTargetId) ?? 0) + 1);
+    });
+    const rememberedTargetId = [...rememberedCounts.entries()]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0];
+
+    const selectedTarget = targets.find((target) => target.id === rememberedTargetId)
+      ?? targets
+        .map((target) => {
+          const combinedDamage = wing.reduce(
+            (sum, fighter) => sum + weaponProfilesFor(fighter).reduce((weaponSum, weapon) => weaponSum + weapon.damage, 0),
+            0,
+          );
+          const averageShield = SHIELD_FACES.reduce((sum, face) => sum + target.shields[face], 0) / SHIELD_FACES.length;
+          const overwhelmPotential = clamp(combinedDamage / Math.max(1, target.hull + averageShield), 0, 1.5);
+          const groupTargetScore = wing.reduce((sum, fighter) => sum + targetScore(fighter, target, "aggressive"), 0) / wing.length;
+          return { target, score: groupTargetScore + overwhelmPotential * 0.38 };
+        })
+        .sort((left, right) => right.score - left.score || left.target.id.localeCompare(right.target.id))[0]?.target;
+
+    if (!selectedTarget) return;
+    wing.forEach((fighter) => { assignments[fighter.id] = selectedTarget.id; });
+  });
+
+  return assignments;
 }
 
 function likelyAttackersFor(ship: AiCommandShip, ships: AiCommandShip[]) {
@@ -240,9 +291,13 @@ export function generateAiCommandOrder(
   doctrine: AiDoctrine = ship.aiDoctrine ?? "standard",
   battlefieldHalf = 20,
   battlefieldVerticalHalf = 7,
+  options: AiCommandOptions = {},
 ): AiCommandOrder | null {
   const effectiveDoctrine = effectiveDoctrineFor(ship, doctrine);
-  const target = chooseAiTarget(ship, ships, effectiveDoctrine);
+  const forcedTarget = options.forcedTargetId
+    ? targetCandidates(ship, ships).find((candidate) => candidate.id === options.forcedTargetId)
+    : undefined;
+  const target = forcedTarget ?? chooseAiTarget(ship, ships, effectiveDoctrine);
   if (!target) return null;
 
   const tactics = tacticsFor(ship);

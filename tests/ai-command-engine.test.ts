@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import {
+  carrierWingTargetAssignments,
   chooseAiTarget,
   generateAiCommandOrder,
   shipConditionScore,
@@ -100,6 +101,48 @@ test("carrier-launched fighters override defensive orders with disposable aggres
   assert.ok(order);
   assert.equal(order.mode, "focus-fire");
   assert.equal(order.fire, true);
+});
+
+test("fighters from one carrier share and retain a single overwhelm target", () => {
+  const fighterProfile = { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 } as const;
+  const fighterA = makeShip("fighter-a", {
+    modelId: "fighter",
+    position: [-6, 0, 0],
+    spawnedByShipId: "carrier",
+    aiTactics: fighterProfile,
+  });
+  const fighterB = makeShip("fighter-b", {
+    modelId: "fighter",
+    position: [6, 0, 0],
+    spawnedByShipId: "carrier",
+    aiTactics: fighterProfile,
+  });
+  const targetA = makeShip("target-a", { team: "enemy", position: [-6, 0, -9] });
+  const targetB = makeShip("target-b", { team: "enemy", position: [6, 0, -9], hull: 55 });
+  const fleet = [fighterA, fighterB, targetA, targetB];
+
+  const assignments = carrierWingTargetAssignments(fleet);
+  assert.ok(assignments[fighterA.id]);
+  assert.equal(assignments[fighterA.id], assignments[fighterB.id]);
+  const orders = [fighterA, fighterB].map((fighter) => generateAiCommandOrder(
+    fighter,
+    fleet,
+    "standard",
+    20,
+    7,
+    { forcedTargetId: assignments[fighter.id] },
+  ));
+  assert.ok(orders.every((order) => order?.targetId === assignments[fighterA.id]));
+
+  const rememberedFleet = fleet.map((ship) => ship.id.startsWith("fighter-") ? { ...ship, lastTargetId: targetB.id } : ship);
+  const rememberedAssignments = carrierWingTargetAssignments(rememberedFleet);
+  assert.equal(rememberedAssignments[fighterA.id], targetB.id);
+  assert.equal(rememberedAssignments[fighterB.id], targetB.id);
+
+  const destroyedTargetFleet = rememberedFleet.map((ship) => ship.id === targetB.id ? { ...ship, hull: 0 } : ship);
+  const fallbackAssignments = carrierWingTargetAssignments(destroyedTargetFleet);
+  assert.equal(fallbackAssignments[fighterA.id], targetA.id);
+  assert.equal(fallbackAssignments[fighterB.id], targetA.id);
 });
 
 test("standard Hammerhead faces the hostile most likely to shoot it", () => {

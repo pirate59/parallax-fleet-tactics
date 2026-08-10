@@ -60,6 +60,7 @@ import { applyCarrierLaunches } from "./carrierEngine";
 import {
   AI_DOCTRINE_ORDER,
   AI_DOCTRINE_RULES,
+  carrierWingTargetAssignments,
   generateAiCommandOrder,
   shipConditionScore,
   type AiDoctrine,
@@ -2439,10 +2440,18 @@ export function SpaceGame() {
 
   const generateNpcOrders = useCallback((currentShips: Ship[]) => {
     const orders: Record<string, Order> = {};
+    const wingTargets = carrierWingTargetAssignments(currentShips);
     currentShips
       .filter((ship) => ship.controller === "ai" && ship.hull > 0)
       .forEach((ship) => {
-        const order = generateAiCommandOrder(ship, currentShips, ship.aiDoctrine ?? "standard", BATTLEFIELD_HALF, BATTLEFIELD_VERTICAL_HALF);
+        const order = generateAiCommandOrder(
+          ship,
+          currentShips,
+          ship.aiDoctrine ?? "standard",
+          BATTLEFIELD_HALF,
+          BATTLEFIELD_VERTICAL_HALF,
+          { forcedTargetId: wingTargets[ship.id] },
+        );
         if (order) orders[ship.id] = order;
       });
     return orders;
