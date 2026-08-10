@@ -114,6 +114,7 @@ import {
 import {
   ANIMATION_SPEED_OPTIONS,
   DEFAULT_ANIMATION_SPEED,
+  advanceAnimationElapsed,
   animationSpeedAt,
   animationSpeedIndex,
   scaledAnimationDuration,
@@ -1828,6 +1829,7 @@ function TacticalScene({
   const focusRef = useRef(onCombatFocus);
   const completeRef = useRef(onResolutionComplete);
   const overlayLabelsRef = useRef(overlayLabels);
+  const animationSpeedRef = useRef<AnimationSpeed>(animationSpeed);
   const overviewViewRef = useRef(0);
 
   useEffect(() => {
@@ -1835,7 +1837,8 @@ function TacticalScene({
     focusRef.current = onCombatFocus;
     completeRef.current = onResolutionComplete;
     overlayLabelsRef.current = overlayLabels;
-  }, [onSelect, onCombatFocus, onResolutionComplete, overlayLabels]);
+    animationSpeedRef.current = animationSpeed;
+  }, [animationSpeed, onSelect, onCombatFocus, onResolutionComplete, overlayLabels]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -2297,7 +2300,6 @@ function TacticalScene({
     if (!context || !resolution) return;
     let cancelled = false;
     let combatVisibility: CombatVisibilitySnapshot | null = null;
-    const timers = new Set<ReturnType<typeof setTimeout>>();
     const hasCinematicEvent = resolution.collisions.length > 0 || resolution.shots.some((shot) => shot.valid);
     if (hasCinematicEvent) overviewViewRef.current += 1;
     const returnOverview = presentation === "spectator" || hasCinematicEvent
@@ -2315,9 +2317,7 @@ function TacticalScene({
       ? new THREE.Vector3(...returnOverview.target)
       : context.controls.target.clone();
     const tacticalFov = returnOverview?.fov ?? context.camera.fov;
-    const scaled = (milliseconds: number) => scaledAnimationDuration(milliseconds, animationSpeed);
-    const started = performance.now();
-    const duration = scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.movement : 1550);
+    const scaledNow = (milliseconds: number) => scaledAnimationDuration(milliseconds, animationSpeedRef.current);
     const starts = new Map(
       ships.map((ship) => [
         ship.id,
@@ -2328,60 +2328,54 @@ function TacticalScene({
       ]),
     );
 
-    const delay = (milliseconds: number) => new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        timers.delete(timer);
-        resolve();
-      }, milliseconds);
-      timers.add(timer);
+    const runTimedAnimation = (
+      milliseconds: number,
+      update: (progress: number) => void = () => undefined,
+    ) => new Promise<void>((resolve) => {
+      let elapsed = 0;
+      let previous = performance.now();
+      const step = (time: number) => {
+        if (cancelled) {
+          resolve();
+          return;
+        }
+        const delta = clamp(time - previous, 0, 100);
+        previous = time;
+        elapsed = advanceAnimationElapsed(elapsed, delta, animationSpeedRef.current);
+        const progress = clamp(elapsed / milliseconds, 0, 1);
+        update(progress);
+        if (progress < 1) requestAnimationFrame(step);
+        else resolve();
+      };
+      requestAnimationFrame(step);
     });
+
+    const delay = (milliseconds: number) => runTimedAnimation(milliseconds);
 
     const tweenCamera = (position: THREE.Vector3, lookAt: THREE.Vector3, milliseconds: number) => {
       const fromPosition = context.camera.position.clone();
       const fromLook = context.controls.target.clone();
-      const tweenStarted = performance.now();
-      return new Promise<void>((resolve) => {
-        const step = (time: number) => {
-          if (cancelled) {
-            resolve();
-            return;
-          }
-          const raw = clamp((time - tweenStarted) / milliseconds, 0, 1);
-          const eased = raw * raw * (3 - 2 * raw);
-          context.camera.position.lerpVectors(fromPosition, position, eased);
-          const currentLook = fromLook.clone().lerp(lookAt, eased);
-          context.camera.lookAt(currentLook);
-          context.controls.target.copy(currentLook);
-          if (raw < 1) requestAnimationFrame(step);
-          else resolve();
-        };
-        requestAnimationFrame(step);
+      return runTimedAnimation(milliseconds, (raw) => {
+        const eased = raw * raw * (3 - 2 * raw);
+        context.camera.position.lerpVectors(fromPosition, position, eased);
+        const currentLook = fromLook.clone().lerp(lookAt, eased);
+        context.camera.lookAt(currentLook);
+        context.controls.target.copy(currentLook);
       });
     };
 
     const growBeam = (beam: ReturnType<typeof addCinematicBeam>, milliseconds: number) => {
-      const beamStarted = performance.now();
-      return new Promise<void>((resolve) => {
-        const step = (time: number) => {
-          if (cancelled) {
-            resolve();
-            return;
-          }
-          const raw = clamp((time - beamStarted) / milliseconds, 0, 1);
-          const eased = 1 - Math.pow(1 - raw, 3);
-          const currentLength = Math.max(0.001, beam.length * eased);
-          const currentMidpoint = beam.start.clone().addScaledVector(beam.direction, currentLength / 2);
-          beam.outer.scale.y = currentLength;
-          beam.core.scale.y = currentLength;
-          beam.outer.position.copy(currentMidpoint);
-          beam.core.position.copy(currentMidpoint);
-          beam.muzzleFlash.scale.setScalar(1 + Math.sin(raw * Math.PI) * 0.9);
-          beam.impact.visible = raw > 0.78;
-          if (beam.impact.visible) beam.impact.scale.setScalar(0.7 + (raw - 0.78) * 2.2);
-          if (raw < 1) requestAnimationFrame(step);
-          else resolve();
-        };
-        requestAnimationFrame(step);
+      return runTimedAnimation(milliseconds, (raw) => {
+        const eased = 1 - Math.pow(1 - raw, 3);
+        const currentLength = Math.max(0.001, beam.length * eased);
+        const currentMidpoint = beam.start.clone().addScaledVector(beam.direction, currentLength / 2);
+        beam.outer.scale.y = currentLength;
+        beam.core.scale.y = currentLength;
+        beam.outer.position.copy(currentMidpoint);
+        beam.core.position.copy(currentMidpoint);
+        beam.muzzleFlash.scale.setScalar(1 + Math.sin(raw * Math.PI) * 0.9);
+        beam.impact.visible = raw > 0.78;
+        if (beam.impact.visible) beam.impact.scale.setScalar(0.7 + (raw - 0.78) * 2.2);
       });
     };
 
@@ -2401,7 +2395,7 @@ function TacticalScene({
       await tweenCamera(
         tacticalPosition,
         tacticalTarget,
-        scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraReturn : 520),
+        presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraReturn : 520,
       );
       context.camera.fov = tacticalFov;
       context.camera.updateProjectionMatrix();
@@ -2450,10 +2444,10 @@ function TacticalScene({
         await tweenCamera(
           cameraPosition,
           midpoint,
-          scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraApproach : 430),
+          presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraApproach : 430,
         );
         if (cancelled) return;
-        spawnExplosion(context, midpoint, "#ffb45a", collision.kind === "wreck" ? 0.38 : 0.56, scaled(920));
+        spawnExplosion(context, midpoint, "#ffb45a", collision.kind === "wreck" ? 0.38 : 0.56, scaledNow(920));
         spawnDamageNumber(
           context,
           positionA,
@@ -2461,7 +2455,7 @@ function TacticalScene({
           collision.hullDamageToA > 0 ? "hull" : "shield",
           collision.hullDamageToA > 0 ? "IMPACT · HULL" : "IMPACT · SHIELD",
           -0.35,
-          scaled(presentation === "spectator" ? 1700 : 1350),
+          scaledNow(presentation === "spectator" ? 1700 : 1350),
         );
         spawnDamageNumber(
           context,
@@ -2470,16 +2464,16 @@ function TacticalScene({
           collision.hullDamageToB > 0 ? "hull" : "shield",
           collision.hullDamageToB > 0 ? "IMPACT · HULL" : "IMPACT · SHIELD",
           0.35,
-          scaled(presentation === "spectator" ? 1700 : 1350),
+          scaledNow(presentation === "spectator" ? 1700 : 1350),
         );
         [shipA, shipB].forEach((ship) => {
           if (!resolution.destroyedIds.includes(ship.id) || visuallyDestroyedIds.has(ship.id)) return;
           visuallyDestroyedIds.add(ship.id);
-          destroyShipVisual(context, ship, scaled(1750));
+          destroyShipVisual(context, ship, scaledNow(1750));
         });
-        await delay(scaled(presentation === "spectator" ? 980 : 720));
+        await delay(presentation === "spectator" ? 980 : 720);
         focusRef.current(null);
-        await delay(scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.betweenShots : 120));
+        await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.betweenShots : 120);
       }
     };
 
@@ -2494,7 +2488,7 @@ function TacticalScene({
         .filter((entry): entry is { shot: CombatShotEvent; shooter: Ship; target: Ship } => Boolean(entry.shooter && entry.target));
 
       if (!shots.length) {
-        await delay(scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.quietTurnHold : 420));
+        await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.quietTurnHold : 420);
         await finishCinematic();
         return;
       }
@@ -2534,12 +2528,12 @@ function TacticalScene({
         await tweenCamera(
           cameraPosition,
           lookAt,
-          scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraApproach : 430),
+          presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraApproach : 430,
         );
         if (cancelled) return;
         clearGroup(context.laserGroup);
         const beam = addCinematicBeam(context.laserGroup, shooter, target, shot);
-        await growBeam(beam, scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.beam : 240));
+        await growBeam(beam, presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.beam : 240);
         const shieldDamage = Math.max(0, shot.shieldBefore - shot.shieldAfter);
         const hullDamage = Math.max(0, shot.hullBefore - shot.hullAfter);
         spawnDamageNumber(
@@ -2549,7 +2543,7 @@ function TacticalScene({
           "shield",
           "SHIELD",
           hullDamage > 0 ? -0.55 : 0,
-          scaled(presentation === "spectator" ? 1650 : 1300),
+          scaledNow(presentation === "spectator" ? 1650 : 1300),
         );
         spawnDamageNumber(
           context,
@@ -2558,7 +2552,7 @@ function TacticalScene({
           "hull",
           "HULL",
           shieldDamage > 0 ? 0.55 : 0,
-          scaled(presentation === "spectator" ? 1650 : 1300),
+          scaledNow(presentation === "spectator" ? 1650 : 1300),
         );
         const hud = context.shipHuds.get(target.id);
         if (hud) updateShipHud(hud, { ...target, hull: shot.hullAfter }, overlayLabelsRef.current);
@@ -2573,19 +2567,19 @@ function TacticalScene({
         }
         if (shot.destroyed) {
           visuallyDestroyedIds.add(target.id);
-          destroyShipVisual(context, target, scaled(1750));
+          destroyShipVisual(context, target, scaledNow(1750));
         }
         await delay(
-          scaled(presentation === "spectator"
+          presentation === "spectator"
             ? shot.destroyed
               ? FISHTANK_CINEMATIC_TIMINGS.destroyedHold
               : FISHTANK_CINEMATIC_TIMINGS.impactHold
             : shot.destroyed
               ? 760
-              : 540),
+              : 540,
         );
         clearGroup(context.laserGroup);
-        await delay(scaled(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.betweenShots : 120));
+        await delay(presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.betweenShots : 120);
       }
 
       await finishCinematic();
@@ -2598,9 +2592,7 @@ function TacticalScene({
 
     context.controls.enabled = false;
 
-    const animateMovement = (time: number) => {
-      if (cancelled) return;
-      const raw = clamp((time - started) / duration, 0, 1);
+    const animateMovement = (raw: number) => {
       const eased = raw < 0.5 ? 4 * raw * raw * raw : 1 - Math.pow(-2 * raw + 2, 3) / 2;
       resolution.endShips.forEach((endShip) => {
         const group = context.shipGroups.get(endShip.id);
@@ -2609,18 +2601,16 @@ function TacticalScene({
         group.position.lerpVectors(start.position, new THREE.Vector3(...endShip.position), eased);
         group.quaternion.slerpQuaternions(start.quaternion, quaternionFor(endShip.rotation), eased);
       });
-
-      if (raw < 1) {
-        requestAnimationFrame(animateMovement);
-        return;
-      }
-      void playResolutionCinematics();
     };
-    requestAnimationFrame(animateMovement);
+    void runTimedAnimation(
+      presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.movement : 1550,
+      animateMovement,
+    ).then(() => {
+      if (!cancelled) void playResolutionCinematics();
+    });
 
     return () => {
       cancelled = true;
-      timers.forEach((timer) => clearTimeout(timer));
       focusRef.current(null);
       clearGroup(context.laserGroup);
       if (combatVisibility) restoreCombatVisibility(context, combatVisibility, resolution.destroyedIds);
@@ -2631,7 +2621,7 @@ function TacticalScene({
       context.camera.updateProjectionMatrix();
       context.controls.update();
     };
-  }, [animationSpeed, presentation, resolution, ships, showFleetStations]);
+  }, [presentation, resolution, ships, showFleetStations]);
 
   return <div className="three-mount" ref={mountRef} />;
 }
@@ -3777,7 +3767,7 @@ export function SpaceGame() {
               <span>Health</span>
             </label>
           </fieldset>
-          <label className={`animation-speed-control ${phase === "executing" ? "locked" : ""}`}>
+          <label className="animation-speed-control">
             <span>Speed</span>
             <input
               type="range"
@@ -3785,7 +3775,6 @@ export function SpaceGame() {
               max={String(ANIMATION_SPEED_OPTIONS.length - 1)}
               step="1"
               value={animationSpeedIndex(animationSpeed)}
-              disabled={phase === "executing"}
               aria-label="Animation speed"
               aria-valuetext={`${animationSpeed} times speed`}
               onChange={(event) => setAnimationSpeed(animationSpeedAt(Number(event.target.value)))}

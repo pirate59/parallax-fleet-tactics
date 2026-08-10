@@ -1036,14 +1036,6 @@ input:focus-visible {
   text-align: right;
 }
 
-.animation-speed-control.locked {
-  opacity: 0.54;
-}
-
-.animation-speed-control.locked input {
-  cursor: wait;
-}
-
 .battle-layout {
   min-height: 0;
   flex: 1;

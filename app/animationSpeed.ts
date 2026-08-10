@@ -16,3 +16,7 @@ export function animationSpeedAt(index: number): AnimationSpeed {
 export function scaledAnimationDuration(milliseconds: number, speed: AnimationSpeed) {
   return Math.max(16, milliseconds / speed);
 }
+
+export function advanceAnimationElapsed(elapsed: number, realDelta: number, speed: AnimationSpeed) {
+  return elapsed + Math.max(0, realDelta) * speed;
+}
