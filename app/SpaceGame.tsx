@@ -1400,6 +1400,15 @@ type ExplosionEffect = {
   duration: number;
 };
 
+type DamageNumberEffect = {
+  sprite: THREE.Sprite;
+  startPosition: THREE.Vector3;
+  driftDirection: THREE.Vector3;
+  baseScale: THREE.Vector3;
+  startedAt: number;
+  duration: number;
+};
+
 function createWreck(ship: Ship, liveGroup?: THREE.Group) {
   const wreck = new THREE.Group();
   const modelProfile = shipModelProfileFor(ship.modelId);
@@ -1508,10 +1517,77 @@ type SceneContext = {
   laserGroup: THREE.Group;
   wreckGroup: THREE.Group;
   explosionGroup: THREE.Group;
+  damageGroup: THREE.Group;
   wrecks: Map<string, THREE.Group>;
   explosions: ExplosionEffect[];
+  damageNumbers: DamageNumberEffect[];
   frame: number;
 };
+
+function spawnDamageNumber(
+  context: SceneContext,
+  position: THREE.Vector3,
+  amount: number,
+  kind: "shield" | "hull",
+  label: string,
+  horizontalOffset = 0,
+  duration = 1450,
+) {
+  const roundedAmount = Math.max(0, Math.round(amount));
+  if (roundedAmount <= 0) return;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 320;
+  canvas.height = 128;
+  const drawing = canvas.getContext("2d");
+  if (!drawing) return;
+  const color = kind === "shield" ? "#6bdcff" : "#ff6478";
+  drawing.textAlign = "center";
+  drawing.lineJoin = "round";
+  drawing.font = "800 72px ui-monospace, monospace";
+  drawing.lineWidth = 14;
+  drawing.strokeStyle = "rgba(3, 8, 14, 0.94)";
+  drawing.strokeText(`-${roundedAmount}`, 160, 76);
+  drawing.fillStyle = color;
+  drawing.fillText(`-${roundedAmount}`, 160, 76);
+  drawing.font = "700 22px ui-monospace, monospace";
+  drawing.lineWidth = 7;
+  drawing.strokeText(label, 160, 112);
+  drawing.fillStyle = "#f4fbff";
+  drawing.fillText(label, 160, 112);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.renderOrder = 80;
+  const screenRight = new THREE.Vector3(1, 0, 0).applyQuaternion(context.camera.quaternion).normalize();
+  const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(context.camera.quaternion).normalize();
+  const startPosition = position.clone()
+    .addScaledVector(screenRight, horizontalOffset)
+    .addScaledVector(screenUp, 1.2);
+  const viewportHeight = Math.max(1, context.renderer.domElement.clientHeight);
+  const distance = Math.max(1, context.camera.position.distanceTo(startPosition));
+  const worldPerPixel = 2 * distance * Math.tan(degrees(context.camera.fov) / 2) / viewportHeight;
+  const worldHeight = clamp(worldPerPixel * 72, 0.72, 2.8);
+  const baseScale = new THREE.Vector3(worldHeight * (320 / 128), worldHeight, 1);
+  sprite.position.copy(startPosition);
+  sprite.scale.copy(baseScale).multiplyScalar(0.78);
+  context.damageGroup.add(sprite);
+  context.damageNumbers.push({
+    sprite,
+    startPosition,
+    driftDirection: screenUp,
+    baseScale,
+    startedAt: performance.now(),
+    duration,
+  });
+}
 
 type CombatVisibilitySnapshot = {
   shipGroups: Map<string, boolean>;
@@ -1689,7 +1765,8 @@ function TacticalScene({
     const laserGroup = new THREE.Group();
     const wreckGroup = new THREE.Group();
     const explosionGroup = new THREE.Group();
-    scene.add(planGroup, laserGroup, wreckGroup, explosionGroup);
+    const damageGroup = new THREE.Group();
+    scene.add(planGroup, laserGroup, wreckGroup, explosionGroup, damageGroup);
 
     const shipGroups = new Map<string, THREE.Group>();
     const shipHuds = new Map<string, ShipHudHandle>();
@@ -1705,8 +1782,10 @@ function TacticalScene({
       laserGroup,
       wreckGroup,
       explosionGroup,
+      damageGroup,
       wrecks,
       explosions: [],
+      damageNumbers: [],
       frame: 0,
     };
     contextRef.current = context;
@@ -1824,6 +1903,23 @@ function TacticalScene({
           context.explosionGroup.remove(effect.root);
           disposeObject(effect.root);
           context.explosions.splice(index, 1);
+        }
+      }
+      for (let index = context.damageNumbers.length - 1; index >= 0; index -= 1) {
+        const effect = context.damageNumbers[index];
+        const progress = clamp((time - effect.startedAt) / effect.duration, 0, 1);
+        const fade = progress < 0.12
+          ? progress / 0.12
+          : progress > 0.62
+            ? 1 - (progress - 0.62) / 0.38
+            : 1;
+        effect.sprite.position.copy(effect.startPosition).addScaledVector(effect.driftDirection, progress * 1.35);
+        effect.sprite.scale.copy(effect.baseScale).multiplyScalar(0.78 + Math.sin(Math.min(1, progress * 2.2) * Math.PI / 2) * 0.22);
+        (effect.sprite.material as THREE.SpriteMaterial).opacity = clamp(fade, 0, 1);
+        if (progress >= 1) {
+          context.damageGroup.remove(effect.sprite);
+          disposeObject(effect.sprite);
+          context.damageNumbers.splice(index, 1);
         }
       }
       renderer.render(scene, camera);
@@ -2189,6 +2285,24 @@ function TacticalScene({
         );
         if (cancelled) return;
         spawnExplosion(context, midpoint, "#ffb45a", collision.kind === "wreck" ? 0.38 : 0.56, 920);
+        spawnDamageNumber(
+          context,
+          positionA,
+          collision.damageToA,
+          collision.hullDamageToA > 0 ? "hull" : "shield",
+          collision.hullDamageToA > 0 ? "IMPACT · HULL" : "IMPACT · SHIELD",
+          -0.35,
+          presentation === "spectator" ? 1700 : 1350,
+        );
+        spawnDamageNumber(
+          context,
+          positionB,
+          collision.damageToB,
+          collision.hullDamageToB > 0 ? "hull" : "shield",
+          collision.hullDamageToB > 0 ? "IMPACT · HULL" : "IMPACT · SHIELD",
+          0.35,
+          presentation === "spectator" ? 1700 : 1350,
+        );
         [shipA, shipB].forEach((ship) => {
           if (!resolution.destroyedIds.includes(ship.id) || visuallyDestroyedIds.has(ship.id)) return;
           visuallyDestroyedIds.add(ship.id);
@@ -2257,6 +2371,26 @@ function TacticalScene({
         clearGroup(context.laserGroup);
         const beam = addCinematicBeam(context.laserGroup, shooter, target, shot);
         await growBeam(beam, presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.beam : 240);
+        const shieldDamage = Math.max(0, shot.shieldBefore - shot.shieldAfter);
+        const hullDamage = Math.max(0, shot.hullBefore - shot.hullAfter);
+        spawnDamageNumber(
+          context,
+          targetPoint,
+          shieldDamage,
+          "shield",
+          "SHIELD",
+          hullDamage > 0 ? -0.55 : 0,
+          presentation === "spectator" ? 1650 : 1300,
+        );
+        spawnDamageNumber(
+          context,
+          targetPoint,
+          hullDamage,
+          "hull",
+          "HULL",
+          shieldDamage > 0 ? 0.55 : 0,
+          presentation === "spectator" ? 1650 : 1300,
+        );
         const hud = context.shipHuds.get(target.id);
         if (hud) updateShipHud(hud, { ...target, hull: shot.hullAfter }, overlayLabelsRef.current);
         if (shot.face) {

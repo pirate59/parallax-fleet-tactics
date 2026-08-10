@@ -22,6 +22,10 @@ export type MovementCollisionEvent = {
   minimumDistance: number;
   damageToA: number;
   damageToB: number;
+  shieldDamageToA: number;
+  shieldDamageToB: number;
+  hullDamageToA: number;
+  hullDamageToB: number;
   faceA: ShieldFace | null;
   faceB: ShieldFace | null;
 };
@@ -127,7 +131,7 @@ function applyImpactDamage<T extends CollisionShip>(
   const absorbed = Math.min(shieldBefore, roundedDamage);
   ship.shields[face] = Math.max(0, shieldBefore - roundedDamage);
   ship.hull = Math.max(0, ship.hull - Math.max(0, roundedDamage - absorbed));
-  return { face, damage: roundedDamage };
+  return { face, damage: roundedDamage, shieldDamage: absorbed, hullDamage: Math.max(0, roundedDamage - absorbed) };
 }
 
 function collisionDamage(dealer: CollisionShip, receiver: CollisionShip, relativeSpeed: number) {
@@ -188,6 +192,10 @@ export function resolveMovementCollisions<T extends CollisionShip>(
       const deflection = overlap + Math.min(1.15, 0.24 + relativeSpeed * 0.075);
       let damageToA = 0;
       let damageToB = 0;
+      let shieldDamageToA = 0;
+      let shieldDamageToB = 0;
+      let hullDamageToA = 0;
+      let hullDamageToB = 0;
       let faceA: ShieldFace | null = null;
       let faceB: ShieldFace | null = null;
 
@@ -200,6 +208,10 @@ export function resolveMovementCollisions<T extends CollisionShip>(
         const impactB = applyImpactDamage(shipB, collisionDamage(shipA, shipB, relativeSpeed), closest.pointA);
         damageToA = impactA.damage;
         damageToB = impactB.damage;
+        shieldDamageToA = impactA.shieldDamage;
+        shieldDamageToB = impactB.shieldDamage;
+        hullDamageToA = impactA.hullDamage;
+        hullDamageToB = impactB.hullDamage;
         faceA = impactA.face;
         faceB = impactB.face;
         (hitFaceSets.get(shipA.id) ?? hitFaceSets.set(shipA.id, new Set()).get(shipA.id)!).add(faceA);
@@ -216,9 +228,13 @@ export function resolveMovementCollisions<T extends CollisionShip>(
         const impact = applyImpactDamage(liveShip, clamp(3 + relativeSpeed * 0.55, 3, 10), wreckPosition);
         if (liveIsA) {
           damageToA = impact.damage;
+          shieldDamageToA = impact.shieldDamage;
+          hullDamageToA = impact.hullDamage;
           faceA = impact.face;
         } else {
           damageToB = impact.damage;
+          shieldDamageToB = impact.shieldDamage;
+          hullDamageToB = impact.hullDamage;
           faceB = impact.face;
         }
         (hitFaceSets.get(liveShip.id) ?? hitFaceSets.set(liveShip.id, new Set()).get(liveShip.id)!).add(impact.face);
@@ -237,6 +253,10 @@ export function resolveMovementCollisions<T extends CollisionShip>(
         minimumDistance,
         damageToA,
         damageToB,
+        shieldDamageToA,
+        shieldDamageToB,
+        hullDamageToA,
+        hullDamageToB,
         faceA,
         faceB,
       });

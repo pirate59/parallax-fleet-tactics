@@ -53,6 +53,8 @@ test("continuous movement detects crossing flight paths even when endpoints do n
   assert.equal(result.collisions[0].kind, "ship");
   assert.ok(result.collisions[0].damageToA > 0);
   assert.ok(result.collisions[0].damageToB > 0);
+  assert.equal(result.collisions[0].damageToA, result.collisions[0].shieldDamageToA + result.collisions[0].hullDamageToA);
+  assert.equal(result.collisions[0].damageToB, result.collisions[0].shieldDamageToB + result.collisions[0].hullDamageToB);
 });
 
 test("ships ordered to one endpoint are separated and the lighter hull is displaced farther", () => {
@@ -123,4 +125,3 @@ test("collision-aware battlefield bounds keep the whole hull inside the grid", (
   assert.ok(Math.abs(bounded[2]) <= 20 - radius + 1e-9);
   assert.ok(Math.abs(bounded[1]) < 7);
 });
-
