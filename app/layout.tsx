@@ -1,6 +1,13 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./story.css";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#050b12",
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://parallax-fleet-tactics.baaraamyou.chatgpt.site"),

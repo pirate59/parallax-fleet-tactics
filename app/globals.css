@@ -1488,18 +1488,22 @@ kbd {
 .resolution-banner {
   position: absolute;
   z-index: 8;
-  top: 50%;
+  bottom: 112px;
   left: 50%;
   display: flex;
   align-items: center;
   gap: 14px;
   min-width: 255px;
   padding: 13px 18px;
-  transform: translate(-50%, -55%);
+  transform: translateX(-50%);
   border: 1px solid rgba(255, 184, 90, 0.35);
   background: rgba(10, 13, 18, 0.82);
   box-shadow: 0 0 80px rgba(255, 139, 56, 0.1);
   backdrop-filter: blur(15px);
+}
+
+[data-mode="fishtank"] .resolution-banner {
+  bottom: 122px;
 }
 
 .resolution-banner > span {
@@ -3150,6 +3154,10 @@ input[type="range"]::-moz-range-thumb {
     bottom: 96px;
   }
 
+  .resolution-banner {
+    bottom: 96px;
+  }
+
   .command-panel {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -3266,6 +3274,12 @@ input[type="range"]::-moz-range-thumb {
     bottom: 144px;
   }
 
+  .resolution-banner {
+    bottom: 144px;
+    width: calc(100% - 16px);
+    justify-content: center;
+  }
+
   .command-panel {
     display: block;
   }
@@ -3295,11 +3309,212 @@ input[type="range"]::-moz-range-thumb {
   }
 }
 
+@media (max-width: 600px) and (orientation: portrait) {
+  .game-shell {
+    --portrait-header-height: calc(58px + env(safe-area-inset-top));
+    width: 100%;
+    overflow-x: clip;
+  }
+
+  .topbar {
+    min-height: var(--portrait-header-height);
+    gap: 7px;
+    padding: env(safe-area-inset-top) 8px 0;
+  }
+
+  .topbar-actions {
+    gap: 4px;
+  }
+
+  .topbar-actions .quiet-button {
+    min-height: 36px;
+    padding: 0 7px;
+    font-size: 9px;
+    letter-spacing: 0.06em;
+  }
+
+  .overlay-label-toggles {
+    min-height: 36px;
+    margin-right: 0;
+  }
+
+  .overlay-label-toggles label span {
+    display: none;
+  }
+
+  .viewport-panel,
+  [data-mode="fishtank"] .viewport-panel {
+    height: calc(100svh - var(--portrait-header-height));
+    min-height: 540px;
+    max-height: 780px;
+  }
+
+  .viewport-heading {
+    top: 10px;
+    left: 8px;
+  }
+
+  .camera-tools {
+    top: 42px;
+  }
+
+  .tactical-telemetry,
+  [data-story-phase="combat"] .tactical-telemetry {
+    top: 82px;
+    right: 0;
+    left: 0;
+    display: flex;
+    gap: 8px;
+    padding: 0 8px 5px;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-padding-inline: 8px;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    pointer-events: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tactical-telemetry::-webkit-scrollbar,
+  .ship-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tactical-telemetry > div {
+    flex: 0 0 calc(100% - 28px);
+    max-height: 172px;
+    padding: 7px 8px;
+    overflow-y: auto;
+    scroll-snap-align: start;
+  }
+
+  .tactical-telemetry .shield-grid {
+    gap: 4px;
+  }
+
+  .tactical-telemetry .shield-grid > div {
+    padding: 5px 6px;
+  }
+
+  .fleet-dock {
+    right: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    left: 8px;
+    min-height: 128px;
+    grid-template-columns: 1fr;
+  }
+
+  .ship-tabs {
+    min-height: 72px;
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+
+  .ship-tabs button {
+    min-height: 72px;
+    flex: 0 0 min(170px, 52vw);
+    scroll-snap-align: start;
+  }
+
+  .execute-button {
+    min-height: 44px;
+  }
+
+  .resolution-banner {
+    right: 8px;
+    bottom: calc(148px + env(safe-area-inset-bottom));
+    left: 8px;
+    width: auto;
+    min-width: 0;
+    justify-content: center;
+    transform: none;
+  }
+
+  [data-mode="fishtank"] .resolution-banner {
+    bottom: calc(166px + env(safe-area-inset-bottom));
+  }
+
+  .fishtank-scoreboard {
+    right: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    left: 8px;
+  }
+
+  .help-card {
+    bottom: calc(148px + env(safe-area-inset-bottom));
+  }
+
+  .command-panel {
+    width: 100%;
+  }
+
+  .command-panel > section {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .command-confirmation {
+    top: var(--portrait-header-height);
+  }
+
+  .slider-control input {
+    height: 30px;
+    touch-action: pan-y;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    width: 16px;
+    height: 22px;
+    margin-top: -10px;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 22px;
+  }
+
+  .quick-actions button,
+  .target-select select,
+  .weapon-toggle {
+    min-height: 44px;
+  }
+
+  .main-menu,
+  .story-shell {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .menu-header,
+  .story-header {
+    min-height: calc(62px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .menu-content {
+    padding-top: 24px;
+  }
+
+  .menu-intro h1 {
+    font-size: clamp(42px, 14vw, 58px);
+  }
+
+  .story-stage-panel {
+    min-height: calc(100svh - 96px - env(safe-area-inset-top));
+  }
+
+  .story-stage-content > h1 {
+    font-size: clamp(36px, 12vw, 48px);
+  }
+}
+
 @media (max-width: 420px) {
   .topbar {
+    min-height: calc(58px + env(safe-area-inset-top));
     grid-template-columns: auto 1fr auto;
     gap: 7px;
-    padding: 0 8px;
+    padding: env(safe-area-inset-top) 8px 0;
   }
 
   .topbar .brand-lockup > div {
