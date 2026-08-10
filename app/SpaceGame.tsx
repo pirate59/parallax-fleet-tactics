@@ -43,7 +43,12 @@ import {
   type Team,
   type Vec3,
 } from "./combatEngine";
-import { STORY_STARTER_ARCHETYPE, type BasicWeaponKind } from "./shipCatalog";
+import {
+  STORY_STARTER_ARCHETYPE,
+  durabilityForArchetype,
+  modelScaleForArchetype,
+  type BasicWeaponKind,
+} from "./shipCatalog";
 import {
   AI_DOCTRINE_ORDER,
   AI_DOCTRINE_RULES,
@@ -65,6 +70,13 @@ import {
   createFishtankFleet,
   fishtankActivationOrder,
 } from "./fishtankMode";
+import {
+  SHIP_SIZE_PROFILES,
+  resolveSizedDurability,
+  resolveSizedModelScale,
+  totalDurabilityMultiplier,
+  type ShipSizeClass,
+} from "./shipSize";
 
 type Phase = "planning" | "executing" | "victory" | "defeat";
 type GameScreen = "menu" | "battle" | "story";
@@ -100,6 +112,8 @@ type Ship = {
   weaponRange: number;
   weaponDamage: number;
   archetypeId: string;
+  sizeClass: ShipSizeClass;
+  durabilityMultiplier: number;
   basicWeapon: BasicWeaponKind;
   modelScale: number;
   eliteWeapons: EliteWeaponKind[];
@@ -231,21 +245,47 @@ const INITIAL_LOG = [
   "Plot a grid endpoint, set final orientation, then stage both command ships.",
 ];
 
+type SizedShipDraft = Omit<Ship, "shields" | "maxShields" | "hull" | "maxHull" | "modelScale" | "durabilityMultiplier"> & {
+  baseShields: Shields;
+  baseHull: number;
+  baseModelScale: number;
+  durabilityMultiplier?: number;
+};
+
+function createSizedShip(draft: SizedShipDraft): Ship {
+  const {
+    baseShields,
+    baseHull,
+    baseModelScale,
+    durabilityMultiplier = 1,
+    ...ship
+  } = draft;
+  const durability = resolveSizedDurability(baseHull, baseShields, ship.sizeClass, durabilityMultiplier);
+  return {
+    ...ship,
+    durabilityMultiplier,
+    shields: { ...durability.shields },
+    maxShields: { ...durability.shields },
+    hull: durability.hull,
+    maxHull: durability.hull,
+    modelScale: resolveSizedModelScale(baseModelScale, ship.sizeClass),
+  };
+}
+
 const INITIAL_SHIPS: Ship[] = [
-  {
+  createSizedShip({
     id: "aegis",
     name: "Aegis",
     callsign: "AX-14",
     className: "Halcyon frigate",
     team: "player",
     controller: "player",
+    sizeClass: "cruiser",
     color: "#68d8ff",
     position: [-9, 0, 5],
     rotation: [0, 36, 0],
-    shields: { fore: 92, aft: 56, port: 78, starboard: 78, dorsal: 64, ventral: 58 },
-    maxShields: { fore: 92, aft: 56, port: 78, starboard: 78, dorsal: 64, ventral: 58 },
-    hull: 120,
-    maxHull: 120,
+    baseShields: { fore: 92, aft: 56, port: 78, starboard: 78, dorsal: 64, ventral: 58 },
+    baseHull: 120,
     maxMove: 5,
     maxTurn: 55,
     maxPitch: 40,
@@ -254,23 +294,22 @@ const INITIAL_SHIPS: Ship[] = [
     weaponDamage: 34,
     archetypeId: "halcyon-frigate",
     basicWeapon: "cannon",
-    modelScale: 1,
+    baseModelScale: 1,
     eliteWeapons: [],
-  },
-  {
+  }),
+  createSizedShip({
     id: "rook",
     name: "Rook",
     callsign: "RK-02",
     className: "Lancer interceptor",
     team: "player",
     controller: "player",
+    sizeClass: "shuttle",
     color: "#9af2ff",
     position: [-10, -3, -4],
     rotation: [8, 50, -8],
-    shields: { fore: 58, aft: 36, port: 44, starboard: 44, dorsal: 40, ventral: 35 },
-    maxShields: { fore: 58, aft: 36, port: 44, starboard: 44, dorsal: 40, ventral: 35 },
-    hull: 82,
-    maxHull: 82,
+    baseShields: { fore: 58, aft: 36, port: 44, starboard: 44, dorsal: 40, ventral: 35 },
+    baseHull: 82,
     maxMove: 8,
     maxTurn: 90,
     maxPitch: 65,
@@ -279,10 +318,10 @@ const INITIAL_SHIPS: Ship[] = [
     weaponDamage: 24,
     archetypeId: "lancer-interceptor",
     basicWeapon: "cannon",
-    modelScale: 1,
+    baseModelScale: 1,
     eliteWeapons: [],
-  },
-  {
+  }),
+  createSizedShip({
     id: "sable",
     name: "Sable-3",
     callsign: "NPC-A",
@@ -290,13 +329,12 @@ const INITIAL_SHIPS: Ship[] = [
     team: "ally",
     controller: "ai",
     aiDoctrine: "standard",
+    sizeClass: "cruiser",
     color: "#58f0c2",
     position: [-6, 3, 0],
     rotation: [-5, 42, 6],
-    shields: { fore: 68, aft: 42, port: 55, starboard: 55, dorsal: 46, ventral: 42 },
-    maxShields: { fore: 68, aft: 42, port: 55, starboard: 55, dorsal: 46, ventral: 42 },
-    hull: 88,
-    maxHull: 88,
+    baseShields: { fore: 68, aft: 42, port: 55, starboard: 55, dorsal: 46, ventral: 42 },
+    baseHull: 88,
     maxMove: 6,
     maxTurn: 70,
     maxPitch: 50,
@@ -305,23 +343,22 @@ const INITIAL_SHIPS: Ship[] = [
     weaponDamage: 22,
     archetypeId: "allied-escort",
     basicWeapon: "cannon",
-    modelScale: 1,
+    baseModelScale: 1,
     eliteWeapons: [],
-  },
-  {
+  }),
+  createSizedShip({
     id: "vandal",
     name: "Vandal-1",
     callsign: "CR-11",
     className: "Corsair frigate",
     team: "enemy",
     controller: "ai",
+    sizeClass: "cruiser",
     color: "#ff6f70",
     position: [8, 1, -7],
     rotation: [0, -118, 0],
-    shields: { fore: 84, aft: 48, port: 68, starboard: 52, dorsal: 58, ventral: 50 },
-    maxShields: { fore: 84, aft: 48, port: 68, starboard: 52, dorsal: 58, ventral: 50 },
-    hull: 108,
-    maxHull: 108,
+    baseShields: { fore: 84, aft: 48, port: 68, starboard: 52, dorsal: 58, ventral: 50 },
+    baseHull: 108,
     maxMove: 5,
     maxTurn: 58,
     maxPitch: 42,
@@ -330,23 +367,22 @@ const INITIAL_SHIPS: Ship[] = [
     weaponDamage: 30,
     archetypeId: "corsair-frigate",
     basicWeapon: "cannon",
-    modelScale: 1,
+    baseModelScale: 1,
     eliteWeapons: [],
-  },
-  {
+  }),
+  createSizedShip({
     id: "shrike",
     name: "Shrike-6",
     callsign: "CR-06",
     className: "Corsair raider",
     team: "enemy",
     controller: "ai",
+    sizeClass: "shuttle",
     color: "#ff9a73",
     position: [10, -2, 3],
     rotation: [-4, -108, 7],
-    shields: { fore: 56, aft: 30, port: 42, starboard: 48, dorsal: 36, ventral: 32 },
-    maxShields: { fore: 56, aft: 30, port: 42, starboard: 48, dorsal: 36, ventral: 32 },
-    hull: 76,
-    maxHull: 76,
+    baseShields: { fore: 56, aft: 30, port: 42, starboard: 48, dorsal: 36, ventral: 32 },
+    baseHull: 76,
     maxMove: 8,
     maxTurn: 90,
     maxPitch: 65,
@@ -355,23 +391,22 @@ const INITIAL_SHIPS: Ship[] = [
     weaponDamage: 23,
     archetypeId: "corsair-raider",
     basicWeapon: "cannon",
-    modelScale: 1,
+    baseModelScale: 1,
     eliteWeapons: [],
-  },
-  {
+  }),
+  createSizedShip({
     id: "maraud",
     name: "Maraud-4",
     callsign: "CR-24",
     className: "Corsair gunship",
     team: "enemy",
     controller: "ai",
+    sizeClass: "cruiser",
     color: "#ff5a88",
     position: [7, 5, 8],
     rotation: [7, -138, -5],
-    shields: { fore: 72, aft: 38, port: 60, starboard: 60, dorsal: 52, ventral: 46 },
-    maxShields: { fore: 72, aft: 38, port: 60, starboard: 60, dorsal: 52, ventral: 46 },
-    hull: 96,
-    maxHull: 96,
+    baseShields: { fore: 72, aft: 38, port: 60, starboard: 60, dorsal: 52, ventral: 46 },
+    baseHull: 96,
     maxMove: 6,
     maxTurn: 66,
     maxPitch: 48,
@@ -380,9 +415,9 @@ const INITIAL_SHIPS: Ship[] = [
     weaponDamage: 27,
     archetypeId: "corsair-gunship",
     basicWeapon: "cannon",
-    modelScale: 1,
+    baseModelScale: 1,
     eliteWeapons: [],
-  },
+  }),
 ];
 
 type StoryEnemyKind = "raider" | "frigate" | "gunship";
@@ -565,6 +600,7 @@ function createStoryRun(): StoryRun {
 function createStoryStarter() {
   const starter = copyShips([INITIAL_SHIPS[0]])[0];
   const archetype = STORY_STARTER_ARCHETYPE;
+  const durability = durabilityForArchetype(archetype);
   return {
     ...starter,
     id: archetype.id,
@@ -573,12 +609,14 @@ function createStoryStarter() {
     className: archetype.className,
     color: archetype.color,
     archetypeId: archetype.id,
+    sizeClass: archetype.sizeClass,
+    durabilityMultiplier: archetype.durabilityMultiplier ?? 1,
     basicWeapon: archetype.basicWeapon,
-    modelScale: archetype.modelScale,
-    shields: { ...archetype.shieldCapacity },
-    maxShields: { ...archetype.shieldCapacity },
-    hull: archetype.hull,
-    maxHull: archetype.hull,
+    modelScale: modelScaleForArchetype(archetype),
+    shields: { ...durability.shields },
+    maxShields: { ...durability.shields },
+    hull: durability.hull,
+    maxHull: durability.hull,
     maxMove: archetype.maxMove,
     maxTurn: archetype.maxTurn,
     maxPitch: archetype.maxPitch,
@@ -674,8 +712,9 @@ function applyStoryEffects(sourceShips: Ship[], effects: StoryEffect[], gate: nu
       if (nextShips.filter((candidate) => candidate.team === "player" && candidate.hull > 0).length < 4) {
         nextShips.push(createRecruitShip(effect.ship, nextShips));
       } else if (ship) {
+        const shieldLimit = 320 * totalDurabilityMultiplier(ship.sizeClass, ship.durabilityMultiplier);
         SHIELD_FACES.forEach((face) => {
-          ship.maxShields[face] = clamp(ship.maxShields[face] + 16, 1, 320);
+          ship.maxShields[face] = clamp(ship.maxShields[face] + 16, 1, shieldLimit);
           ship.shields[face] = Math.min(ship.maxShields[face], ship.shields[face] + 16);
         });
       }
@@ -692,9 +731,10 @@ function applyStoryEffects(sourceShips: Ship[], effects: StoryEffect[], gate: nu
     }
     if (!ship) return;
     if (effect.kind === "shield") {
+      const shieldLimit = 320 * totalDurabilityMultiplier(ship.sizeClass, ship.durabilityMultiplier);
       SHIELD_FACES.forEach((face) => {
         if (effect.amount > 0) {
-          ship.maxShields[face] = clamp(ship.maxShields[face] + effect.amount, 1, 320);
+          ship.maxShields[face] = clamp(ship.maxShields[face] + effect.amount, 1, shieldLimit);
           ship.shields[face] = Math.min(ship.maxShields[face], ship.shields[face] + effect.amount);
         } else {
           ship.shields[face] = clamp(ship.shields[face] + effect.amount, 0, ship.maxShields[face]);
@@ -714,7 +754,8 @@ function applyStoryEffects(sourceShips: Ship[], effects: StoryEffect[], gate: nu
     if (effect.stat === "weaponRange") ship.weaponRange = clamp(ship.weaponRange + effect.amount, 8, 80);
     if (effect.stat === "maxMove") ship.maxMove = clamp(ship.maxMove + effect.amount, 3, 24);
     if (effect.stat === "maxHull") {
-      ship.maxHull = clamp(ship.maxHull + effect.amount, 60, 420);
+      const durabilityScale = totalDurabilityMultiplier(ship.sizeClass, ship.durabilityMultiplier);
+      ship.maxHull = clamp(ship.maxHull + effect.amount, 60 * durabilityScale, 420 * durabilityScale);
       ship.hull = Math.min(ship.hull, ship.maxHull);
     }
   });
@@ -2135,7 +2176,7 @@ function StoryCampaignScreen({
           <div className="manifest-heading"><span>{commandTransferred ? "COMMAND TRANSFER" : "STOLEN ASSET"}</span><strong>{flagship?.callsign ?? "SIGNAL LOST"}</strong></div>
           <div className="manifest-ship">
             <span className="manifest-ship-mark" aria-hidden="true"><i /><i /><b /></span>
-            <div><small>COMMAND SHIP</small><strong>{flagship?.name ?? "HM-01 LOST"}</strong><span>{flagship?.className ?? "No surviving hull"}</span></div>
+            <div><small>COMMAND SHIP</small><strong>{flagship?.name ?? "HM-01 LOST"}</strong><span>{flagship ? `${flagship.className} · ${SHIP_SIZE_PROFILES[flagship.sizeClass].label} class` : "No surviving hull"}</span></div>
           </div>
           <div className="manifest-stats">
             <div><span>HULL</span><strong>{Math.round(flagship?.hull ?? 0)}<small> / {flagship?.maxHull ?? 0}</small></strong></div>
@@ -2147,7 +2188,7 @@ function StoryCampaignScreen({
           </div>
           <div className="manifest-squad">
             <span>SURVIVING SHIPS</span>
-            {playerShips.map((ship, index) => <div key={ship.id} className={ship.hull <= 0 ? "lost" : ""}><i>{String(index + 1).padStart(2, "0")}</i><p><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "LOST" : `${ship.controller === "ai" ? `AI ${AI_DOCTRINE_RULES[ship.aiDoctrine ?? "standard"].label.toUpperCase()} · ` : ""}${Math.round((ship.hull / ship.maxHull) * 100)}% HULL`}</small></p></div>)}
+            {playerShips.map((ship, index) => <div key={ship.id} className={ship.hull <= 0 ? "lost" : ""}><i>{String(index + 1).padStart(2, "0")}</i><p><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "LOST" : `${SHIP_SIZE_PROFILES[ship.sizeClass].label.toUpperCase()} · ${ship.controller === "ai" ? `AI ${AI_DOCTRINE_RULES[ship.aiDoctrine ?? "standard"].label.toUpperCase()} · ` : ""}${Math.round((ship.hull / ship.maxHull) * 100)}% HULL`}</small></p></div>)}
           </div>
           <div className={`manifest-pursuit ${run.pendingThreats.length ? "hot" : "clear"}`}><i /><span><small>SIGNALS IN YOUR WAKE</small><strong>{run.pendingThreats.length ? `${run.pendingThreats.length} UNRESOLVED` : "NO LOCK"}</strong></span></div>
           <div className="manifest-log"><span>FLIGHT RECORD</span><ol>{run.history.slice(0, 4).map((entry, index) => <li key={`${entry}-${index}`}><i />{entry}</li>)}</ol></div>
@@ -2671,6 +2712,7 @@ export function SpaceGame() {
 
   if (!selectedShip) return null;
   const activeModeInfo = MODE_OPTIONS.find((mode) => mode.id === activeMode) ?? MODE_OPTIONS[1];
+  const selectedSizeProfile = SHIP_SIZE_PROFILES[selectedShip.sizeClass];
   const controlsDisabled = phase !== "planning" || selectedShip.controller !== "player" || selectedShip.hull <= 0;
   const selectedFlightMode = selectedDraft?.mode ?? "normal";
   const selectedFlightRule = FLIGHT_MODE_RULES[selectedFlightMode];
@@ -2743,7 +2785,7 @@ export function SpaceGame() {
           <section className="tactical-telemetry" aria-label="Selected ship shielding and target details">
             <div className="tactical-telemetry__ship">
               <div className="telemetry-heading">
-                <span>SELECTED SHIP · DIRECTIONAL SHIELDING</span>
+                <span>{selectedSizeProfile.label.toUpperCase()} CLASS · {selectedSizeProfile.fleetPointCost} FLEET PTS · DIRECTIONAL SHIELDING</span>
                 <strong>{selectedShip.name} · {Math.round(selectedShip.hull)} / {selectedShip.maxHull} HULL</strong>
               </div>
               <div className="shield-grid">
@@ -2908,7 +2950,7 @@ export function SpaceGame() {
                   onClick={() => ship.hull > 0 && setSelectedShipId(ship.id)}
                 >
                   <span className="ship-index">0{index + 1}</span>
-                  <span><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "DESTROYED" : ship.controller === "ai" ? `AI · ${AI_DOCTRINE_RULES[ship.aiDoctrine ?? "standard"].label.toUpperCase()}` : staged.has(ship.id) ? "ORDER READY" : "DRAFT VECTOR"}</small></span>
+                  <span><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "DESTROYED" : `${SHIP_SIZE_PROFILES[ship.sizeClass].label.toUpperCase()} · ${ship.controller === "ai" ? `AI ${AI_DOCTRINE_RULES[ship.aiDoctrine ?? "standard"].label.toUpperCase()}` : staged.has(ship.id) ? "ORDER READY" : "DRAFT VECTOR"}`}</small></span>
                   <i className={ship.hull > 0 && (ship.controller === "ai" || staged.has(ship.id)) ? "ready" : ""} />
                 </button>
               ))}
@@ -2933,7 +2975,7 @@ export function SpaceGame() {
             <div>
               <span className="eyebrow">{TEAM_LABELS[selectedShip.team]} · {selectedShip.callsign}</span>
               <h1>{selectedShip.name}</h1>
-              <p>{selectedShip.className}</p>
+              <p>{selectedShip.className} · {selectedSizeProfile.label} class · {selectedSizeProfile.fleetPointCost} fleet points</p>
             </div>
             <span className={`team-glyph ${selectedShip.team}`} aria-hidden="true" />
           </section>

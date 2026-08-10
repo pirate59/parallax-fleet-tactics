@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { STORY_SHIP_ARCHETYPES, STORY_STARTER_ARCHETYPE } from "../app/shipCatalog.ts";
+import {
+  STORY_SHIP_ARCHETYPES,
+  STORY_STARTER_ARCHETYPE,
+  durabilityForArchetype,
+  modelScaleForArchetype,
+} from "../app/shipCatalog.ts";
 
 test("the Hammerhead starts with a reinforced front and vulnerable rear shield", () => {
   assert.equal(STORY_STARTER_ARCHETYPE.id, "hammerhead");
   assert.equal(STORY_STARTER_ARCHETYPE.name, "The Hammerhead");
   assert.equal(STORY_STARTER_ARCHETYPE.callsign, "HM-01");
-  assert.deepEqual(STORY_STARTER_ARCHETYPE.shieldCapacity, {
+  assert.deepEqual(durabilityForArchetype(STORY_STARTER_ARCHETYPE).shields, {
     fore: 184,
     aft: 28,
     port: 78,
@@ -19,14 +24,15 @@ test("the Hammerhead starts with a reinforced front and vulnerable rear shield",
 test("story archetypes support distinct shielding, weapons, movement, and rendered sizes", () => {
   const archetypes = Object.values(STORY_SHIP_ARCHETYPES);
   assert.equal(new Set(archetypes.map((ship) => ship.id)).size, archetypes.length);
+  assert.deepEqual(new Set(archetypes.map((ship) => ship.sizeClass)), new Set(["shuttle", "cruiser", "large"]));
   assert.ok(new Set(archetypes.map((ship) => ship.basicWeapon)).size > 1);
-  assert.ok(new Set(archetypes.map((ship) => ship.modelScale)).size > 1);
+  assert.ok(new Set(archetypes.map(modelScaleForArchetype)).size > 1);
   assert.ok(new Set(archetypes.map((ship) => ship.maxMove)).size > 1);
-  assert.ok(new Set(archetypes.map((ship) => Object.values(ship.shieldCapacity).reduce((sum, value) => sum + value, 0))).size > 1);
+  assert.ok(new Set(archetypes.map((ship) => Object.values(durabilityForArchetype(ship).shields).reduce((sum, value) => sum + value, 0))).size > 1);
 
   archetypes.forEach((ship) => {
-    assert.ok(ship.modelScale > 0);
-    assert.ok(ship.hull > 0);
+    assert.ok(modelScaleForArchetype(ship) > 0);
+    assert.ok(durabilityForArchetype(ship).hull > 0);
     assert.ok(ship.weaponDamage > 0);
     assert.ok(ship.weaponRange > 0);
   });

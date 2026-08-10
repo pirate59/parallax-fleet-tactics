@@ -1,4 +1,9 @@
 import type { Shields } from "./combatEngine.ts";
+import {
+  resolveSizedDurability,
+  resolveSizedModelScale,
+  type ShipSizeClass,
+} from "./shipSize.ts";
 
 export const BASIC_WEAPON_SYSTEMS = {
   cannon: {
@@ -29,9 +34,11 @@ export type ShipArchetype = {
   callsign: string;
   className: string;
   color: string;
-  modelScale: number;
-  shieldCapacity: Shields;
-  hull: number;
+  sizeClass: ShipSizeClass;
+  durabilityMultiplier?: number;
+  baseModelScale: number;
+  baseShieldCapacity: Shields;
+  baseHull: number;
   maxMove: number;
   maxTurn: number;
   maxPitch: number;
@@ -54,9 +61,10 @@ export const STORY_SHIP_ARCHETYPES = {
     callsign: "HM-01",
     className: "Commandeered Halcyon siege frigate",
     color: "#68d8ff",
-    modelScale: 1.12,
-    shieldCapacity: { fore: 184, aft: 28, port: 78, starboard: 78, dorsal: 64, ventral: 58 },
-    hull: 120,
+    sizeClass: "cruiser",
+    baseModelScale: 1.12,
+    baseShieldCapacity: { fore: 184, aft: 28, port: 78, starboard: 78, dorsal: 64, ventral: 58 },
+    baseHull: 120,
     maxMove: 5,
     maxTurn: 55,
     maxPitch: 40,
@@ -71,9 +79,10 @@ export const STORY_SHIP_ARCHETYPES = {
     callsign: "SF-03",
     className: "Light pursuit cutter",
     color: "#9af2ff",
-    modelScale: 0.78,
-    shieldCapacity: { fore: 54, aft: 42, port: 40, starboard: 40, dorsal: 34, ventral: 32 },
-    hull: 72,
+    sizeClass: "shuttle",
+    baseModelScale: 1.08,
+    baseShieldCapacity: { fore: 54, aft: 42, port: 40, starboard: 40, dorsal: 34, ventral: 32 },
+    baseHull: 72,
     maxMove: 9,
     maxTurn: 100,
     maxPitch: 72,
@@ -88,9 +97,10 @@ export const STORY_SHIP_ARCHETYPES = {
     callsign: "BS-08",
     className: "Heavy breach cruiser",
     color: "#86c9ff",
-    modelScale: 1.38,
-    shieldCapacity: { fore: 128, aft: 92, port: 112, starboard: 112, dorsal: 96, ventral: 88 },
-    hull: 168,
+    sizeClass: "large",
+    baseModelScale: 0.95,
+    baseShieldCapacity: { fore: 128, aft: 92, port: 112, starboard: 112, dorsal: 96, ventral: 88 },
+    baseHull: 168,
     maxMove: 3.75,
     maxTurn: 38,
     maxPitch: 28,
@@ -102,3 +112,16 @@ export const STORY_SHIP_ARCHETYPES = {
 } satisfies Record<string, ShipArchetype>;
 
 export const STORY_STARTER_ARCHETYPE = STORY_SHIP_ARCHETYPES.hammerhead;
+
+export function durabilityForArchetype(archetype: ShipArchetype) {
+  return resolveSizedDurability(
+    archetype.baseHull,
+    archetype.baseShieldCapacity,
+    archetype.sizeClass,
+    archetype.durabilityMultiplier,
+  );
+}
+
+export function modelScaleForArchetype(archetype: ShipArchetype) {
+  return resolveSizedModelScale(archetype.baseModelScale, archetype.sizeClass);
+}
