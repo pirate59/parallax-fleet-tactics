@@ -1328,6 +1328,60 @@ type SceneContext = {
   frame: number;
 };
 
+type CombatVisibilitySnapshot = {
+  shipGroups: Map<string, boolean>;
+  shipHuds: Map<string, boolean>;
+  wrecks: Map<string, boolean>;
+  wreckGroup: boolean;
+};
+
+function captureCombatVisibility(context: SceneContext): CombatVisibilitySnapshot {
+  return {
+    shipGroups: new Map([...context.shipGroups].map(([id, group]) => [id, group.visible])),
+    shipHuds: new Map([...context.shipHuds].map(([id, hud]) => [id, hud.sprite.visible])),
+    wrecks: new Map([...context.wrecks].map(([id, wreck]) => [id, wreck.visible])),
+    wreckGroup: context.wreckGroup.visible,
+  };
+}
+
+function isolateCombatParticipants(
+  context: SceneContext,
+  snapshot: CombatVisibilitySnapshot,
+  shooterId: string,
+  targetId: string,
+) {
+  const participants = new Set([shooterId, targetId]);
+  context.shipGroups.forEach((group, id) => {
+    group.visible = participants.has(id) && (snapshot.shipGroups.get(id) ?? group.visible);
+  });
+  context.shipHuds.forEach((hud, id) => {
+    hud.sprite.visible = participants.has(id) && (snapshot.shipHuds.get(id) ?? hud.sprite.visible);
+  });
+  context.wreckGroup.visible = false;
+}
+
+function restoreCombatVisibility(
+  context: SceneContext,
+  snapshot: CombatVisibilitySnapshot,
+  destroyedIds: readonly string[],
+) {
+  const destroyed = new Set(destroyedIds);
+  context.shipGroups.forEach((group, id) => {
+    group.visible = (snapshot.shipGroups.get(id) ?? true)
+      && !destroyed.has(id)
+      && !context.wrecks.has(id);
+  });
+  context.shipHuds.forEach((hud, id) => {
+    hud.sprite.visible = (snapshot.shipHuds.get(id) ?? hud.enabled)
+      && !destroyed.has(id)
+      && Boolean(context.shipGroups.get(id)?.visible);
+  });
+  context.wreckGroup.visible = snapshot.wreckGroup;
+  context.wrecks.forEach((wreck, id) => {
+    wreck.visible = snapshot.wrecks.get(id) ?? true;
+  });
+}
+
 function TacticalScene({
   ships,
   drafts,
@@ -1787,6 +1841,7 @@ function TacticalScene({
     const context = contextRef.current;
     if (!context || !resolution) return;
     let cancelled = false;
+    let combatVisibility: CombatVisibilitySnapshot | null = null;
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const spectatorOverview = presentation === "spectator"
       ? spectatorOverviewFor(resolution.endShips, context.camera.aspect, spectatorViewRef.current + 1)
@@ -1886,9 +1941,11 @@ function TacticalScene({
 
       context.camera.fov = 42;
       context.camera.updateProjectionMatrix();
+      combatVisibility = captureCombatVisibility(context);
 
       for (const { shot, shooter, target } of shots) {
         if (cancelled) return;
+        isolateCombatParticipants(context, combatVisibility, shooter.id, target.id);
         const muzzle = weaponOriginFor(shooter, shot.weapon);
         const targetPoint = new THREE.Vector3(...target.position);
         const direction = targetPoint.clone().sub(muzzle).normalize();
@@ -1944,6 +2001,8 @@ function TacticalScene({
 
       if (cancelled) return;
       focusRef.current(null);
+      restoreCombatVisibility(context, combatVisibility, resolution.destroyedIds);
+      combatVisibility = null;
       await tweenCamera(
         tacticalPosition,
         tacticalTarget,
@@ -1984,6 +2043,7 @@ function TacticalScene({
       timers.forEach((timer) => clearTimeout(timer));
       focusRef.current(null);
       clearGroup(context.laserGroup);
+      if (combatVisibility) restoreCombatVisibility(context, combatVisibility, resolution.destroyedIds);
       context.controls.enabled = true;
       context.camera.position.copy(tacticalPosition);
       context.controls.target.copy(tacticalTarget);
