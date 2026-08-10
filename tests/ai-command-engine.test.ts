@@ -35,7 +35,7 @@ const makeShip = (id: string, overrides: Partial<AiCommandShip> = {}): AiCommand
   maxRoll: 90,
   weaponRange: 20,
   weaponDamage: 10,
-  modelId: "halcyon-frigate",
+  modelId: "hammerhead",
   modelScale: 1,
   weaponMounts: [createPrimaryWeaponMount("cannon")],
   ...overrides,

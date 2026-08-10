@@ -51,7 +51,7 @@ const makeShip = (id: string, overrides: Partial<CombatShip> = {}): CombatShip =
   maxHull: 100,
   weaponRange: 20,
   weaponDamage: 10,
-  modelId: "halcyon-frigate",
+  modelId: "hammerhead",
   modelScale: 1,
   weaponMounts: weaponMountsFor(),
   ...overrides,
@@ -127,9 +127,9 @@ test("weapon origins follow per-hull visual scale", () => {
   const ship = makeShip("scaled", { modelScale: 2, weaponMounts: weaponMountsFor("cannon", ["turret"]) });
   const [main, turret] = weaponProfilesFor(ship);
 
-  assert.deepEqual(weaponLocalOriginFor(ship, main).toArray(), [0, 0, -2.96]);
-  assert.deepEqual(weaponLocalOriginFor(ship, turret).toArray(), [0, 1.24, 0]);
-  assert.deepEqual(weaponOriginFor(ship, main).toArray(), [0, 0, -2.96]);
+  assert.deepEqual(weaponLocalOriginFor(ship, main).toArray(), [0, 0.04, -3.44]);
+  assert.deepEqual(weaponLocalOriginFor(ship, turret).toArray(), [0, 1.24, -0.1]);
+  assert.deepEqual(weaponOriginFor(ship, main).toArray(), [0, 0.04, -3.44]);
 });
 
 test("focus fire queues two complete salvos with unique deterministic events", () => {

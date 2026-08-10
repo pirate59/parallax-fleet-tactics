@@ -4,6 +4,7 @@ import { createFishtankFleet, fishtankActivationOrder } from "../app/fishtankMod
 import { createPrimaryWeaponMount } from "../app/shipCatalog.ts";
 
 const template = (index: number) => ({
+  archetypeId: `hull-${index}`,
   id: `template-${index}`,
   name: `Template ${index}`,
   callsign: `T-${index}`,
@@ -37,4 +38,14 @@ test("Fishtank creates two complete five-ship AI fleets at full strength", () =>
 test("Fishtank alternates which AI fleet receives first activation", () => {
   assert.deepEqual(fishtankActivationOrder(1).slice(0, 2), ["ally", "enemy"]);
   assert.deepEqual(fishtankActivationOrder(2).slice(0, 2), ["enemy", "ally"]);
+});
+
+test("successive Fishtank matches rotate through all six hull templates", () => {
+  const templates = Array.from({ length: 6 }, (_, index) => template(index));
+  const hulls = new Set([
+    ...createFishtankFleet(templates, 1),
+    ...createFishtankFleet(templates, 2),
+  ].map((ship) => ship.archetypeId));
+
+  assert.equal(hulls.size, 6);
 });

@@ -38,7 +38,7 @@ export type FishtankShip<T extends FishtankTemplate> = Omit<
   weaponMounts: WeaponMount[];
 };
 
-const TEMPLATE_ORDER = [0, 1, 5, 4, 3] as const;
+const TEMPLATE_ORDER = [0, 1, 2, 3, 4, 5] as const;
 const DOCTRINES: AiDoctrine[] = ["aggressive", "standard", "defensive", "standard", "aggressive"];
 
 const LEFT_SLOTS: Vec3[] = [
@@ -62,9 +62,8 @@ const FLEET_COLORS = {
 } as const;
 
 /**
- * Builds mirrored five-ship AI fleets from the existing prototype hulls. The
- * match number rotates hulls and doctrines so unattended simulations do not
- * repeat the exact same opening on every restart.
+ * Builds mirrored five-ship AI fleets from the six canonical hulls. Each match
+ * rotates the omitted hull and doctrines so unattended simulations vary.
  */
 export function createFishtankFleet<T extends FishtankTemplate>(templates: readonly T[], matchNumber: number): FishtankShip<T>[] {
   if (templates.length < 6) throw new Error("Fishtank mode requires six prototype ship templates.");
