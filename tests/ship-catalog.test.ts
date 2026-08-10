@@ -9,7 +9,7 @@ import {
   modelScaleForArchetype,
 } from "../app/shipCatalog.ts";
 import { createShipHullGeometry } from "../app/shipGeometry.ts";
-import { SHIP_MODEL_PROFILES, shipModelProfileFor } from "../app/shipModels.ts";
+import { SHIP_MODEL_PROFILES, SHIP_MODEL_VARIANTS, shipModelProfileFor } from "../app/shipModels.ts";
 
 test("the Hammerhead starts with a reinforced front and vulnerable rear shield", () => {
   assert.equal(STORY_STARTER_ARCHETYPE.id, "hammerhead");
@@ -34,6 +34,7 @@ test("the canonical roster contains the six designed hull roles", () => {
   assert.equal(SHIP_ARCHETYPES.archer.weaponMounts[0].weaponKind, "railgun");
   assert.equal(SHIP_ARCHETYPES.hulk.weaponMounts[0].weaponKind, "flak");
   assert.equal(SHIP_ARCHETYPES.fighter.sizeClass, "shuttle");
+  Object.values(SHIP_ARCHETYPES).forEach((ship) => assert.deepEqual(ship.modelVariants, SHIP_MODEL_VARIANTS));
   assert.equal(durabilityForArchetype(SHIP_ARCHETYPES.fighter).hull, 34);
   assert.equal(SHIP_ARCHETYPES.fighter.maxMove, 11);
   assert.deepEqual(SHIP_ARCHETYPES.behemoth.weaponMounts.map((mount) => mount.weaponKind), ["railgun", "flak"]);
@@ -104,4 +105,29 @@ test("all six hulls build recognisably different procedural geometry", () => {
   });
 
   assert.equal(new Set(signatures).size, 6);
+});
+
+test("every hull has a distinct higher-detail model alongside its classic model", () => {
+  const material = new THREE.MeshBasicMaterial();
+  const detailedSignatures = Object.keys(SHIP_MODEL_PROFILES).map((modelId) => {
+    const typedModelId = modelId as keyof typeof SHIP_MODEL_PROFILES;
+    const classic = createShipHullGeometry(typedModelId, {
+      body: material,
+      dark: material,
+      accent: material,
+      glow: material,
+    }, "classic");
+    const detailed = createShipHullGeometry(typedModelId, {
+      body: material,
+      dark: material,
+      accent: material,
+      glow: material,
+    }, "detailed");
+    const size = new THREE.Box3().setFromObject(detailed).getSize(new THREE.Vector3());
+
+    assert.ok(detailed.children.length > classic.children.length, `${modelId} detailed geometry should add surface structure`);
+    return `${detailed.children.length}:${size.x.toFixed(2)}:${size.y.toFixed(2)}:${size.z.toFixed(2)}`;
+  });
+
+  assert.equal(new Set(detailedSignatures).size, 6);
 });

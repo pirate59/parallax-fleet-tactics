@@ -38,6 +38,9 @@ test("server-renders the Parallax main menu", async () => {
   assert.match(html, /Automated simulation ready/i);
   assert.match(html, /Sound effects/);
   assert.match(html, /Music/);
+  assert.match(html, /SHIP MODELS/);
+  assert.match(html, /Classic silhouettes/);
+  assert.match(html, /Detailed hulls/);
   assert.match(html, /INITIALIZE\s*(?:<!-- -->)?SKIRMISH MODE/);
   assert.doesNotMatch(html, /All four entries currently launch/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);

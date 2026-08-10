@@ -237,17 +237,17 @@ test("extra move forces weapons safe even when a stale order says fire", () => {
   assert.equal(findShip(result.ships, target.id).hull, 100);
 });
 
-test("both focus-fire salvos remain committed after the first destroys the target", () => {
+test("a lethal first Focus Fire salvo cancels the second salvo", () => {
   const attacker = makeShip("focus", { weaponDamage: 120 });
   const target = makeShip("target", { team: "enemy", position: [0, 0, -8] });
   const result = resolveCombatTurn([attacker, target], {
     [attacker.id]: { targetId: target.id, fire: true, mode: "focus-fire" },
   });
 
-  assert.equal(result.shots.length, 2);
+  assert.equal(result.shots.length, 1);
   assert.equal(result.shots.filter((shot) => shot.destroyed).length, 1);
   assert.equal(result.shots[0].destroyed, true);
-  assert.equal(result.shots[1].destroyed, false);
+  assert.equal(findShip(result.ships, target.id).hull, 0);
 });
 
 test("zero-distance targets are safe and count as inside the firing arc", () => {
@@ -448,7 +448,7 @@ test("a living ship wastes its activation when an earlier ship destroys its assi
   assert.ok(result.outcomes.some((outcome) => outcome.includes("assigned target already destroyed")));
 });
 
-test("multiple mounts produce one event each and exactly one fatal event per target", () => {
+test("a lethal mounted-weapon hit cancels every later shot at that target", () => {
   const attacker = makeShip("attacker", {
     weaponDamage: 10,
     weaponMounts: weaponMountsFor("cannon", ["railgun", "turret", "flak"]),
@@ -461,11 +461,11 @@ test("multiple mounts produce one event each and exactly one fatal event per tar
   });
   const result = resolveCombatTurn([attacker, target], ordersFor([[attacker.id, target.id]]));
 
-  assert.equal(result.shots.length, 4);
+  assert.equal(result.shots.length, 1);
   assert.ok(result.shots.every((shot) => shot.valid));
-  assert.equal(new Set(result.shots.map((shot) => shot.id)).size, 4);
-  assert.deepEqual(result.shots.map((shot) => shot.mountIndex), [0, 1, 2, 3]);
-  assert.deepEqual(result.shots.map((shot) => shot.sequence), [0, 1, 2, 3]);
+  assert.equal(new Set(result.shots.map((shot) => shot.id)).size, 1);
+  assert.deepEqual(result.shots.map((shot) => shot.mountIndex), [0]);
+  assert.deepEqual(result.shots.map((shot) => shot.sequence), [0]);
   assert.equal(result.shots.filter((shot) => shot.destroyed).length, 1);
   assert.deepEqual(result.destroyedIds, [target.id]);
 });

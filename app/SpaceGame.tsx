@@ -56,7 +56,12 @@ import {
   type ShipTurnEndAbility,
   type WeaponMount,
 } from "./shipCatalog";
-import { shipModelProfileFor, type ShipModelId } from "./shipModels";
+import {
+  SHIP_MODEL_VARIANTS,
+  shipModelProfileFor,
+  type ShipModelId,
+  type ShipModelVariant,
+} from "./shipModels";
 import { createShipHullGeometry } from "./shipGeometry";
 import { applyCarrierFighterCombatProfile, applyCarrierLaunches, isDisposableCarrierFighter } from "./carrierEngine";
 import {
@@ -135,6 +140,7 @@ type Ship = {
   weaponDamage: number;
   archetypeId: string;
   modelId: ShipModelId;
+  modelVariants: readonly ShipModelVariant[];
   sizeClass: ShipSizeClass;
   durabilityMultiplier: number;
   modelScale: number;
@@ -267,6 +273,23 @@ const DEFAULT_OVERLAY_LABELS: OverlayLabelSettings = {
   showHealth: true,
 };
 
+const MODEL_VARIANT_OPTIONS: Record<ShipModelVariant, {
+  label: string;
+  shortLabel: string;
+  description: string;
+}> = {
+  classic: {
+    label: "Classic silhouettes",
+    shortLabel: "Classic",
+    description: "Original low-detail tactical hulls with the clearest distant silhouettes.",
+  },
+  detailed: {
+    label: "Detailed hulls",
+    shortLabel: "Detailed",
+    description: "Layered armour, weapons, bays, sensors, engine structures, and illuminated surface details.",
+  },
+};
+
 const TEAM_LABELS: Record<Team, string> = {
   player: "Your fleet",
   ally: "Allied NPC",
@@ -318,6 +341,7 @@ function createShipFromArchetype(archetype: ShipArchetype, deployment: ShipDeplo
     weaponDamage: archetype.weaponDamage,
     archetypeId: archetype.id,
     modelId: archetype.modelId,
+    modelVariants: [...archetype.modelVariants],
     sizeClass: archetype.sizeClass,
     durabilityMultiplier,
     shields: { ...durability.shields },
@@ -537,6 +561,7 @@ function copyShips(ships: Ship[]) {
     shields: { ...ship.shields },
     maxShields: { ...ship.maxShields },
     weaponMounts: ship.weaponMounts.map((mount) => ({ ...mount })),
+    modelVariants: [...ship.modelVariants],
     passiveTraits: ship.passiveTraits?.map((trait) => ({ ...trait })),
     aiTactics: { ...ship.aiTactics },
     turnEndAbility: ship.turnEndAbility ? {
@@ -578,6 +603,7 @@ function createStoryStarter() {
     color: fleetColorFor("player", archetype.id),
     archetypeId: archetype.id,
     modelId: archetype.modelId,
+    modelVariants: [...archetype.modelVariants],
     sizeClass: archetype.sizeClass,
     durabilityMultiplier: archetype.durabilityMultiplier ?? 1,
     modelScale: modelScaleForArchetype(archetype),
@@ -865,11 +891,12 @@ function shieldColor(value: number, maximum: number) {
   return new THREE.Color("#67ddff");
 }
 
-function createShipGroup(ship: Ship) {
+function createShipGroup(ship: Ship, modelVariant: ShipModelVariant) {
   const root = new THREE.Group();
   const modelProfile = shipModelProfileFor(ship.modelId);
   root.userData.shipId = ship.id;
   root.userData.modelId = ship.modelId;
+  root.userData.modelVariant = modelVariant;
   root.userData.hudOffsetMultiplier = modelProfile.hudOffsetMultiplier;
   root.scale.setScalar(ship.modelScale);
 
@@ -896,7 +923,7 @@ function createShipGroup(ship: Ship) {
     dark: darkMaterial,
     accent: accentMaterial,
     glow: glowMaterial,
-  }));
+  }, modelVariant));
 
   const primaryMount = ship.weaponMounts.find((mount) => !isEliteWeaponKind(mount.weaponKind));
   if (primaryMount) {
@@ -1428,6 +1455,7 @@ function TacticalScene({
   onCombatFocus,
   onResolutionComplete,
   overlayLabels,
+  modelVariant,
   presentation = "command",
 }: {
   ships: Ship[];
@@ -1441,6 +1469,7 @@ function TacticalScene({
   onCombatFocus: (focus: CombatFocus | null) => void;
   onResolutionComplete: (resolution: Resolution) => void;
   overlayLabels: OverlayLabelSettings;
+  modelVariant: ShipModelVariant;
   presentation?: "command" | "spectator";
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -1722,8 +1751,14 @@ function TacticalScene({
         context.wrecks.delete(ship.id);
       }
       let group = context.shipGroups.get(ship.id);
+      if (group && group.userData.modelVariant !== modelVariant) {
+        context.scene.remove(group);
+        disposeObject(group);
+        context.shipGroups.delete(ship.id);
+        group = undefined;
+      }
       if (!group) {
-        group = createShipGroup(ship);
+        group = createShipGroup(ship, modelVariant);
         context.shipGroups.set(ship.id, group);
         context.scene.add(group);
       }
@@ -1797,7 +1832,7 @@ function TacticalScene({
           dark: ghostMaterial,
           accent: ghostMaterial,
           glow: ghostMaterial,
-        });
+        }, modelVariant);
         const ghostRoot = new THREE.Group();
         ghostRoot.position.copy(endPoint);
         ghostRoot.quaternion.copy(quaternionFor(end.rotation));
@@ -1830,7 +1865,7 @@ function TacticalScene({
           }
         }
       });
-  }, [ships, drafts, staged, selectedShipId, selectedTargetId, resolution, overlayLabels]);
+  }, [ships, drafts, staged, selectedShipId, selectedTargetId, resolution, overlayLabels, modelVariant]);
 
   useEffect(() => {
     const context = contextRef.current;
@@ -1976,9 +2011,11 @@ function TacticalScene({
       context.camera.fov = 42;
       context.camera.updateProjectionMatrix();
       combatVisibility = captureCombatVisibility(context);
+      const visuallyDestroyedIds = new Set<string>();
 
       for (const { shot, shooter, target } of shots) {
         if (cancelled) return;
+        if (visuallyDestroyedIds.has(target.id)) continue;
         isolateCombatParticipants(context, combatVisibility, shooter.id, target.id);
         const muzzle = weaponOriginFor(shooter, shot.weapon);
         const targetPoint = new THREE.Vector3(...target.position);
@@ -2019,7 +2056,10 @@ function TacticalScene({
             material.emissive.copy(shieldColor(shot.shieldAfter, target.maxShields[shot.face]).multiplyScalar(0.75));
           }
         }
-        if (shot.destroyed) destroyShipVisual(context, target);
+        if (shot.destroyed) {
+          visuallyDestroyedIds.add(target.id);
+          destroyShipVisual(context, target);
+        }
         await delay(
           presentation === "spectator"
             ? shot.destroyed
@@ -2226,15 +2266,19 @@ function AudioChannelControl({
 function MainMenu({
   selectedMode,
   audioSettings,
+  modelVariant,
   onSelectMode,
   onLaunch,
   onAudioChange,
+  onModelVariantChange,
 }: {
   selectedMode: GameMode;
   audioSettings: AudioSettings;
+  modelVariant: ShipModelVariant;
   onSelectMode: (mode: GameMode) => void;
   onLaunch: (mode: GameMode) => void;
   onAudioChange: (patch: Partial<AudioSettings>) => void;
+  onModelVariantChange: (variant: ShipModelVariant) => void;
 }) {
   const selected = MODE_OPTIONS.find((mode) => mode.id === selectedMode) ?? MODE_OPTIONS[1];
 
@@ -2325,6 +2369,32 @@ function MainMenu({
             onVolumeChange={(musicVolume) => onAudioChange({ musicVolume })}
           />
           <div className="audio-placeholder"><i /><span>AUDIO BUS READY</span><small>Sound assets connect in a future pass.</small></div>
+          <section className="model-variant-panel" aria-labelledby="model-variant-title">
+            <div className="menu-section-heading">
+              <div><span>03</span><strong id="model-variant-title">SHIP MODELS</strong></div>
+              <small>DEVICE PREFERENCE</small>
+            </div>
+            <fieldset className="model-variant-options">
+              <legend>Choose ship model detail</legend>
+              {SHIP_MODEL_VARIANTS.map((variant) => {
+                const option = MODEL_VARIANT_OPTIONS[variant];
+                return (
+                  <label key={variant} className={modelVariant === variant ? "selected" : ""}>
+                    <input
+                      type="radio"
+                      name="ship-model-variant"
+                      value={variant}
+                      checked={modelVariant === variant}
+                      aria-label={option.label}
+                      onChange={() => onModelVariantChange(variant)}
+                    />
+                    <span><strong>{option.shortLabel}</strong><small>{option.description}</small></span>
+                    <i aria-hidden="true" />
+                  </label>
+                );
+              })}
+            </fieldset>
+          </section>
         </aside>
       </div>
 
@@ -2538,8 +2608,10 @@ export function SpaceGame() {
   const [activeMode, setActiveMode] = useState<GameMode>("skirmish");
   const [storyRun, setStoryRun] = useState<StoryRun | null>(null);
   const [audioSettings, setAudioSettings] = useState<AudioSettings>(DEFAULT_AUDIO_SETTINGS);
+  const [modelVariant, setModelVariant] = useState<ShipModelVariant>("classic");
   const [overlayLabels, setOverlayLabels] = useState<OverlayLabelSettings>(DEFAULT_OVERLAY_LABELS);
   const [audioSettingsHydrated, setAudioSettingsHydrated] = useState(false);
+  const [modelVariantHydrated, setModelVariantHydrated] = useState(false);
   const [ships, setShips] = useState<Ship[]>(() => copyShips(INITIAL_SHIPS));
   const [selectedShipId, setSelectedShipId] = useState("aegis");
   const [drafts, setDrafts] = useState<Record<string, Order>>(() => buildDrafts(INITIAL_SHIPS));
@@ -2588,6 +2660,32 @@ export function SpaceGame() {
       // Browsers may disable local storage; settings still work for this session.
     }
   }, [audioSettings, audioSettingsHydrated]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let savedVariant: ShipModelVariant = "classic";
+    try {
+      const saved = window.localStorage.getItem("parallax.models.v1");
+      if (saved === "classic" || saved === "detailed") savedVariant = saved;
+    } catch {
+      // Device-local settings are optional; the classic hulls remain available.
+    }
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setModelVariant(savedVariant);
+      setModelVariantHydrated(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!modelVariantHydrated) return;
+    try {
+      window.localStorage.setItem("parallax.models.v1", modelVariant);
+    } catch {
+      // Browsers may disable local storage; the choice still works for this session.
+    }
+  }, [modelVariant, modelVariantHydrated]);
 
   useEffect(() => {
     storyActionLockRef.current = false;
@@ -3035,9 +3133,11 @@ export function SpaceGame() {
       <MainMenu
         selectedMode={selectedMode}
         audioSettings={audioSettings}
+        modelVariant={modelVariant}
         onSelectMode={setSelectedMode}
         onLaunch={launchMode}
         onAudioChange={updateAudioSettings}
+        onModelVariantChange={setModelVariant}
       />
     );
   }
@@ -3150,6 +3250,7 @@ export function SpaceGame() {
             onCombatFocus={setCombatFocus}
             onResolutionComplete={resolveCombat}
             overlayLabels={overlayLabels}
+            modelVariant={modelVariant}
             presentation={activeMode === "fishtank" ? "spectator" : "command"}
           />
 

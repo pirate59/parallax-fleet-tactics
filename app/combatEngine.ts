@@ -405,9 +405,13 @@ export function resolveCombatTurn<T extends CombatShip>(
     if (activation.orderedShots.length > 0 && (!liveTarget || liveTarget.hull <= 0)) {
       suppressedActivations.push(`${activation.shooter.name} held fire — assigned target already destroyed.`);
     } else {
-      // Once an ordered activation begins, every installed mount and Focus Fire
-      // salvo is committed even if an earlier shot destroys the assigned target.
-      activation.orderedShots.forEach(commitShot);
+      // A destroyed target remains destroyed. Stop the rest of this activation's
+      // mounts and Focus Fire salvos as soon as a lethal shot resolves.
+      for (const pending of activation.orderedShots) {
+        const currentTarget = resultById.get(pending.target.id);
+        if (!currentTarget || currentTarget.hull <= 0) break;
+        commitShot(pending);
+      }
     }
 
     // Autonomous traits acquire after ordered fire, ignore ship orientation and

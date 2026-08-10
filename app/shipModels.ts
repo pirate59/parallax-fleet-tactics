@@ -1,5 +1,8 @@
 import type { ShieldFace, Vec3 } from "./combatEngine.ts";
 
+export const SHIP_MODEL_VARIANTS = ["classic", "detailed"] as const;
+export type ShipModelVariant = typeof SHIP_MODEL_VARIANTS[number];
+
 export type ModelAnchor = {
   position: Vec3;
   rotation?: Vec3;

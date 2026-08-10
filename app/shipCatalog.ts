@@ -4,7 +4,7 @@ import {
   resolveSizedModelScale,
   type ShipSizeClass,
 } from "./shipSize.ts";
-import type { ShipModelId } from "./shipModels.ts";
+import { SHIP_MODEL_VARIANTS, type ShipModelId, type ShipModelVariant } from "./shipModels.ts";
 import type { AiTacticalProfile } from "./aiTactics.ts";
 
 export const BASIC_WEAPON_SYSTEMS = {
@@ -97,6 +97,7 @@ export type ShipArchetype = {
   className: string;
   color: string;
   modelId: ShipModelId;
+  modelVariants: readonly ShipModelVariant[];
   sizeClass: ShipSizeClass;
   durabilityMultiplier?: number;
   baseModelScale: number;
@@ -125,6 +126,7 @@ export const SHIP_ARCHETYPES = {
     className: "Halcyon siege cruiser",
     color: "#68d8ff",
     modelId: "hammerhead",
+    modelVariants: SHIP_MODEL_VARIANTS,
     sizeClass: "cruiser",
     baseModelScale: 1.08,
     baseShieldCapacity: { fore: 184, aft: 28, port: 78, starboard: 78, dorsal: 64, ventral: 58 },
@@ -145,6 +147,7 @@ export const SHIP_ARCHETYPES = {
     className: "Long-range strike cruiser",
     color: "#9be8ff",
     modelId: "archer",
+    modelVariants: SHIP_MODEL_VARIANTS,
     sizeClass: "cruiser",
     baseModelScale: 1,
     baseShieldCapacity: { fore: 68, aft: 38, port: 48, starboard: 48, dorsal: 42, ventral: 38 },
@@ -165,6 +168,7 @@ export const SHIP_ARCHETYPES = {
     className: "Shielded brawler cruiser",
     color: "#75e0c2",
     modelId: "hulk",
+    modelVariants: SHIP_MODEL_VARIANTS,
     sizeClass: "cruiser",
     baseModelScale: 1.08,
     baseShieldCapacity: { fore: 126, aft: 108, port: 118, starboard: 118, dorsal: 112, ventral: 104 },
@@ -185,6 +189,7 @@ export const SHIP_ARCHETYPES = {
     className: "Long-range interceptor shuttle",
     color: "#b4f4ff",
     modelId: "fighter",
+    modelVariants: SHIP_MODEL_VARIANTS,
     sizeClass: "shuttle",
     baseModelScale: 1.08,
     baseShieldCapacity: { fore: 42, aft: 28, port: 32, starboard: 32, dorsal: 26, ventral: 24 },
@@ -205,6 +210,7 @@ export const SHIP_ARCHETYPES = {
     className: "Dreadnought weapons platform",
     color: "#88a9ff",
     modelId: "behemoth",
+    modelVariants: SHIP_MODEL_VARIANTS,
     sizeClass: "large",
     durabilityMultiplier: 1.5,
     baseModelScale: 1.05,
@@ -235,6 +241,7 @@ export const SHIP_ARCHETYPES = {
     className: "Fleet carrier",
     color: "#77c9ff",
     modelId: "carrier",
+    modelVariants: SHIP_MODEL_VARIANTS,
     sizeClass: "large",
     durabilityMultiplier: 0.72,
     baseModelScale: 1,
