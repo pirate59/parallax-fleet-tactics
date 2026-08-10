@@ -288,6 +288,11 @@ const MODEL_VARIANT_OPTIONS: Record<ShipModelVariant, {
     shortLabel: "Detailed",
     description: "Layered armour, weapons, bays, sensors, engine structures, and illuminated surface details.",
   },
+  super: {
+    label: "Super graphics hulls",
+    shortLabel: "Super",
+    description: "Sleek high-resolution forms with textured alloy plating, internal lights, glass, and enhanced engines.",
+  },
 };
 
 const TEAM_LABELS: Record<Team, string> = {
@@ -891,6 +896,48 @@ function shieldColor(value: number, maximum: number) {
   return new THREE.Color("#67ddff");
 }
 
+function createHullPanelTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  context.fillStyle = "#9a9a9a";
+  context.fillRect(0, 0, 256, 256);
+  for (let row = 0; row < 8; row += 1) {
+    for (let column = 0; column < 6; column += 1) {
+      const offset = row % 2 === 0 ? 0 : 18;
+      const x = column * 48 - offset;
+      const y = row * 34;
+      const shade = 125 + ((row * 31 + column * 19) % 44);
+      context.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
+      context.fillRect(x + 2, y + 2, 44, 30);
+      context.strokeStyle = "rgba(24, 24, 24, 0.72)";
+      context.lineWidth = 2;
+      context.strokeRect(x + 1, y + 1, 46, 32);
+      context.fillStyle = "rgba(220, 220, 220, 0.6)";
+      context.fillRect(x + 5, y + 5, 2, 2);
+      context.fillRect(x + 39, y + 25, 2, 2);
+    }
+  }
+  context.strokeStyle = "rgba(235, 235, 235, 0.2)";
+  context.lineWidth = 1;
+  for (let y = 16; y < 256; y += 34) {
+    context.beginPath();
+    context.moveTo(0, y);
+    context.lineTo(256, y);
+    context.stroke();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(3.5, 7);
+  texture.anisotropy = 4;
+  return texture;
+}
+
 function createShipGroup(ship: Ship, modelVariant: ShipModelVariant) {
   const root = new THREE.Group();
   const modelProfile = shipModelProfileFor(ship.modelId);
@@ -900,24 +947,69 @@ function createShipGroup(ship: Ship, modelVariant: ShipModelVariant) {
   root.userData.hudOffsetMultiplier = modelProfile.hudOffsetMultiplier;
   root.scale.setScalar(ship.modelScale);
 
-  const bodyMaterial = new THREE.MeshStandardMaterial({
-    color: ship.color,
-    roughness: 0.42,
-    metalness: 0.62,
-    emissive: new THREE.Color(ship.color).multiplyScalar(0.08),
+  const isSuperModel = modelVariant === "super";
+  const panelTexture = isSuperModel ? createHullPanelTexture() : null;
+  const bodyMaterial = isSuperModel
+    ? new THREE.MeshPhysicalMaterial({
+      color: ship.color,
+      roughness: 0.3,
+      metalness: 0.82,
+      clearcoat: 0.46,
+      clearcoatRoughness: 0.2,
+      sheen: 0.16,
+      sheenColor: new THREE.Color(ship.color).lerp(new THREE.Color("#ffffff"), 0.25),
+      bumpMap: panelTexture,
+      bumpScale: 0.035,
+      roughnessMap: panelTexture,
+      emissive: new THREE.Color(ship.color).multiplyScalar(0.1),
+      emissiveIntensity: 0.72,
+    })
+    : new THREE.MeshStandardMaterial({
+      color: ship.color,
+      roughness: 0.42,
+      metalness: 0.62,
+      emissive: new THREE.Color(ship.color).multiplyScalar(0.08),
+    });
+  const darkMaterial = isSuperModel
+    ? new THREE.MeshPhysicalMaterial({
+      color: "#0a1420",
+      roughness: 0.23,
+      metalness: 0.9,
+      clearcoat: 0.58,
+      clearcoatRoughness: 0.15,
+      bumpMap: panelTexture,
+      bumpScale: 0.025,
+      roughnessMap: panelTexture,
+    })
+    : new THREE.MeshStandardMaterial({
+      color: "#172534",
+      roughness: 0.35,
+      metalness: 0.82,
+    });
+  const accentMaterial = isSuperModel
+    ? new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(ship.color).lerp(new THREE.Color("#eafcff"), 0.38),
+      roughness: 0.2,
+      metalness: 0.88,
+      clearcoat: 0.72,
+      clearcoatRoughness: 0.1,
+      bumpMap: panelTexture,
+      bumpScale: 0.018,
+      emissive: new THREE.Color(ship.color).multiplyScalar(0.16),
+      emissiveIntensity: 0.85,
+    })
+    : new THREE.MeshStandardMaterial({
+      color: new THREE.Color(ship.color).lerp(new THREE.Color("#ffffff"), 0.28),
+      roughness: 0.3,
+      metalness: 0.76,
+      emissive: new THREE.Color(ship.color).multiplyScalar(0.12),
+    });
+  const glowMaterial = new THREE.MeshBasicMaterial({
+    color: ship.team === "enemy" ? "#ff536b" : "#70f3ff",
+    transparent: isSuperModel,
+    opacity: isSuperModel ? 0.94 : 1,
+    toneMapped: !isSuperModel,
   });
-  const darkMaterial = new THREE.MeshStandardMaterial({
-    color: "#172534",
-    roughness: 0.35,
-    metalness: 0.82,
-  });
-  const accentMaterial = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(ship.color).lerp(new THREE.Color("#ffffff"), 0.28),
-    roughness: 0.3,
-    metalness: 0.76,
-    emissive: new THREE.Color(ship.color).multiplyScalar(0.12),
-  });
-  const glowMaterial = new THREE.MeshBasicMaterial({ color: ship.team === "enemy" ? "#ff536b" : "#70f3ff" });
   root.add(createShipHullGeometry(ship.modelId, {
     body: bodyMaterial,
     dark: darkMaterial,
@@ -1038,12 +1130,18 @@ function createShipGroup(ship: Ship, modelVariant: ShipModelVariant) {
 }
 
 function disposeObject(object: THREE.Object3D) {
+  const disposedTextures = new Set<THREE.Texture>();
   object.traverse((child) => {
     if (child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Sprite) {
       child.geometry?.dispose();
       const materials = Array.isArray(child.material) ? child.material : [child.material];
       materials.forEach((material) => {
-        if (material instanceof THREE.SpriteMaterial) material.map?.dispose();
+        Object.values(material).forEach((value) => {
+          if (value instanceof THREE.Texture && !disposedTextures.has(value)) {
+            value.dispose();
+            disposedTextures.add(value);
+          }
+        });
         material.dispose();
       });
     }
@@ -2666,7 +2764,7 @@ export function SpaceGame() {
     let savedVariant: ShipModelVariant = "classic";
     try {
       const saved = window.localStorage.getItem("parallax.models.v1");
-      if (saved === "classic" || saved === "detailed") savedVariant = saved;
+      if (saved === "classic" || saved === "detailed" || saved === "super") savedVariant = saved;
     } catch {
       // Device-local settings are optional; the classic hulls remain available.
     }

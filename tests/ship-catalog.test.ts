@@ -131,3 +131,36 @@ test("every hull has a distinct higher-detail model alongside its classic model"
 
   assert.equal(new Set(detailedSignatures).size, 6);
 });
+
+test("every hull has a distinct super graphics model with smoother, denser geometry", () => {
+  const material = new THREE.MeshBasicMaterial();
+  const superSignatures = Object.keys(SHIP_MODEL_PROFILES).map((modelId) => {
+    const typedModelId = modelId as keyof typeof SHIP_MODEL_PROFILES;
+    const detailed = createShipHullGeometry(typedModelId, {
+      body: material,
+      dark: material,
+      accent: material,
+      glow: material,
+    }, "detailed");
+    const superModel = createShipHullGeometry(typedModelId, {
+      body: material,
+      dark: material,
+      accent: material,
+      glow: material,
+    }, "super");
+    const size = new THREE.Box3().setFromObject(superModel).getSize(new THREE.Vector3());
+    const vertices = superModel.children.reduce((total, child) => {
+      if (!(child instanceof THREE.Mesh)) return total;
+      return total + (child.geometry.getAttribute("position")?.count ?? 0);
+    }, 0);
+    const detailedVertices = detailed.children.reduce((total, child) => {
+      if (!(child instanceof THREE.Mesh)) return total;
+      return total + (child.geometry.getAttribute("position")?.count ?? 0);
+    }, 0);
+
+    assert.ok(vertices > detailedVertices, `${modelId} super geometry should be smoother than the detailed hull`);
+    return `${superModel.children.length}:${vertices}:${size.x.toFixed(2)}:${size.y.toFixed(2)}:${size.z.toFixed(2)}`;
+  });
+
+  assert.equal(new Set(superSignatures).size, 6);
+});
