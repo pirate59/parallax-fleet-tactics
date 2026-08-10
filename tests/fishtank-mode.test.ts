@@ -5,6 +5,7 @@ import {
   FISHTANK_PLANNING_DELAY_MS,
   FISHTANK_RESTART_DELAY_MS,
   createFishtankFleet,
+  createFishtankStatusRows,
   fishtankActivationOrder,
 } from "../app/fishtankMode.ts";
 import { FLEET_COLOR_PALETTES } from "../app/fleetPresentation.ts";
@@ -65,4 +66,19 @@ test("successive Fishtank matches rotate through all six hull templates", () => 
   ].map((ship) => ship.archetypeId));
 
   assert.equal(hulls.size, 6);
+});
+
+test("Fishtank status rows attach only active fighters and expose hull percentages", () => {
+  const carrier = { id: "carrier", hull: 150, maxHull: 200 };
+  const cruiser = { id: "cruiser", hull: 40, maxHull: 100 };
+  const activeFighter = { id: "fighter-1", hull: 15, maxHull: 30, spawnedByShipId: carrier.id };
+  const destroyedFighter = { id: "fighter-2", hull: 0, maxHull: 30, spawnedByShipId: carrier.id };
+  const replacementFighter = { id: "fighter-3", hull: 30, maxHull: 30, spawnedByShipId: carrier.id };
+
+  const rows = createFishtankStatusRows([carrier, cruiser, activeFighter, destroyedFighter, replacementFighter]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].healthPercentage, 75);
+  assert.deepEqual(rows[0].fighters.map(({ fighter }) => fighter.id), [activeFighter.id, replacementFighter.id]);
+  assert.deepEqual(rows[0].fighters.map(({ healthPercentage }) => healthPercentage), [50, 100]);
+  assert.equal(rows[1].healthPercentage, 40);
 });

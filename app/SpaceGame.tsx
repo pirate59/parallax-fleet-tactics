@@ -78,6 +78,7 @@ import {
   FISHTANK_PLANNING_DELAY_MS,
   FISHTANK_RESTART_DELAY_MS,
   createFishtankFleet,
+  createFishtankStatusRows,
   fishtankActivationOrder,
 } from "./fishtankMode";
 import {
@@ -1873,6 +1874,44 @@ function TacticalScene({
   return <div className="three-mount" ref={mountRef} />;
 }
 
+function FishtankFleetBars({ ships }: { ships: Ship[] }) {
+  const rows = createFishtankStatusRows(ships);
+  return (
+    <ol className="fishtank-fleet-bars">
+      {rows.map(({ ship, healthPercentage, fighters }) => {
+        const sizeCode = ship.sizeClass === "shuttle" ? "S" : ship.sizeClass === "cruiser" ? "M" : "L";
+        return (
+          <li className="fishtank-formation-slot" key={ship.id}>
+            {fighters.length > 0 && (
+              <span className="fishtank-carrier-wing" aria-label={`${fighters.length} active fighters launched by ${ship.name}`}>
+                {fighters.map(({ fighter, healthPercentage: fighterHealth }) => (
+                  <span
+                    className="fishtank-ship-bar carrier-fighter"
+                    data-size="shuttle"
+                    key={fighter.id}
+                    role="img"
+                    aria-label={`${fighter.name}, small fighter, ${Math.round(fighterHealth)} percent hull`}
+                  >
+                    <i style={{ width: `${fighterHealth}%` }} />
+                  </span>
+                ))}
+              </span>
+            )}
+            <span
+              className={`fishtank-ship-bar ${ship.hull <= 0 ? "destroyed" : ""}`}
+              data-size={ship.sizeClass}
+              role="img"
+              aria-label={`${ship.name}, size ${sizeCode}, ${Math.round(healthPercentage)} percent hull${ship.hull <= 0 ? ", destroyed" : ""}`}
+            >
+              <i style={{ width: `${healthPercentage}%` }} />
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function SliderControl({
   label,
   value,
@@ -2958,8 +2997,8 @@ export function SpaceGame() {
             <section className="fishtank-scoreboard" aria-label="Fishtank fleet status">
               <div className="fishtank-team azure">
                 <span>AZURE AI</span>
-                <strong>{livingFishtankAllies.length}<small> / {FISHTANK_FLEET_SIZE} ACTIVE</small></strong>
-                <ol>{fishtankAllies.map((ship) => <li key={ship.id} className={ship.hull <= 0 ? "destroyed" : ""} aria-label={`${ship.name} ${ship.hull <= 0 ? "destroyed" : "active"}`} />)}</ol>
+                <strong>{livingFishtankAllies.length}<small> ACTIVE · {FISHTANK_FLEET_SIZE} CORE</small></strong>
+                <FishtankFleetBars ships={fishtankAllies} />
               </div>
               <div className="fishtank-director" aria-live="polite">
                 <small>MATCH {String(fishtankMatch).padStart(2, "0")} · TURN {String(turn).padStart(2, "0")}</small>
@@ -2968,8 +3007,8 @@ export function SpaceGame() {
               </div>
               <div className="fishtank-team crimson">
                 <span>CRIMSON AI</span>
-                <strong>{livingFishtankEnemies.length}<small> / {FISHTANK_FLEET_SIZE} ACTIVE</small></strong>
-                <ol>{fishtankEnemies.map((ship) => <li key={ship.id} className={ship.hull <= 0 ? "destroyed" : ""} aria-label={`${ship.name} ${ship.hull <= 0 ? "destroyed" : "active"}`} />)}</ol>
+                <strong>{livingFishtankEnemies.length}<small> ACTIVE · {FISHTANK_FLEET_SIZE} CORE</small></strong>
+                <FishtankFleetBars ships={fishtankEnemies} />
               </div>
             </section>
           )}

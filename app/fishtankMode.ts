@@ -111,3 +111,27 @@ export function fishtankActivationOrder(turn: number): Team[] {
     ? ["ally", "enemy", "player"]
     : ["enemy", "ally", "player"];
 }
+
+type FishtankStatusShip = {
+  id: string;
+  hull: number;
+  maxHull: number;
+  spawnedByShipId?: string;
+};
+
+const healthPercentageFor = (ship: FishtankStatusShip) =>
+  Math.max(0, Math.min(100, (ship.hull / Math.max(1, ship.maxHull)) * 100));
+
+/** Builds stable core-ship rows with only active carrier fighters attached. */
+export function createFishtankStatusRows<T extends FishtankStatusShip>(ships: readonly T[]) {
+  return ships
+    .filter((ship) => !ship.spawnedByShipId)
+    .map((ship) => ({
+      ship,
+      healthPercentage: healthPercentageFor(ship),
+      fighters: ships
+        .filter((fighter) => fighter.spawnedByShipId === ship.id && fighter.hull > 0)
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map((fighter) => ({ fighter, healthPercentage: healthPercentageFor(fighter) })),
+    }));
+}

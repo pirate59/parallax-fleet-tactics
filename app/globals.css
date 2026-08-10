@@ -1019,25 +1019,68 @@ input:focus-visible {
   font-weight: 500;
 }
 
-.fishtank-team ol {
+.fishtank-fleet-bars {
   display: flex;
-  gap: 6px;
+  align-items: flex-end;
+  gap: 7px;
+  min-height: 30px;
   margin: 8px 0 0;
   padding: 0;
   list-style: none;
 }
 
-.fishtank-team li {
-  width: 24px;
-  height: 4px;
-  background: currentColor;
-  box-shadow: 0 0 9px currentColor;
-  transition: opacity 220ms ease;
+.fishtank-formation-slot {
+  width: 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 3px;
 }
 
-.fishtank-team li.destroyed {
-  opacity: 0.15;
+.fishtank-carrier-wing {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fishtank-ship-bar {
+  width: 30px;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid rgba(140, 188, 205, 0.22);
+  background: #02060a;
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.85);
+}
+
+.fishtank-ship-bar[data-size="shuttle"] {
+  height: 4px;
+}
+
+.fishtank-ship-bar[data-size="cruiser"] {
+  height: 7px;
+}
+
+.fishtank-ship-bar[data-size="large"] {
+  height: 11px;
+}
+
+.fishtank-ship-bar i {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  box-shadow: 0 0 9px currentColor;
+  transition: width 320ms ease;
+}
+
+.fishtank-ship-bar.destroyed {
+  border-color: rgba(96, 118, 128, 0.14);
   box-shadow: none;
+}
+
+.fishtank-ship-bar.carrier-fighter {
+  border-color: color-mix(in srgb, currentColor 36%, transparent);
+  opacity: 0.82;
 }
 
 .fishtank-team.azure {
@@ -1048,6 +1091,14 @@ input:focus-visible {
   align-items: flex-end;
   color: var(--coral);
   text-align: right;
+}
+
+.fishtank-team.crimson .fishtank-fleet-bars {
+  justify-content: flex-end;
+}
+
+.fishtank-team.crimson .fishtank-ship-bar {
+  justify-content: flex-end;
 }
 
 .fishtank-director {
@@ -3169,8 +3220,9 @@ input[type="range"]::-moz-range-thumb {
     font-size: 19px;
   }
 
-  .fishtank-team li {
-    width: 14px;
+  .fishtank-formation-slot,
+  .fishtank-ship-bar {
+    width: 18px;
   }
 
   .attitude-row {
