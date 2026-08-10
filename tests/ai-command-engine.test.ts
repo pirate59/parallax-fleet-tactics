@@ -176,6 +176,30 @@ test("fighters from one carrier share and retain a single overwhelm target", () 
   assert.equal(fallbackAssignments[fighterB.id], targetA.id);
 });
 
+test("carrier wings ignore disposable enemies while core targets remain", () => {
+  const fighter = makeShip("fighter-a", { spawnedByShipId: "carrier", position: [0, 0, 0] });
+  const carrier = makeShip("carrier", { weaponMounts: [], position: [20, 0, 20] });
+  const enemyFighter = makeShip("enemy-fighter", { team: "enemy", spawnedByShipId: "enemy-carrier", position: [0, 0, -5] });
+  const enemyCore = makeShip("enemy-core", { team: "enemy", position: [0, 0, -12] });
+
+  assert.equal(carrierWingTargetAssignments([fighter, carrier, enemyFighter, enemyCore])[fighter.id], enemyCore.id);
+});
+
+test("carrier wings intercept disposable fighters with an imminent carrier attack", () => {
+  const fighter = makeShip("fighter-a", { spawnedByShipId: "carrier", position: [0, 0, 0] });
+  const carrier = makeShip("carrier", { weaponMounts: [], position: [0, 0, -2] });
+  const enemyFighter = makeShip("enemy-fighter", {
+    team: "enemy",
+    spawnedByShipId: "enemy-carrier",
+    position: [0, 0, -8],
+    rotation: [0, 0, 0],
+    lastTargetId: carrier.id,
+  });
+  const enemyCore = makeShip("enemy-core", { team: "enemy", position: [0, 0, -14] });
+
+  assert.equal(carrierWingTargetAssignments([fighter, carrier, enemyFighter, enemyCore])[fighter.id], enemyFighter.id);
+});
+
 test("standard Hammerhead faces the hostile most likely to shoot it", () => {
   const hammerhead = makeShip("hammerhead", {
     maxTurn: 60,

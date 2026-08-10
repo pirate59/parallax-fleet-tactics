@@ -144,8 +144,28 @@ export function carrierWingTargetAssignments(ships: AiCommandShip[]) {
   const assignments: Record<string, string> = {};
   wings.forEach((unsortedWing) => {
     const wing = [...unsortedWing].sort((left, right) => left.id.localeCompare(right.id));
-    const targets = targetCandidates(wing[0], ships);
-    if (!targets.length) return;
+    const allTargets = targetCandidates(wing[0], ships);
+    if (!allTargets.length) return;
+    const parentCarrier = ships.find((ship) => ship.id === wing[0].spawnedByShipId && ship.hull > 0);
+    const coreTargets = allTargets.filter((target) => !target.spawnedByShipId);
+    const imminentInterceptors = parentCarrier
+      ? allTargets.filter((target) => {
+        if (!target.spawnedByShipId) return false;
+        const assignedToCarrier = target.lastTargetId === parentCarrier.id
+          || chooseAiTarget(target, ships, target.aiDoctrine ?? "aggressive")?.id === parentCarrier.id;
+        if (!assignedToCarrier) return false;
+        const distance = new THREE.Vector3(...target.position).distanceTo(new THREE.Vector3(...parentCarrier.position));
+        const weapons = weaponProfilesFor(target);
+        const maximumRange = Math.max(...weapons.map((weapon) => weapon.range), 1);
+        return weapons.some((weapon) => shotSolutionForWeapon(target, parentCarrier, weapon).valid)
+          || distance <= maximumRange * 1.1;
+      })
+      : [];
+    const targets = imminentInterceptors.length > 0
+      ? imminentInterceptors
+      : coreTargets.length > 0
+        ? coreTargets
+        : allTargets;
 
     const rememberedCounts = new Map<string, number>();
     wing.forEach((fighter) => {

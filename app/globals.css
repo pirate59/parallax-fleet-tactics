@@ -1083,6 +1083,28 @@ input:focus-visible {
   opacity: 0.82;
 }
 
+.fishtank-carrier-reserve {
+  display: grid;
+  grid-template-columns: repeat(3, 3px);
+  align-self: center;
+  gap: 2px;
+  min-height: 13px;
+  padding-top: 1px;
+}
+
+.fishtank-carrier-reserve i {
+  width: 3px;
+  height: 3px;
+  border: 1px solid color-mix(in srgb, currentColor 38%, transparent);
+  border-radius: 50%;
+  background: #02060a;
+}
+
+.fishtank-carrier-reserve i.available {
+  background: currentColor;
+  box-shadow: 0 0 5px currentColor;
+}
+
 .fishtank-team.azure {
   color: var(--cyan);
 }

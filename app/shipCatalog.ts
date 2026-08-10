@@ -74,6 +74,7 @@ export type ShipTurnEndAbility = {
   kind: "launch-fighter";
   fighterArchetypeId: "fighter";
   maxActive: number;
+  fighterReserve: number;
   fighterDamageMultiplier: number;
   fighterDurabilityMultiplier: number;
   launchOffsets: Vec3[];
@@ -215,6 +216,7 @@ export const SHIP_ARCHETYPES = {
     color: "#77c9ff",
     modelId: "carrier",
     sizeClass: "large",
+    durabilityMultiplier: 0.72,
     baseModelScale: 1,
     baseShieldCapacity: { fore: 118, aft: 110, port: 124, starboard: 124, dorsal: 116, ventral: 108 },
     baseHull: 156,
@@ -230,6 +232,7 @@ export const SHIP_ARCHETYPES = {
       kind: "launch-fighter",
       fighterArchetypeId: "fighter",
       maxActive: 3,
+      fighterReserve: 9,
       fighterDamageMultiplier: 1.6,
       fighterDurabilityMultiplier: 0.55,
       launchOffsets: [[-1.15, -0.5, 0.25], [1.15, -0.5, 0.25], [0, -0.65, 1.15]],

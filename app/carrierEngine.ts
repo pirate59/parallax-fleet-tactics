@@ -5,6 +5,7 @@ export type CarrierCapableShip = {
   id: string;
   name: string;
   hull: number;
+  fighterReserveRemaining?: number;
   spawnedByShipId?: string;
   turnEndAbility?: ShipTurnEndAbility;
 };
@@ -57,6 +58,8 @@ export function applyCarrierLaunches<T extends CarrierCapableShip>(
   ships.forEach((carrier) => {
     const ability = carrier.turnEndAbility;
     if (carrier.hull <= 0 || ability?.kind !== "launch-fighter") return;
+    const reserveRemaining = carrier.fighterReserveRemaining ?? ability.fighterReserve;
+    if (reserveRemaining <= 0) return;
 
     const allFighters = ships.filter((ship) => ship.spawnedByShipId === carrier.id);
     const existingFighters = nextShips.filter((ship) => ship.spawnedByShipId === carrier.id);
@@ -68,6 +71,13 @@ export function applyCarrierLaunches<T extends CarrierCapableShip>(
       return Math.max(highest, match ? Number(match[1]) : 0);
     }, 0);
     const fighter = createFighter(carrier, Math.max(highestSequence, existingFighters.length) + 1, ability);
+    const carrierIndex = nextShips.findIndex((ship) => ship.id === carrier.id);
+    if (carrierIndex >= 0) {
+      nextShips[carrierIndex] = {
+        ...nextShips[carrierIndex],
+        fighterReserveRemaining: reserveRemaining - 1,
+      };
+    }
     nextShips.push(fighter);
     launches.push({
       carrierId: carrier.id,

@@ -8,6 +8,7 @@ const ability: ShipTurnEndAbility = {
   kind: "launch-fighter",
   fighterArchetypeId: "fighter",
   maxActive: 3,
+  fighterReserve: 9,
   fighterDamageMultiplier: 1.6,
   fighterDurabilityMultiplier: 0.55,
   launchOffsets: [[0, 0, 1]],
@@ -29,6 +30,7 @@ const carrier = (overrides: Partial<TestShip> = {}): TestShip => ({
   name: "Carrier",
   hull: 100,
   team: "ally",
+  fighterReserveRemaining: ability.fighterReserve,
   turnEndAbility: ability,
   ...overrides,
 });
@@ -49,6 +51,7 @@ test("a living carrier launches one AI fighter per completed turn", () => {
   assert.equal(first.ships.length, 2);
   assert.equal(second.launches.length, 1);
   assert.equal(second.ships.at(-1)?.id, "carrier-fighter-2");
+  assert.equal(second.ships.find((ship) => ship.id === "carrier")?.fighterReserveRemaining, 7);
 });
 
 test("carrier fighters receive the glass-cannon combat profile", () => {
@@ -73,6 +76,20 @@ test("carrier launch bays stop at three active fighters", () => {
 
   assert.equal(ships.filter((ship) => ship.spawnedByShipId === "carrier" && ship.hull > 0).length, 3);
   assert.equal(ships.length, 4);
+  assert.equal(ships.find((ship) => ship.id === "carrier")?.fighterReserveRemaining, 6);
+});
+
+test("carrier launch reserves stop after nine fighters for the battle", () => {
+  let ships: TestShip[] = [carrier()];
+  let launches = 0;
+  for (let turn = 0; turn < 12; turn += 1) {
+    const result = applyCarrierLaunches(ships, createFighter);
+    launches += result.launches.length;
+    ships = result.ships.map((ship) => ship.spawnedByShipId ? { ...ship, hull: 0 } : ship);
+  }
+
+  assert.equal(launches, 9);
+  assert.equal(ships.find((ship) => ship.id === "carrier")?.fighterReserveRemaining, 0);
 });
 
 test("a destroyed fighter frees capacity while a destroyed carrier cannot launch", () => {

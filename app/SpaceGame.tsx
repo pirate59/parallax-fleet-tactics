@@ -139,6 +139,7 @@ type Ship = {
   weaponMounts: WeaponMount[];
   aiTactics: AiTacticalProfile;
   turnEndAbility?: ShipTurnEndAbility;
+  fighterReserveRemaining?: number;
   spawnedByShipId?: string;
   lastTargetId?: string;
 };
@@ -327,6 +328,7 @@ function createShipFromArchetype(archetype: ShipArchetype, deployment: ShipDeplo
       ...archetype.turnEndAbility,
       launchOffsets: archetype.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
     } : undefined,
+    fighterReserveRemaining: archetype.turnEndAbility?.fighterReserve,
   };
 }
 
@@ -691,7 +693,12 @@ function prepareStoryBattle(fleet: Ship[], gate: number, pendingThreats: Pending
     .filter((ship) => ship.hull > 0)
     .map((ship, index) => {
       const slot = STORY_PLAYER_SLOTS[index % STORY_PLAYER_SLOTS.length];
-      return { ...ship, position: [...slot.position] as Vec3, rotation: [...slot.rotation] as Vec3 };
+      return {
+        ...ship,
+        fighterReserveRemaining: ship.turnEndAbility?.fighterReserve,
+        position: [...slot.position] as Vec3,
+        rotation: [...slot.rotation] as Vec3,
+      };
     });
   const enemies = config.enemies.map((kind, index) => createStoryEnemy(kind, gate, index, config.scale));
   const triggeredThreats = pendingThreats.filter((threat) => threat.triggerGate <= gate);
@@ -2062,6 +2069,10 @@ function FishtankFleetBars({ ships }: { ships: Ship[] }) {
     <ol className="fishtank-fleet-bars">
       {rows.map(({ ship, healthPercentage, fighters }) => {
         const sizeCode = ship.sizeClass === "shuttle" ? "S" : ship.sizeClass === "cruiser" ? "M" : "L";
+        const reserveCapacity = ship.turnEndAbility?.fighterReserve ?? 0;
+        const reserveRemaining = ship.hull > 0
+          ? Math.max(0, Math.min(reserveCapacity, ship.fighterReserveRemaining ?? reserveCapacity))
+          : 0;
         return (
           <li className="fishtank-formation-slot" key={ship.id}>
             {fighters.length > 0 && (
@@ -2087,6 +2098,17 @@ function FishtankFleetBars({ ships }: { ships: Ship[] }) {
             >
               <i style={{ width: `${healthPercentage}%` }} />
             </span>
+            {reserveCapacity > 0 && (
+              <span
+                className="fishtank-carrier-reserve"
+                role="img"
+                aria-label={`${ship.name}, ${reserveRemaining} of ${reserveCapacity} reserve fighters available`}
+              >
+                {Array.from({ length: reserveCapacity }, (_, index) => (
+                  <i className={index < reserveRemaining ? "available" : "spent"} key={index} />
+                ))}
+              </span>
+            )}
           </li>
         );
       })}
