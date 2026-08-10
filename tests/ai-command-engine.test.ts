@@ -9,7 +9,7 @@ import {
   type AiCommandShip,
 } from "../app/aiCommandEngine.ts";
 import type { Shields } from "../app/combatEngine.ts";
-import { createPrimaryWeaponMount, createWeaponMount } from "../app/shipCatalog.ts";
+import { SHIP_ARCHETYPES, createPrimaryWeaponMount, createWeaponMount } from "../app/shipCatalog.ts";
 
 const shieldsAt = (value: number): Shields => ({
   fore: value,
@@ -381,6 +381,30 @@ test("healthy Hammerhead AI deliberately uses its reinforced hull for a close ra
   assert.ok(order);
   assert.equal(order.mode, "normal");
   assert.ok(new THREE.Vector3(...order.destination).distanceTo(new THREE.Vector3(...target.position)) < 0.1);
+});
+
+test("standard Behemoth advances into its twin flak engagement range", () => {
+  const archetype = SHIP_ARCHETYPES.behemoth;
+  const behemoth = makeShip("behemoth", {
+    archetypeId: archetype.id,
+    modelId: archetype.modelId,
+    sizeClass: archetype.sizeClass,
+    weaponRange: archetype.weaponRange,
+    weaponDamage: archetype.weaponDamage,
+    weaponMounts: archetype.weaponMounts,
+    maxMove: archetype.maxMove,
+    maxTurn: archetype.maxTurn,
+    maxPitch: archetype.maxPitch,
+    maxRoll: archetype.maxRoll,
+    aiTactics: archetype.aiTactics,
+  });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -20] });
+  const order = generateAiCommandOrder(behemoth, [behemoth, target], "standard");
+
+  assert.ok(order);
+  assert.equal(order.mode, "normal");
+  assert.equal(order.fire, true);
+  assert.ok(order.destination[2] < -1, "the Behemoth should close instead of holding rail-gun distance");
 });
 
 test("Standard doctrine changes stance as the own-ship and target conditions change", () => {

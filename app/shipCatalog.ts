@@ -115,7 +115,8 @@ export type ShipArchetype = {
   turnEndAbility?: ShipTurnEndAbility;
 };
 
-const behemothRailgun = createWeaponMount("railgun", [], "port-forward");
+const behemothPortFlak = createWeaponMount("flak", [], "port-forward");
+const behemothStarboardFlak = createWeaponMount("flak", [behemothPortFlak], "starboard-forward");
 
 /** The canonical hull roster used by every game mode. */
 export const SHIP_ARCHETYPES = {
@@ -222,7 +223,7 @@ export const SHIP_ARCHETYPES = {
     maxRoll: 38,
     weaponRange: 16,
     weaponDamage: 38,
-    weaponMounts: [behemothRailgun, createWeaponMount("flak", [behemothRailgun], "starboard-forward")],
+    weaponMounts: [behemothPortFlak, behemothStarboardFlak],
     passiveTraits: [{
       kind: "autonomous-turret",
       name: "Turrets",
