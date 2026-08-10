@@ -2302,9 +2302,10 @@ function TacticalScene({
     if (hasCinematicEvent) overviewViewRef.current += 1;
     const returnOverview = presentation === "spectator" || hasCinematicEvent
       ? spectatorOverviewFor(
-        overviewSubjects(resolution.endShips, showFleetStations),
+        overviewSubjects(resolution.endShips, false),
         context.camera.aspect,
         overviewViewRef.current,
+        1.03,
       )
       : null;
     const tacticalPosition = returnOverview

@@ -35,3 +35,16 @@ test("successive overview variants use distinct cinematic sides while preserving
     assert.equal(view.distance, views[0].distance);
   });
 });
+
+test("a tighter post-action margin keeps the same fleet closer without changing its centre", () => {
+  const spreadFleet = compactFleet.map((ship, index) => ({
+    ...ship,
+    position: [index ? 28 : -28, ship.position[1], index ? 18 : -18] as [number, number, number],
+  }));
+  const strategic = spectatorOverviewFor(spreadFleet, 16 / 9, 2);
+  const postAction = spectatorOverviewFor(spreadFleet, 16 / 9, 2, 1.03);
+
+  assert.deepEqual(postAction.target, strategic.target);
+  assert.ok(postAction.distance < strategic.distance);
+  assert.ok(postAction.position[1] > postAction.target[1]);
+});

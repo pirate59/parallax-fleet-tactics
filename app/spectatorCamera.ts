@@ -21,6 +21,7 @@ export function spectatorOverviewFor(
   ships: readonly SpectatorShip[],
   aspect: number,
   viewVariant = 0,
+  framingMargin = 1.12,
 ): SpectatorOverview {
   const visibleShips = ships.some((ship) => ship.hull > 0)
     ? ships.filter((ship) => ship.hull > 0)
@@ -61,7 +62,7 @@ export function spectatorOverviewFor(
   const verticalHalfAngle = (fov * Math.PI) / 360;
   const horizontalHalfAngle = Math.atan(Math.tan(verticalHalfAngle) * Math.max(0.65, aspect));
   const limitingHalfAngle = Math.min(verticalHalfAngle, horizontalHalfAngle);
-  const distance = clamp((radius / Math.sin(limitingHalfAngle)) * 1.12, 28, 150);
+  const distance = clamp((radius / Math.sin(limitingHalfAngle)) * framingMargin, 28, 150);
 
   const viewpoints = [
     [0.72, 0.58],

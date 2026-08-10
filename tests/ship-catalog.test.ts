@@ -18,10 +18,10 @@ test("the Hammerhead starts with a reinforced front and vulnerable rear shield",
   assert.deepEqual(durabilityForArchetype(STORY_STARTER_ARCHETYPE).shields, {
     fore: 184,
     aft: 28,
-    port: 78,
-    starboard: 78,
-    dorsal: 64,
-    ventral: 58,
+    port: 92,
+    starboard: 92,
+    dorsal: 76,
+    ventral: 70,
   });
 });
 

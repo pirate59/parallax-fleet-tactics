@@ -130,7 +130,7 @@ export const SHIP_ARCHETYPES = {
     modelVariants: SHIP_MODEL_VARIANTS,
     sizeClass: "cruiser",
     baseModelScale: 1.08,
-    baseShieldCapacity: { fore: 184, aft: 28, port: 78, starboard: 78, dorsal: 64, ventral: 58 },
+    baseShieldCapacity: { fore: 184, aft: 28, port: 92, starboard: 92, dorsal: 76, ventral: 70 },
     baseHull: 120,
     maxMove: 5,
     maxTurn: 55,
