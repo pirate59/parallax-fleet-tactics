@@ -442,6 +442,19 @@ test("standard AI orders stay inside movement, rotation, and battlefield limits"
   assert.ok(Math.abs(order.destination[2]) <= 20);
 });
 
+test("AI respects separate fleet-map length and width boundaries", () => {
+  const ally = makeShip("ally", { position: [58, 13, 38] });
+  const target = makeShip("target", { team: "enemy", position: [-58, -13, -38] });
+  const order = generateAiCommandOrder(ally, [ally, target], "standard", 60, 14, {
+    battlefieldWidthHalf: 40,
+  });
+
+  assert.ok(order);
+  assert.ok(Math.abs(order.destination[0]) <= 60);
+  assert.ok(Math.abs(order.destination[1]) <= 14);
+  assert.ok(Math.abs(order.destination[2]) <= 40);
+});
+
 test("AI never selects friendly, destroyed, or missing targets", () => {
   const ally = makeShip("ally");
   const friendly = makeShip("friendly", { position: [0, 0, -2] });

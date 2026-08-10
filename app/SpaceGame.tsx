@@ -104,6 +104,13 @@ import {
   resolveMovementCollisions,
   type MovementCollisionEvent,
 } from "./collisionEngine";
+import {
+  FLEET_BATTLEFIELD,
+  FLEET_STATION_X,
+  FLEET_TEAM_START_X,
+  STORY_BATTLEFIELD,
+  type BattlefieldBounds,
+} from "./battlefieldConfig";
 
 type Phase = "planning" | "executing" | "victory" | "defeat";
 type GameScreen = "menu" | "battle" | "story";
@@ -230,8 +237,9 @@ type StoryRun = {
   history: string[];
 };
 
-const BATTLEFIELD_HALF = 20;
-const BATTLEFIELD_VERTICAL_HALF = 7;
+const battlefieldForMode = (mode: GameMode): BattlefieldBounds => mode === "story"
+  ? STORY_BATTLEFIELD
+  : FLEET_BATTLEFIELD;
 
 const MODE_OPTIONS: Array<{
   id: GameMode;
@@ -393,44 +401,44 @@ const INITIAL_SHIPS: Ship[] = [
     name: "Hammerhead",
     team: "player",
     controller: "player",
-    position: [-9, 0, 5],
-    rotation: [0, 36, 0],
+    position: [-FLEET_TEAM_START_X, 0, -8],
+    rotation: [0, 90, 0],
   }),
   createShipFromArchetype(SHIP_ARCHETYPES.fighter, {
     id: "fighter-skirmish",
     team: "player",
     controller: "player",
-    position: [-10, -3, -4],
-    rotation: [8, 50, -8],
+    position: [-FLEET_TEAM_START_X + 1, -5, 5],
+    rotation: [8, 88, -8],
   }),
   createShipFromArchetype(SHIP_ARCHETYPES.carrier, {
     id: "carrier-skirmish",
     team: "ally",
     controller: "ai",
     aiDoctrine: "standard",
-    position: [-6, 3, 0],
-    rotation: [-5, 42, 6],
+    position: [-FLEET_TEAM_START_X - 3, 5, 0],
+    rotation: [-5, 92, 6],
   }),
   createShipFromArchetype(SHIP_ARCHETYPES.hulk, {
     id: "hulk-skirmish",
     team: "enemy",
     controller: "ai",
-    position: [8, 1, -7],
-    rotation: [0, -118, 0],
+    position: [FLEET_TEAM_START_X, 1, -10],
+    rotation: [0, -90, 0],
   }),
   createShipFromArchetype(SHIP_ARCHETYPES.archer, {
     id: "archer-skirmish",
     team: "enemy",
     controller: "ai",
-    position: [10, -2, 3],
-    rotation: [-4, -108, 7],
+    position: [FLEET_TEAM_START_X - 1, -4, 2],
+    rotation: [-4, -92, 7],
   }),
   createShipFromArchetype(SHIP_ARCHETYPES.behemoth, {
     id: "behemoth-skirmish",
     team: "enemy",
     controller: "ai",
-    position: [7, 5, 8],
-    rotation: [7, -138, -5],
+    position: [FLEET_TEAM_START_X + 3, 6, 10],
+    rotation: [7, -88, -5],
   }),
 ];
 
@@ -504,13 +512,19 @@ const quaternionFor = shipQuaternionForRotation;
 const distanceBetween = (a: Vec3, b: Vec3) =>
   new THREE.Vector3(...a).distanceTo(new THREE.Vector3(...b));
 
-const clampDestination = (ship: Ship, destination: Vec3, mode: FlightMode = "normal"): Vec3 => {
+const clampDestination = (
+  ship: Ship,
+  destination: Vec3,
+  mode: FlightMode = "normal",
+  bounds: BattlefieldBounds = FLEET_BATTLEFIELD,
+): Vec3 => {
   const origin = new THREE.Vector3(...ship.position);
   const target = new THREE.Vector3(...clampCollisionPosition(
     ship,
     destination,
-    BATTLEFIELD_HALF,
-    BATTLEFIELD_VERTICAL_HALF,
+    bounds.halfLength,
+    bounds.halfHeight,
+    bounds.halfWidth,
   ));
   const offset = target.sub(origin);
   const movementLimit = movementLimitFor(ship.maxMove, mode);
@@ -519,8 +533,13 @@ const clampDestination = (ship: Ship, destination: Vec3, mode: FlightMode = "nor
   return [result.x, result.y, result.z];
 };
 
-const isDestinationValid = (ship: Ship, destination: Vec3, mode: FlightMode = "normal") => {
-  const bounded = clampCollisionPosition(ship, destination, BATTLEFIELD_HALF, BATTLEFIELD_VERTICAL_HALF);
+const isDestinationValid = (
+  ship: Ship,
+  destination: Vec3,
+  mode: FlightMode = "normal",
+  bounds: BattlefieldBounds = FLEET_BATTLEFIELD,
+) => {
+  const bounded = clampCollisionPosition(ship, destination, bounds.halfLength, bounds.halfHeight, bounds.halfWidth);
   return distanceBetween(ship.position, destination) <= movementLimitFor(ship.maxMove, mode) + 0.01
     && distanceBetween(bounded, destination) <= 0.01;
 };
@@ -532,6 +551,7 @@ const destinationFromManeuver = (
   pitch: number,
   roll: number,
   mode: FlightMode = "normal",
+  bounds: BattlefieldBounds = FLEET_BATTLEFIELD,
 ) => {
   const finalRotation: Vec3 = [
     clamp(ship.rotation[0] + clamp(pitch, -ship.maxPitch, ship.maxPitch), -85, 85),
@@ -543,13 +563,13 @@ const destinationFromManeuver = (
     forwardVector(finalRotation),
     clamp(distance, 0, movementLimit),
   );
-  return clampDestination(ship, [destination.x, destination.y, destination.z], mode);
+  return clampDestination(ship, [destination.x, destination.y, destination.z], mode, bounds);
 };
 
-const defaultOrderFor = (ship: Ship, ships: Ship[]): Order => {
+const defaultOrderFor = (ship: Ship, ships: Ship[], bounds: BattlefieldBounds = FLEET_BATTLEFIELD): Order => {
   const defaultDistance = Math.min(ship.maxMove, ship.team === "player" ? 3 : ship.maxMove * 0.55);
   return {
-    destination: destinationFromManeuver(ship, defaultDistance, 0, 0, 0, "normal"),
+    destination: destinationFromManeuver(ship, defaultDistance, 0, 0, 0, "normal", bounds),
     turn: 0,
     pitch: 0,
     roll: 0,
@@ -559,20 +579,20 @@ const defaultOrderFor = (ship: Ship, ships: Ship[]): Order => {
   };
 };
 
-const buildDrafts = (ships: Ship[]) =>
+const buildDrafts = (ships: Ship[], bounds: BattlefieldBounds = FLEET_BATTLEFIELD) =>
   Object.fromEntries(
     ships
       .filter((ship) => isDirectCommandShip(ship) && ship.hull > 0)
-      .map((ship) => [ship.id, defaultOrderFor(ship, ships)]),
+      .map((ship) => [ship.id, defaultOrderFor(ship, ships, bounds)]),
   ) as Record<string, Order>;
 
-const endStateFor = (ship: Ship, order: Order): Ship => {
+const endStateFor = (ship: Ship, order: Order, bounds: BattlefieldBounds = FLEET_BATTLEFIELD): Ship => {
   const finalRotation: Vec3 = [
     clamp(ship.rotation[0] + clamp(order.pitch, -ship.maxPitch, ship.maxPitch), -85, 85),
     normalizeAngle(ship.rotation[1] + clamp(order.turn, -ship.maxTurn, ship.maxTurn)),
     normalizeAngle(ship.rotation[2] + clamp(order.roll, -ship.maxRoll, ship.maxRoll)),
   ];
-  const destination = clampDestination(ship, order.destination, order.mode);
+  const destination = clampDestination(ship, order.destination, order.mode, bounds);
 
   return {
     ...ship,
@@ -717,7 +737,12 @@ function createRecruitShip(kind: "scout" | "escort" | "gunboat", currentShips: S
   };
 }
 
-function createLaunchedFighter(carrier: Ship, sequence: number, ability: ShipTurnEndAbility): Ship {
+function createLaunchedFighter(
+  carrier: Ship,
+  sequence: number,
+  ability: ShipTurnEndAbility,
+  bounds: BattlefieldBounds = FLEET_BATTLEFIELD,
+): Ship {
   const archetype = SHIP_ARCHETYPES[ability.fighterArchetypeId];
   const localOffset = ability.launchOffsets[(sequence - 1) % ability.launchOffsets.length] ?? [0, -0.5, 1];
   const worldOffset = new THREE.Vector3(...localOffset)
@@ -734,9 +759,9 @@ function createLaunchedFighter(carrier: Ship, sequence: number, ability: ShipTur
     controller: "ai",
     aiDoctrine: "aggressive",
     position: [
-      clamp(launchPosition.x, -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
-      clamp(launchPosition.y, -BATTLEFIELD_VERTICAL_HALF, BATTLEFIELD_VERTICAL_HALF),
-      clamp(launchPosition.z, -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
+      clamp(launchPosition.x, -bounds.halfLength, bounds.halfLength),
+      clamp(launchPosition.y, -bounds.halfHeight, bounds.halfHeight),
+      clamp(launchPosition.z, -bounds.halfWidth, bounds.halfWidth),
     ],
     rotation: [...carrier.rotation] as Vec3,
   });
@@ -1291,6 +1316,103 @@ function createSpaceScenery() {
   return scenery;
 }
 
+function createBattlefieldGrid(bounds: BattlefieldBounds, height: number, emphasized: boolean) {
+  const positions: number[] = [];
+  const step = 5;
+  for (let x = -bounds.halfLength; x <= bounds.halfLength + 0.01; x += step) {
+    positions.push(x, height, -bounds.halfWidth, x, height, bounds.halfWidth);
+  }
+  for (let z = -bounds.halfWidth; z <= bounds.halfWidth + 0.01; z += step) {
+    positions.push(-bounds.halfLength, height, z, bounds.halfLength, height, z);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  return new THREE.LineSegments(
+    geometry,
+    new THREE.LineBasicMaterial({
+      color: emphasized ? "#4a8ba9" : "#25465b",
+      transparent: true,
+      opacity: emphasized ? 0.3 : 0.12,
+    }),
+  );
+}
+
+function createFleetStation(team: "ally" | "enemy") {
+  const station = new THREE.Group();
+  const friendly = team === "ally";
+  const accent = friendly ? "#47e1d1" : "#ff744f";
+  const glow = friendly ? "#1d7f80" : "#8c321f";
+  const inward = friendly ? 1 : -1;
+  const hull = new THREE.MeshStandardMaterial({ color: "#53616b", metalness: 0.86, roughness: 0.34 });
+  const dark = new THREE.MeshStandardMaterial({ color: "#151d24", metalness: 0.78, roughness: 0.48 });
+  const trim = new THREE.MeshStandardMaterial({ color: accent, emissive: glow, emissiveIntensity: 1.2, metalness: 0.72, roughness: 0.26 });
+  const windowMaterial = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.9 });
+
+  const spine = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.35, 10.5, 16), hull);
+  spine.rotation.z = Math.PI / 2;
+  station.add(spine);
+  const reactor = new THREE.Mesh(new THREE.IcosahedronGeometry(1.8, 2), trim);
+  station.add(reactor);
+
+  [-2.9, 0, 2.9].forEach((x, ringIndex) => {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(3.4 - ringIndex * 0.18, 0.24, 10, 32), ringIndex === 1 ? trim : hull);
+    ring.position.x = x;
+    ring.rotation.y = Math.PI / 2;
+    station.add(ring);
+  });
+
+  for (let index = 0; index < 6; index += 1) {
+    const angle = index / 6 * Math.PI * 2;
+    const y = Math.cos(angle) * 3.2;
+    const z = Math.sin(angle) * 3.2;
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.55, 4.8, 0.48), index % 2 ? dark : hull);
+    arm.position.set(index % 2 ? -1.4 : 1.4, y * 0.52, z * 0.52);
+    arm.rotation.x = angle;
+    station.add(arm);
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), windowMaterial);
+    beacon.position.set(arm.position.x, y, z);
+    station.add(beacon);
+  }
+
+  const hangar = new THREE.Mesh(new THREE.BoxGeometry(3.2, 3.5, 5.4), dark);
+  hangar.position.x = inward * 5.3;
+  station.add(hangar);
+  const hangarMouth = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.25, 4.15), trim);
+  hangarMouth.position.x = inward * 6.94;
+  station.add(hangarMouth);
+  [-1.45, 0, 1.45].forEach((z) => {
+    const launchLight = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.7), windowMaterial);
+    launchLight.position.set(inward * 7.04, -1.3, z);
+    station.add(launchLight);
+  });
+
+  [-1, 1].forEach((side) => {
+    const radiator = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.12, 2.8), dark);
+    radiator.position.set(-inward * 1.4, side * 4.45, 0);
+    radiator.rotation.z = side * 0.12;
+    station.add(radiator);
+    for (let stripe = -1; stripe <= 1; stripe += 1) {
+      const panelLine = new THREE.Mesh(new THREE.BoxGeometry(3.55, 0.03, 0.08), trim);
+      panelLine.position.set(radiator.position.x, radiator.position.y + side * 0.08, stripe * 0.86);
+      station.add(panelLine);
+    }
+  });
+
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.15, 4.2, 10), hull);
+  antenna.position.y = 5.2;
+  station.add(antenna);
+  const dish = new THREE.Mesh(new THREE.ConeGeometry(1.1, 0.42, 20, 1, true), trim);
+  dish.position.y = 7.25;
+  dish.rotation.z = friendly ? -0.45 : 0.45;
+  station.add(dish);
+
+  const stationLight = new THREE.PointLight(accent, 18, 22, 2);
+  stationLight.position.set(inward * 4, 0, 0);
+  station.add(stationLight);
+  station.userData.team = team;
+  return station;
+}
+
 function addWeaponEnvelope(
   parent: THREE.Group,
   _ship: Ship,
@@ -1648,6 +1770,15 @@ function restoreCombatVisibility(
   });
 }
 
+function overviewSubjects(ships: Ship[], includeStations: boolean) {
+  if (!includeStations) return ships;
+  return [
+    ...ships,
+    { position: [-FLEET_STATION_X, 0, 0] as Vec3, hull: 1, modelScale: 4.5 },
+    { position: [FLEET_STATION_X, 0, 0] as Vec3, hull: 1, modelScale: 4.5 },
+  ];
+}
+
 function TacticalScene({
   ships,
   drafts,
@@ -1661,6 +1792,8 @@ function TacticalScene({
   onResolutionComplete,
   overlayLabels,
   modelVariant,
+  battlefieldBounds,
+  showFleetStations,
   presentation = "command",
 }: {
   ships: Ship[];
@@ -1675,6 +1808,8 @@ function TacticalScene({
   onResolutionComplete: (resolution: Resolution) => void;
   overlayLabels: OverlayLabelSettings;
   modelVariant: ShipModelVariant;
+  battlefieldBounds: BattlefieldBounds;
+  showFleetStations: boolean;
   presentation?: "command" | "spectator";
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -1697,8 +1832,12 @@ function TacticalScene({
     if (!mount) return;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 160);
-    camera.position.set(19, 16, 22);
+    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 320);
+    camera.position.set(
+      battlefieldBounds.halfLength * 0.95,
+      battlefieldBounds.halfHeight * 2.4,
+      battlefieldBounds.halfWidth * 1.15,
+    );
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
@@ -1713,7 +1852,7 @@ function TacticalScene({
     controls.enableDamping = true;
     controls.dampingFactor = 0.075;
     controls.minDistance = 8;
-    controls.maxDistance = 55;
+    controls.maxDistance = showFleetStations ? 170 : 70;
     controls.maxPolarAngle = Math.PI * 0.92;
     controls.target.set(0, 0, 0);
     controls.update();
@@ -1726,27 +1865,32 @@ function TacticalScene({
     enemyLight.position.set(12, 4, -4);
     scene.add(enemyLight);
 
-    [-7, 0, 7].forEach((height, index) => {
-      const grid = new THREE.GridHelper(40, 20, index === 1 ? "#4a8ba9" : "#25465b", "#183043");
-      grid.position.y = height;
-      const materials = Array.isArray(grid.material) ? grid.material : [grid.material];
-      materials.forEach((material) => {
-        material.transparent = true;
-        material.opacity = index === 1 ? 0.32 : 0.13;
-      });
-      scene.add(grid);
+    [-battlefieldBounds.halfHeight, 0, battlefieldBounds.halfHeight].forEach((height, index) => {
+      scene.add(createBattlefieldGrid(battlefieldBounds, height, index === 1));
     });
 
     const volume = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(40, 14, 40)),
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(
+        battlefieldBounds.length,
+        battlefieldBounds.height,
+        battlefieldBounds.width,
+      )),
       new THREE.LineBasicMaterial({ color: "#315971", transparent: true, opacity: 0.38 }),
     );
     scene.add(volume);
 
+    if (showFleetStations) {
+      const alliedStation = createFleetStation("ally");
+      alliedStation.position.set(-FLEET_STATION_X, 0, 0);
+      const enemyStation = createFleetStation("enemy");
+      enemyStation.position.set(FLEET_STATION_X, 0, 0);
+      scene.add(alliedStation, enemyStation);
+    }
+
     const starGeometry = new THREE.BufferGeometry();
     const starPositions = new Float32Array(900 * 3);
     for (let index = 0; index < 900; index += 1) {
-      const radius = 45 + Math.random() * 45;
+      const radius = battlefieldBounds.halfLength + 32 + Math.random() * 65;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       starPositions[index * 3] = radius * Math.sin(phi) * Math.cos(theta);
@@ -1941,7 +2085,7 @@ function TacticalScene({
       renderer.domElement.remove();
       contextRef.current = null;
     };
-  }, []);
+  }, [battlefieldBounds, showFleetStations]);
 
   useEffect(() => {
     const context = contextRef.current;
@@ -2028,7 +2172,7 @@ function TacticalScene({
       .filter((ship) => ship.controller === "player" && ship.hull > 0 && drafts[ship.id])
       .forEach((ship) => {
         const order = drafts[ship.id];
-        const end = endStateFor(ship, order);
+        const end = endStateFor(ship, order, battlefieldBounds);
         const startPoint = new THREE.Vector3(...ship.position);
         const endPoint = new THREE.Vector3(...end.position);
         const midpoint = startPoint.clone().lerp(endPoint, 0.5).add(new THREE.Vector3(0, 0.85, 0));
@@ -2090,14 +2234,18 @@ function TacticalScene({
           }
         }
       });
-  }, [ships, drafts, staged, selectedShipId, selectedTargetId, resolution, overlayLabels, modelVariant]);
+  }, [ships, drafts, staged, selectedShipId, selectedTargetId, resolution, overlayLabels, modelVariant, battlefieldBounds]);
 
   useEffect(() => {
     const context = contextRef.current;
     if (!context || !cameraCommand.nonce) return;
     if (cameraCommand.kind === "reset") {
-      if (presentation === "spectator") {
-        const overview = spectatorOverviewFor(ships, context.camera.aspect, spectatorViewRef.current);
+      if (presentation === "spectator" || showFleetStations) {
+        const overview = spectatorOverviewFor(
+          overviewSubjects(ships, showFleetStations),
+          context.camera.aspect,
+          spectatorViewRef.current,
+        );
         context.camera.position.set(...overview.position);
         context.controls.target.set(...overview.target);
         context.camera.fov = overview.fov;
@@ -2116,20 +2264,24 @@ function TacticalScene({
       }
     }
     context.controls.update();
-  }, [cameraCommand, presentation, ships]);
+  }, [cameraCommand, presentation, ships, showFleetStations]);
 
   useEffect(() => {
     const context = contextRef.current;
     if (!context || presentation !== "spectator" || resolution) return;
-    context.controls.maxDistance = 75;
+    context.controls.maxDistance = showFleetStations ? 170 : 75;
     spectatorViewRef.current += 1;
-    const overview = spectatorOverviewFor(ships, context.camera.aspect, spectatorViewRef.current);
+    const overview = spectatorOverviewFor(
+      overviewSubjects(ships, showFleetStations),
+      context.camera.aspect,
+      spectatorViewRef.current,
+    );
     context.camera.position.set(...overview.position);
     context.controls.target.set(...overview.target);
     context.camera.fov = overview.fov;
     context.camera.updateProjectionMatrix();
     context.controls.update();
-  }, [presentation, resolution, ships]);
+  }, [presentation, resolution, ships, showFleetStations]);
 
   useEffect(() => {
     const context = contextRef.current;
@@ -2138,7 +2290,11 @@ function TacticalScene({
     let combatVisibility: CombatVisibilitySnapshot | null = null;
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const spectatorOverview = presentation === "spectator"
-      ? spectatorOverviewFor(resolution.endShips, context.camera.aspect, spectatorViewRef.current + 1)
+      ? spectatorOverviewFor(
+        overviewSubjects(resolution.endShips, showFleetStations),
+        context.camera.aspect,
+        spectatorViewRef.current + 1,
+      )
       : null;
     const tacticalPosition = spectatorOverview
       ? new THREE.Vector3(...spectatorOverview.position)
@@ -2462,7 +2618,7 @@ function TacticalScene({
       context.camera.updateProjectionMatrix();
       context.controls.update();
     };
-  }, [presentation, resolution, ships]);
+  }, [presentation, resolution, ships, showFleetStations]);
 
   return <div className="three-mount" ref={mountRef} />;
 }
@@ -3028,6 +3184,8 @@ export function SpaceGame() {
     storyActionLockRef.current = false;
   }, [storyRun?.stage]);
 
+  const battlefieldBounds = battlefieldForMode(activeMode);
+  const showFleetStations = activeMode !== "story";
   const selectedShip = ships.find((ship) => ship.id === selectedShipId)
     ?? ships.find((ship) => ship.controller === "player" && ship.hull > 0)
     ?? ships.find((ship) => ship.team === "player" && ship.hull > 0)
@@ -3043,15 +3201,18 @@ export function SpaceGame() {
   const cinematicShipIds = new Set(combatFocus ? [combatFocus.left.id, combatFocus.right.id] : []);
   const readyCount = livingCommandShips.filter((ship) => staged.has(ship.id)).length;
   const isCommandOrderValid = (ship: Ship) => {
+    const bounds = battlefieldForMode(activeMode);
     const order = drafts[ship.id];
-    if (!order || !isDestinationValid(ship, order.destination, order.mode)) return false;
+    if (!order || !isDestinationValid(ship, order.destination, order.mode, bounds)) return false;
     return order.mode !== "focus-fire" || ships.some((candidate) => candidate.id === order.targetId && candidate.team === "enemy" && candidate.hull > 0);
   };
   const allOrdersValid = livingCommandShips.every(isCommandOrderValid);
   const allReady = isFleetCommitReady(ships, staged, isCommandOrderValid);
   const plottedDistance = selectedShip && selectedDraft ? distanceBetween(selectedShip.position, selectedDraft.destination) : 0;
   const movementLimit = selectedShip && selectedDraft ? movementLimitFor(selectedShip.maxMove, selectedDraft.mode) : 0;
-  const destinationValid = selectedShip && selectedDraft ? isDestinationValid(selectedShip, selectedDraft.destination, selectedDraft.mode) : false;
+  const destinationValid = selectedShip && selectedDraft
+    ? isDestinationValid(selectedShip, selectedDraft.destination, selectedDraft.mode, battlefieldBounds)
+    : false;
   const orderReady = Boolean(destinationValid && selectedDraft && (selectedDraft.mode !== "focus-fire" || selectedTarget));
   const relativeMovement = selectedShip && selectedDraft
     ? shipMovementFromDestination(selectedShip.position, selectedShip.rotation, selectedDraft.destination)
@@ -3063,10 +3224,11 @@ export function SpaceGame() {
 
   const forecast = useMemo(() => {
     if (!selectedShip || !selectedDraft) return null;
+    const bounds = battlefieldForMode(activeMode);
     const target = ships.find((ship) => ship.id === selectedDraft.targetId && ship.hull > 0);
     const salvoCount = salvosForOrder(selectedDraft);
     if (!target || salvoCount === 0) return null;
-    const predicted = endStateFor(selectedShip, selectedDraft);
+    const predicted = endStateFor(selectedShip, selectedDraft, bounds);
     const solutions = weaponProfilesFor(predicted).map((weapon) => ({
       weapon,
       solution: shotSolutionForWeapon(predicted, target, weapon),
@@ -3082,7 +3244,7 @@ export function SpaceGame() {
       damage: validSolutions.reduce((sum, { weapon }) => sum + weapon.damage, 0) * salvoCount,
       salvoCount,
     };
-  }, [selectedShip, selectedDraft, ships]);
+  }, [selectedShip, selectedDraft, ships, activeMode]);
 
   const updateDraft = useCallback((patch: Partial<Order>) => {
     if (!selectedShip || selectedShip.controller !== "player" || phase !== "planning") return;
@@ -3104,6 +3266,7 @@ export function SpaceGame() {
 
   const updateRelativeMovement = useCallback((axis: keyof ShipRelativeMovement, value: number) => {
     if (!selectedShip || !selectedDraft) return;
+    const bounds = battlefieldForMode(activeMode);
     const movement = shipMovementFromDestination(selectedShip.position, selectedShip.rotation, selectedDraft.destination);
     const constrainedMovement = clampShipMovementToRange(
       { ...movement, [axis]: value },
@@ -3115,20 +3278,21 @@ export function SpaceGame() {
       constrainedMovement,
     );
     updateDraft({
-      destination: clampDestination(selectedShip, proposedDestination, selectedDraft.mode),
+      destination: clampDestination(selectedShip, proposedDestination, selectedDraft.mode, bounds),
     });
-  }, [selectedShip, selectedDraft, updateDraft]);
+  }, [selectedShip, selectedDraft, updateDraft, activeMode]);
 
   const updateFlightMode = useCallback((mode: FlightMode) => {
     if (!selectedShip || !selectedDraft) return;
+    const bounds = battlefieldForMode(activeMode);
     updateDraft({
       mode,
       destination: mode === "focus-fire"
         ? [...selectedShip.position] as Vec3
-        : clampDestination(selectedShip, selectedDraft.destination, mode),
+        : clampDestination(selectedShip, selectedDraft.destination, mode, bounds),
       fire: fireStateForMode(mode, true),
     });
-  }, [selectedShip, selectedDraft, updateDraft]);
+  }, [selectedShip, selectedDraft, updateDraft, activeMode]);
 
   const faceTarget = useCallback(() => {
     if (!selectedShip || !selectedDraft) return;
@@ -3145,6 +3309,7 @@ export function SpaceGame() {
   }, [selectedShip, selectedDraft, ships, updateDraft]);
 
   const generateNpcOrders = useCallback((currentShips: Ship[]) => {
+    const bounds = battlefieldForMode(activeMode);
     const orders: Record<string, Order> = {};
     const wingTargets = carrierWingTargetAssignments(currentShips);
     currentShips
@@ -3157,29 +3322,35 @@ export function SpaceGame() {
           ship,
           currentShips,
           ship.aiDoctrine ?? "standard",
-          BATTLEFIELD_HALF,
-          BATTLEFIELD_VERTICAL_HALF,
-          { forcedTargetId: wingTargets[ship.id], reservedDestinations },
+          bounds.halfLength,
+          bounds.halfHeight,
+          {
+            forcedTargetId: wingTargets[ship.id],
+            reservedDestinations,
+            battlefieldWidthHalf: bounds.halfWidth,
+          },
         );
         if (order) orders[ship.id] = order;
       });
     return orders;
-  }, []);
+  }, [activeMode]);
 
   const executeTurn = useCallback((automatic = false) => {
+    const bounds = battlefieldForMode(activeMode);
     const fishtankCommit = activeMode === "fishtank" && automatic;
     if (phase !== "planning" || (!fishtankCommit && (!allReady || !allOrdersValid))) return;
     const npcOrders = generateNpcOrders(ships);
     const allOrders: Record<string, Order> = fishtankCommit ? npcOrders : { ...drafts, ...npcOrders };
     const intendedShips = ships.map((ship) => {
       const order = allOrders[ship.id];
-      return ship.hull > 0 && order ? endStateFor(ship, order) : ship;
+      return ship.hull > 0 && order ? endStateFor(ship, order, bounds) : ship;
     });
     const collision = resolveMovementCollisions(
       ships,
       intendedShips,
-      BATTLEFIELD_HALF,
-      BATTLEFIELD_VERTICAL_HALF,
+      bounds.halfLength,
+      bounds.halfHeight,
+      bounds.halfWidth,
     );
     const combat = resolveCombatTurn(
       collision.ships,
@@ -3209,8 +3380,12 @@ export function SpaceGame() {
   }, [activeMode, allOrdersValid, allReady, drafts, generateNpcOrders, phase, ships, turn]);
 
   const resolveCombat = useCallback((finished: Resolution) => {
+    const bounds = battlefieldForMode(activeMode);
     const rememberedShips = rememberOrderedTargets(finished.resolvedShips, finished.orders);
-    const launched = applyCarrierLaunches(copyShips(rememberedShips), createLaunchedFighter);
+    const launched = applyCarrierLaunches(
+      copyShips(rememberedShips),
+      (carrier, sequence, ability) => createLaunchedFighter(carrier, sequence, ability, bounds),
+    );
     const results = copyShips(launched.ships);
     setShips(results);
     setResolution(null);
@@ -3248,16 +3423,16 @@ export function SpaceGame() {
     setTurn((current) => current + 1);
     setPhase("planning");
     setStaged(new Set());
-    setDrafts(buildDrafts(results));
+    setDrafts(buildDrafts(results, bounds));
     const nextPlayer = results.find((ship) => ship.team === "player" && ship.hull > 0);
     if (nextPlayer) setSelectedShipId(nextPlayer.id);
   }, [activeMode]);
 
-  const loadCombatState = useCallback((nextShips: Ship[], nextLog: string[]) => {
+  const loadCombatState = useCallback((nextShips: Ship[], nextLog: string[], bounds: BattlefieldBounds) => {
     const encounterShips = copyShips(nextShips);
     const firstPlayer = encounterShips.find((ship) => ship.team === "player" && ship.hull > 0);
     setShips(encounterShips);
-    setDrafts(buildDrafts(encounterShips));
+    setDrafts(buildDrafts(encounterShips, bounds));
     setStaged(new Set());
     setSelectedShipId(firstPlayer?.id ?? "");
     setPhase("planning");
@@ -3269,13 +3444,13 @@ export function SpaceGame() {
   }, []);
 
   const resetGame = useCallback(() => {
-    loadCombatState(INITIAL_SHIPS, INITIAL_LOG);
+    loadCombatState(INITIAL_SHIPS, INITIAL_LOG, FLEET_BATTLEFIELD);
   }, [loadCombatState]);
 
   const startStoryCampaign = useCallback(() => {
     const starter = createStoryStarter();
     setStoryRun(createStoryRun());
-    loadCombatState([starter], STORY_INITIAL_LOG);
+    loadCombatState([starter], STORY_INITIAL_LOG, STORY_BATTLEFIELD);
     setActiveMode("story");
     setSelectedMode("story");
     setScreen("story");
@@ -3289,7 +3464,7 @@ export function SpaceGame() {
     loadCombatState(createFishtankFleet(INITIAL_SHIPS, nextMatch), [
       `Fishtank match ${String(nextMatch).padStart(2, "0")}: two autonomous five-ship fleets connected.`,
       "AI captains are calculating the opening movement phase.",
-    ]);
+    ], FLEET_BATTLEFIELD);
     setActiveMode("fishtank");
     setSelectedMode("fishtank");
     setScreen("battle");
@@ -3306,7 +3481,7 @@ export function SpaceGame() {
       `Warp Gate ${String(gate).padStart(2, "0")}: ${prepared.config.name}. ${prepared.config.threat}.`,
       ...pursuitLog,
       "Stage each directly controlled ship. AI wingmates calculate their doctrine orders when the turn commits.",
-    ]);
+    ], STORY_BATTLEFIELD);
     setStoryRun((current) => current ? {
       ...current,
       stage: "combat",
@@ -3467,7 +3642,7 @@ export function SpaceGame() {
       }
       if (phase !== "executing" && event.key === "1") setCameraCommand({ kind: "reset", nonce: Date.now() });
       if (event.key === "Escape" && selectedShip?.controller === "player" && phase === "planning") {
-        setDrafts((current) => ({ ...current, [selectedShip.id]: defaultOrderFor(selectedShip, ships) }));
+        setDrafts((current) => ({ ...current, [selectedShip.id]: defaultOrderFor(selectedShip, ships, battlefieldBounds) }));
         setStaged((current) => {
           const next = new Set(current);
           next.delete(selectedShip.id);
@@ -3477,7 +3652,7 @@ export function SpaceGame() {
     };
     window.addEventListener("keydown", handleShortcuts);
     return () => window.removeEventListener("keydown", handleShortcuts);
-  }, [selectedShipId, selectedShip, ships, phase, screen]);
+  }, [selectedShipId, selectedShip, ships, phase, screen, battlefieldBounds]);
 
   if (screen === "menu") {
     return (
@@ -3602,6 +3777,8 @@ export function SpaceGame() {
             onResolutionComplete={resolveCombat}
             overlayLabels={overlayLabels}
             modelVariant={modelVariant}
+            battlefieldBounds={battlefieldBounds}
+            showFleetStations={showFleetStations}
             presentation={activeMode === "fishtank" ? "spectator" : "command"}
           />
 
@@ -3675,7 +3852,7 @@ export function SpaceGame() {
 
           <div className="viewport-heading">
             <span>{activeMode === "fishtank" ? "AUTONOMOUS VOLUME" : "TACTICAL VOLUME"}</span>
-            <strong>{activeMode === "fishtank" ? "5 vs 5 · AI vs AI" : "40 × 14 × 40 KM"}</strong>
+            <strong>{activeMode === "fishtank" ? "5 vs 5 · AI vs AI · " : ""}{battlefieldBounds.length} L × {battlefieldBounds.height} H × {battlefieldBounds.width} W KM</strong>
           </div>
 
           {activeMode === "fishtank" && (
@@ -3719,7 +3896,7 @@ export function SpaceGame() {
               <span><b>Drag</b> orbit · <b>Right drag</b> pan</span>
               <span><b>Wheel / pinch</b> zoom · <b>WASD</b> pan</span>
               <span><b>Click ship</b> select or target</span>
-              <span><b>Cone tip</b> bow and cannon origin</span>
+              <span><b>Cone tip</b> ship centre · beams use gun mounts</span>
             </div>
           )}
 
@@ -3856,7 +4033,7 @@ export function SpaceGame() {
                 <SliderControl label="Up / down" axis="U" value={relativeMovement.up} min={-movementLimit} max={movementLimit} suffix=" km" step={0.25} decimals={2} lowLabel="DOWN" highLabel="UP" disabled={translationDisabled} onChange={(value) => updateRelativeMovement("up", value)} />
                 <div className="quick-actions">
                   <button type="button" disabled={translationDisabled} onClick={() => updateDraft({ destination: [...selectedShip.position] as Vec3 })}>Hold position</button>
-                  <button type="button" disabled={translationDisabled} onClick={() => updateDraft({ destination: destinationFromManeuver(selectedShip, movementLimit * 0.6, 0, 0, 0, selectedFlightMode) })}>Forward 60%</button>
+                  <button type="button" disabled={translationDisabled} onClick={() => updateDraft({ destination: destinationFromManeuver(selectedShip, movementLimit * 0.6, 0, 0, 0, selectedFlightMode, battlefieldBounds) })}>Forward 60%</button>
                 </div>
               </section>
 

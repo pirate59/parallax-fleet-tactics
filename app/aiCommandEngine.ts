@@ -45,6 +45,7 @@ export type AiCommandOrder = {
 export type AiCommandOptions = {
   forcedTargetId?: string;
   reservedDestinations?: Record<string, Vec3>;
+  battlefieldWidthHalf?: number;
 };
 
 export const AI_DOCTRINE_ORDER: AiDoctrine[] = ["aggressive", "standard", "defensive"];
@@ -233,9 +234,10 @@ function clampDestination(
   mode: FlightMode,
   battlefieldHalf: number,
   battlefieldVerticalHalf: number,
+  battlefieldWidthHalf: number,
 ): Vec3 {
   const origin = new THREE.Vector3(...ship.position);
-  destination.set(...clampCollisionPosition(ship, destination, battlefieldHalf, battlefieldVerticalHalf));
+  destination.set(...clampCollisionPosition(ship, destination, battlefieldHalf, battlefieldVerticalHalf, battlefieldWidthHalf));
   const offset = destination.sub(origin);
   const movementLimit = movementLimitFor(ship.maxMove, mode);
   if (offset.length() > movementLimit) offset.setLength(movementLimit);
@@ -250,6 +252,7 @@ function collisionSafeDestination(
   mode: FlightMode,
   battlefieldHalf: number,
   battlefieldVerticalHalf: number,
+  battlefieldWidthHalf: number,
   reservedDestinations: Record<string, Vec3>,
   ramTargetId?: string,
 ) {
@@ -294,6 +297,7 @@ function collisionSafeDestination(
         mode,
         battlefieldHalf,
         battlefieldVerticalHalf,
+        battlefieldWidthHalf,
       ));
     });
   }
@@ -313,6 +317,7 @@ function retreatDestination(
   mode: FlightMode,
   battlefieldHalf: number,
   battlefieldVerticalHalf: number,
+  battlefieldWidthHalf: number,
 ) {
   const origin = new THREE.Vector3(...ship.position);
   const targetPosition = new THREE.Vector3(...target.position);
@@ -342,6 +347,7 @@ function retreatDestination(
         mode,
         battlefieldHalf,
         battlefieldVerticalHalf,
+        battlefieldWidthHalf,
       );
       const destinationVector = new THREE.Vector3(...destination);
       return {
@@ -376,6 +382,7 @@ export function generateAiCommandOrder(
   battlefieldVerticalHalf = 7,
   options: AiCommandOptions = {},
 ): AiCommandOrder | null {
+  const battlefieldWidthHalf = options.battlefieldWidthHalf ?? battlefieldHalf;
   const effectiveDoctrine = effectiveDoctrineFor(ship, doctrine);
   const forcedTarget = options.forcedTargetId
     ? targetCandidates(ship, ships).find((candidate) => candidate.id === options.forcedTargetId)
@@ -455,6 +462,7 @@ export function generateAiCommandOrder(
       mode,
       battlefieldHalf,
       battlefieldVerticalHalf,
+      battlefieldWidthHalf,
     );
   } else if (mode === "extra-move") {
     const shouldRetreat = effectiveDoctrine === "defensive"
@@ -473,6 +481,7 @@ export function generateAiCommandOrder(
         mode,
         battlefieldHalf,
         battlefieldVerticalHalf,
+        battlefieldWidthHalf,
       );
       if (retreat && retreat.travel > 0.25) {
         selectedDestination = retreat.destination;
@@ -502,6 +511,7 @@ export function generateAiCommandOrder(
           mode,
           battlefieldHalf,
           battlefieldVerticalHalf,
+          battlefieldWidthHalf,
         );
         if (retreat?.travel && retreat.travel > 0.25) selectedDestination = retreat.destination;
       } else {
@@ -519,6 +529,7 @@ export function generateAiCommandOrder(
             mode,
             battlefieldHalf,
             battlefieldVerticalHalf,
+            battlefieldWidthHalf,
           );
           if (retreat?.travel && retreat.travel > 0.25) selectedDestination = retreat.destination;
         } else {
@@ -538,7 +549,7 @@ export function generateAiCommandOrder(
   const desiredDestination = new THREE.Vector3(...ship.position)
     .addScaledVector(movementDirection, movementLimit * movementFraction);
   const rawDestination = selectedDestination
-    ?? clampDestination(ship, desiredDestination, mode, battlefieldHalf, battlefieldVerticalHalf);
+    ?? clampDestination(ship, desiredDestination, mode, battlefieldHalf, battlefieldVerticalHalf, battlefieldWidthHalf);
   const destination = collisionSafeDestination(
     ship,
     ships,
@@ -546,6 +557,7 @@ export function generateAiCommandOrder(
     mode,
     battlefieldHalf,
     battlefieldVerticalHalf,
+    battlefieldWidthHalf,
     options.reservedDestinations ?? {},
     rammingOpportunity ? target.id : undefined,
   );

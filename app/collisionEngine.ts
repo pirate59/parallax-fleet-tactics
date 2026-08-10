@@ -69,17 +69,19 @@ export function isPersistentWreck(ship: Pick<CollisionShip, "hull" | "spawnedByS
 export function clampCollisionPosition(
   ship: Pick<CollisionShip, "modelId" | "modelScale">,
   position: THREE.Vector3 | Vec3,
-  battlefieldHalf: number,
+  battlefieldLengthHalf: number,
   battlefieldVerticalHalf: number,
+  battlefieldWidthHalf = battlefieldLengthHalf,
 ): Vec3 {
   const point = Array.isArray(position) ? new THREE.Vector3(...position) : position.clone();
   const radius = collisionRadiusFor(ship);
-  const horizontalLimit = Math.max(0, battlefieldHalf - radius);
+  const lengthLimit = Math.max(0, battlefieldLengthHalf - radius);
+  const widthLimit = Math.max(0, battlefieldWidthHalf - radius);
   const verticalLimit = Math.max(0, battlefieldVerticalHalf - Math.min(radius, battlefieldVerticalHalf * 0.72));
   return [
-    clamp(point.x, -horizontalLimit, horizontalLimit),
+    clamp(point.x, -lengthLimit, lengthLimit),
     clamp(point.y, -verticalLimit, verticalLimit),
-    clamp(point.z, -horizontalLimit, horizontalLimit),
+    clamp(point.z, -widthLimit, widthLimit),
   ];
 }
 
@@ -145,18 +147,20 @@ function collisionDamage(dealer: CollisionShip, receiver: CollisionShip, relativ
 function setPosition<T extends CollisionShip>(
   ship: T,
   position: THREE.Vector3,
-  battlefieldHalf: number,
+  battlefieldLengthHalf: number,
   battlefieldVerticalHalf: number,
+  battlefieldWidthHalf: number,
 ) {
-  ship.position = clampCollisionPosition(ship, position, battlefieldHalf, battlefieldVerticalHalf);
+  ship.position = clampCollisionPosition(ship, position, battlefieldLengthHalf, battlefieldVerticalHalf, battlefieldWidthHalf);
 }
 
 /** Resolves continuous movement paths, impact damage, and final non-overlapping positions. */
 export function resolveMovementCollisions<T extends CollisionShip>(
   sourceShips: T[],
   intendedShips: T[],
-  battlefieldHalf = 20,
+  battlefieldLengthHalf = 20,
   battlefieldVerticalHalf = 7,
+  battlefieldWidthHalf = battlefieldLengthHalf,
 ): MovementCollisionResult<T> {
   const results = intendedShips.map(cloneShip);
   const startById = new Map(sourceShips.map((ship) => [ship.id, ship]));
@@ -202,8 +206,8 @@ export function resolveMovementCollisions<T extends CollisionShip>(
       if (liveA && liveB) {
         const massA = collisionMassFor(shipA);
         const massB = collisionMassFor(shipB);
-        setPosition(shipA, endA.clone().addScaledVector(normal, deflection * (massB / (massA + massB))), battlefieldHalf, battlefieldVerticalHalf);
-        setPosition(shipB, endB.clone().addScaledVector(normal, -deflection * (massA / (massA + massB))), battlefieldHalf, battlefieldVerticalHalf);
+        setPosition(shipA, endA.clone().addScaledVector(normal, deflection * (massB / (massA + massB))), battlefieldLengthHalf, battlefieldVerticalHalf, battlefieldWidthHalf);
+        setPosition(shipB, endB.clone().addScaledVector(normal, -deflection * (massA / (massA + massB))), battlefieldLengthHalf, battlefieldVerticalHalf, battlefieldWidthHalf);
         const impactA = applyImpactDamage(shipA, collisionDamage(shipB, shipA, relativeSpeed), closest.pointB);
         const impactB = applyImpactDamage(shipB, collisionDamage(shipA, shipB, relativeSpeed), closest.pointA);
         damageToA = impactA.damage;
@@ -224,7 +228,7 @@ export function resolveMovementCollisions<T extends CollisionShip>(
         const liveEnd = new THREE.Vector3(...liveShip.position);
         const wreckPosition = new THREE.Vector3(...wreck.position);
         const finalOverlap = Math.max(0, minimumDistance - liveEnd.distanceTo(wreckPosition));
-        setPosition(liveShip, liveEnd.addScaledVector(away, finalOverlap + Math.min(0.8, 0.22 + relativeSpeed * 0.06)), battlefieldHalf, battlefieldVerticalHalf);
+        setPosition(liveShip, liveEnd.addScaledVector(away, finalOverlap + Math.min(0.8, 0.22 + relativeSpeed * 0.06)), battlefieldLengthHalf, battlefieldVerticalHalf, battlefieldWidthHalf);
         const impact = applyImpactDamage(liveShip, clamp(3 + relativeSpeed * 0.55, 3, 10), wreckPosition);
         if (liveIsA) {
           damageToA = impact.damage;
@@ -287,12 +291,12 @@ export function resolveMovementCollisions<T extends CollisionShip>(
         if (liveA && liveB) {
           const massA = collisionMassFor(shipA);
           const massB = collisionMassFor(shipB);
-          setPosition(shipA, positionA.addScaledVector(normal, correction * (massB / (massA + massB))), battlefieldHalf, battlefieldVerticalHalf);
-          setPosition(shipB, positionB.addScaledVector(normal, -correction * (massA / (massA + massB))), battlefieldHalf, battlefieldVerticalHalf);
+          setPosition(shipA, positionA.addScaledVector(normal, correction * (massB / (massA + massB))), battlefieldLengthHalf, battlefieldVerticalHalf, battlefieldWidthHalf);
+          setPosition(shipB, positionB.addScaledVector(normal, -correction * (massA / (massA + massB))), battlefieldLengthHalf, battlefieldVerticalHalf, battlefieldWidthHalf);
         } else if (liveA) {
-          setPosition(shipA, positionA.addScaledVector(normal, correction), battlefieldHalf, battlefieldVerticalHalf);
+          setPosition(shipA, positionA.addScaledVector(normal, correction), battlefieldLengthHalf, battlefieldVerticalHalf, battlefieldWidthHalf);
         } else if (liveB) {
-          setPosition(shipB, positionB.addScaledVector(normal, -correction), battlefieldHalf, battlefieldVerticalHalf);
+          setPosition(shipB, positionB.addScaledVector(normal, -correction), battlefieldLengthHalf, battlefieldVerticalHalf, battlefieldWidthHalf);
         }
       }
     }

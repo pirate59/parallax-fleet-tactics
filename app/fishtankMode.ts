@@ -2,6 +2,7 @@ import type { AiDoctrine } from "./aiCommandEngine.ts";
 import type { Team, Vec3 } from "./combatEngine.ts";
 import type { ShipPassiveTrait, WeaponMount } from "./shipCatalog.ts";
 import { fleetColorFor } from "./fleetPresentation.ts";
+import { FLEET_TEAM_START_X } from "./battlefieldConfig.ts";
 
 export const FISHTANK_FLEET_SIZE = 5;
 export const FISHTANK_PLANNING_DELAY_MS = 1800;
@@ -54,11 +55,11 @@ const TEMPLATE_ORDER = [0, 1, 2, 3, 4, 5] as const;
 const DOCTRINES: AiDoctrine[] = ["aggressive", "standard", "defensive", "standard", "aggressive"];
 
 const LEFT_SLOTS: Vec3[] = [
-  [-13, -3, -8],
-  [-12, 1, -4],
-  [-13, 4, 0],
-  [-12, -2, 5],
-  [-13, 2, 9],
+  [-FLEET_TEAM_START_X, -5, -12],
+  [-FLEET_TEAM_START_X, 2, -6],
+  [-FLEET_TEAM_START_X, 6, 0],
+  [-FLEET_TEAM_START_X, -3, 7],
+  [-FLEET_TEAM_START_X, 4, 13],
 ];
 
 const RIGHT_SLOTS: Vec3[] = LEFT_SLOTS.map(([x, y, z]) => [-x, -y, -z]);
@@ -95,7 +96,7 @@ export function createFishtankFleet<T extends FishtankTemplate>(templates: reado
         aiDoctrine: doctrine,
         color: fleetColorFor(team, `${template.id}-${index}`),
         position: [...slots[index]] as Vec3,
-        rotation: [index % 2 ? 4 : -3, team === "ally" ? -90 : 90, index % 2 ? -5 : 5] as Vec3,
+        rotation: [index % 2 ? 4 : -3, team === "ally" ? 90 : -90, index % 2 ? -5 : 5] as Vec3,
         shields: { ...template.maxShields },
         maxShields: { ...template.maxShields },
         hull: template.maxHull,

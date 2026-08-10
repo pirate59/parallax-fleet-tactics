@@ -61,7 +61,7 @@ export function spectatorOverviewFor(
   const verticalHalfAngle = (fov * Math.PI) / 360;
   const horizontalHalfAngle = Math.atan(Math.tan(verticalHalfAngle) * Math.max(0.65, aspect));
   const limitingHalfAngle = Math.min(verticalHalfAngle, horizontalHalfAngle);
-  const distance = clamp((radius / Math.sin(limitingHalfAngle)) * 1.12, 28, 66);
+  const distance = clamp((radius / Math.sin(limitingHalfAngle)) * 1.12, 28, 150);
 
   const angle = 0.72 + (viewVariant % 4) * 0.16;
   const rawDirection = [Math.cos(angle), 0.58, Math.sin(angle)] as Vec3;
