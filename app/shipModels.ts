@@ -136,7 +136,7 @@ export const SHIP_MODEL_PROFILES = {
     engineAnchors: [[-0.76, -0.12, 1.34], [0, -0.12, 1.42], [0.76, -0.12, 1.34]],
     selectionRadius: 2.08,
     targetRadius: 1.84,
-    hudOffsetMultiplier: 1.14,
+    hudOffsetMultiplier: 1.34,
     wreck: wreckProfile(2.6, 3.2),
   },
   carrier: {
@@ -152,7 +152,7 @@ export const SHIP_MODEL_PROFILES = {
     engineAnchors: [[-1, -0.1, 1.24], [-0.48, -0.1, 1.38], [0.48, -0.1, 1.38], [1, -0.1, 1.24]],
     selectionRadius: 2.18,
     targetRadius: 1.94,
-    hudOffsetMultiplier: 1.14,
+    hudOffsetMultiplier: 1.34,
     wreck: wreckProfile(2.8, 3.15),
   },
 } as const satisfies Record<string, ShipModelProfile>;

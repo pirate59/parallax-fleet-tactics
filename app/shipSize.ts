@@ -25,7 +25,7 @@ export const SHIP_SIZE_PROFILES: Record<ShipSizeClass, ShipSizeProfile> = {
   large: {
     label: "Large",
     durabilityMultiplier: 2,
-    modelScaleMultiplier: 1.45,
+    modelScaleMultiplier: 1.85,
     fleetPointCost: 6,
   },
 };

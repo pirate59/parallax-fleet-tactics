@@ -312,6 +312,121 @@ function buildSuperCarrier(root: THREE.Group, materials: ShipGeometryMaterials) 
   addWindowLine(root, materials, [[0.48, 0.78, -0.28], [0.58, 0.83, -0.33], [0.68, 0.83, -0.33], [0.78, 0.78, -0.28]], [0.055, 0.04, 0.08]);
 }
 
+function addAntennaMast(
+  root: THREE.Group,
+  materials: ShipGeometryMaterials,
+  position: [number, number, number],
+  height: number,
+  lean = 0,
+) {
+  addMesh(root, new THREE.CylinderGeometry(0.022, 0.04, height, 10), materials.dark, [position[0], position[1] + height / 2, position[2]], [0, 0, lean]);
+  addMesh(root, new THREE.SphereGeometry(0.055, 14, 10), materials.glow, [position[0] - Math.sin(lean) * height, position[1] + Math.cos(lean) * height, position[2]]);
+}
+
+function addVentBank(
+  root: THREE.Group,
+  materials: ShipGeometryMaterials,
+  position: [number, number, number],
+  rotation: [number, number, number] = [0, 0, 0],
+  width = 0.42,
+) {
+  addMesh(root, new THREE.BoxGeometry(width, 0.055, 0.28), materials.dark, position, rotation);
+  [-0.1, 0, 0.1].forEach((offset) => {
+    addMesh(root, new THREE.BoxGeometry(width * 0.76, 0.018, 0.025), materials.accent, [position[0], position[1] + 0.035, position[2] + offset], rotation);
+  });
+}
+
+function addSuperIntricacy(root: THREE.Group, materials: ShipGeometryMaterials, modelId: ShipModelId) {
+  switch (modelId) {
+    case "hammerhead": {
+      [-0.72, -0.34, 0.08, 0.5].forEach((z, index) => {
+        addMesh(root, new THREE.SphereGeometry(0.5, 20, 12), index % 2 ? materials.accent : materials.dark, [0, 0.42, z], [0, 0, 0], [0.78 - index * 0.06, 0.08, 0.48]);
+      });
+      [-1, 1].forEach((side) => {
+        addMesh(root, new THREE.CylinderGeometry(0.035, 0.05, 1.7, 12), materials.accent, [side * 0.28, -0.26, -0.12], [-Math.PI / 2, 0, 0]);
+        addMesh(root, new THREE.CylinderGeometry(0.06, 0.08, 0.74, 14), materials.dark, [side * 1.18, 0.2, -1.3], [-Math.PI / 2, 0, 0]);
+        addVentBank(root, materials, [side * 0.74, 0.26, 0.52], [0, side * 0.08, 0], 0.34);
+      });
+      addAntennaMast(root, materials, [0, 0.68, 0.22], 0.48);
+      addAntennaMast(root, materials, [-0.18, 0.6, 0.4], 0.3, -0.15);
+      break;
+    }
+    case "archer": {
+      [-1.32, -0.94, -0.56, -0.18, 0.2, 0.58].forEach((z, index) => {
+        addMesh(root, new THREE.TorusGeometry(0.18 + (index % 2) * 0.025, 0.022, 10, 28), index % 2 ? materials.glow : materials.accent, [0, 0.14, z], [Math.PI / 2, 0, 0]);
+      });
+      [-1, 1].forEach((side) => {
+        [-0.48, 0.12, 0.72].forEach((z) => addMesh(root, new THREE.BoxGeometry(0.36, 0.035, 0.18), materials.dark, [side * 0.56, -0.08, z], [0, side * 0.2, side * 0.06]));
+        addMesh(root, new THREE.CylinderGeometry(0.026, 0.038, 2.5, 10), materials.glow, [side * 0.16, 0.25, -0.38], [-Math.PI / 2, 0, 0]);
+      });
+      addVentBank(root, materials, [0, 0.35, 0.7], [0, 0, 0], 0.34);
+      addAntennaMast(root, materials, [0.15, 0.42, 0.36], 0.42, 0.12);
+      break;
+    }
+    case "hulk": {
+      [-0.7, -0.24, 0.24, 0.7].forEach((z, row) => {
+        [-1, 1].forEach((side) => {
+          addMesh(root, new THREE.SphereGeometry(0.5, 20, 12), row % 2 ? materials.dark : materials.accent, [side * 0.84, 0.34, z], [0, side * 0.16, 0], [0.5, 0.12, 0.44]);
+        });
+      });
+      [-1, 1].forEach((side) => {
+        [-0.56, 0, 0.56].forEach((z) => addMesh(root, new THREE.CylinderGeometry(0.055, 0.08, 0.46, 14), materials.dark, [side * 1.08, 0.44, z - 0.2], [-Math.PI / 2, 0, 0]));
+        addVentBank(root, materials, [side * 0.5, 0.62, 0.58], [0, side * 0.08, 0], 0.32);
+      });
+      addMesh(root, new THREE.TorusGeometry(0.62, 0.028, 10, 36), materials.glow, [0, -0.34, 0.34], [Math.PI / 2, 0, 0], [1.16, 0.8, 1]);
+      addAntennaMast(root, materials, [0, 0.78, 0.2], 0.36);
+      break;
+    }
+    case "fighter": {
+      [-1, 1].forEach((side) => {
+        addMesh(root, new THREE.ConeGeometry(0.055, 1.22, 14), materials.dark, [side * 0.72, 0.04, -0.32], [-Math.PI / 2, 0, 0]);
+        addMesh(root, new THREE.BoxGeometry(0.3, 0.03, 0.48), materials.accent, [side * 0.84, 0.02, 0.34], [0, side * 0.26, side * 0.08]);
+        addMesh(root, new THREE.BoxGeometry(0.035, 0.18, 0.54), materials.dark, [side * 0.58, 0.15, 0.55], [side * 0.18, 0, 0]);
+        addVentBank(root, materials, [side * 0.22, 0.18, 0.42], [0, side * 0.12, 0], 0.2);
+      });
+      [-0.45, -0.08, 0.3].forEach((z) => addMesh(root, new THREE.TorusGeometry(0.18, 0.015, 8, 24), materials.accent, [0, 0.04, z], [Math.PI / 2, 0, 0]));
+      addAntennaMast(root, materials, [0, 0.38, 0.12], 0.2, 0.08);
+      break;
+    }
+    case "behemoth": {
+      [-1, 1].forEach((side) => {
+        [-0.98, -0.52, -0.06, 0.4, 0.86].forEach((z, index) => {
+          addMesh(root, new THREE.SphereGeometry(0.5, 22, 12), index % 2 ? materials.body : materials.accent, [side * 0.7, 0.58, z], [0, side * 0.12, 0], [0.58, 0.11, 0.36]);
+          addMesh(root, new THREE.CylinderGeometry(0.035, 0.05, 0.24, 12), materials.glow, [side * 1.18, 0.34, z], [-Math.PI / 2, 0, 0]);
+        });
+        addVentBank(root, materials, [side * 0.82, 0.68, 0.76], [0, side * 0.08, 0], 0.42);
+        addMesh(root, new THREE.CylinderGeometry(0.08, 0.12, 1.12, 18), materials.dark, [side * 0.52, 0.88, -0.68], [-Math.PI / 2, 0, 0]);
+      });
+      [-0.38, 0, 0.38].forEach((x) => {
+        addMesh(root, new THREE.CylinderGeometry(0.14, 0.18, 0.18, 18), materials.dark, [x, 0.92, 0.34]);
+        addMesh(root, new THREE.CylinderGeometry(0.04, 0.06, 0.62, 12), materials.accent, [x, 1.02, 0.02], [-Math.PI / 2, 0, 0]);
+      });
+      addAntennaMast(root, materials, [0, 1.06, 0.48], 0.62);
+      addAntennaMast(root, materials, [-0.28, 0.98, 0.64], 0.38, -0.14);
+      addAntennaMast(root, materials, [0.28, 0.98, 0.64], 0.38, 0.14);
+      break;
+    }
+    case "carrier": {
+      [-1, 1].forEach((side) => {
+        [-0.92, -0.48, -0.04, 0.4, 0.84].forEach((z, index) => {
+          addMesh(root, new THREE.BoxGeometry(0.5, 0.055, 0.26), index % 2 ? materials.dark : materials.accent, [side * 0.82, 0.42, z], [0, side * 0.06, 0]);
+          addMesh(root, new THREE.BoxGeometry(0.045, 0.16, 0.16), materials.glow, [side * 1.26, -0.02, z]);
+        });
+        addMesh(root, new THREE.TorusGeometry(0.3, 0.025, 10, 30), materials.accent, [side * 0.82, -0.12, 0.08], [Math.PI / 2, 0, 0], [1, 1, 3.4]);
+        addVentBank(root, materials, [side * 0.82, 0.42, 1.04], [0, side * 0.08, 0], 0.42);
+        addMesh(root, new THREE.BoxGeometry(0.22, 0.08, 2.44), materials.dark, [side * 0.48, -0.31, 0.08]);
+      });
+      [-0.34, -0.12, 0.12, 0.34].forEach((x) => {
+        addMesh(root, new THREE.BoxGeometry(0.05, 0.025, 2.04), materials.glow, [x, -0.27, 0.08]);
+      });
+      addMesh(root, new THREE.CylinderGeometry(0.16, 0.22, 0.24, 20), materials.dark, [0.64, 0.98, 0.06]);
+      addAntennaMast(root, materials, [0.64, 1.08, 0.08], 0.58);
+      addAntennaMast(root, materials, [0.48, 0.94, 0.38], 0.34, -0.16);
+      break;
+    }
+  }
+}
+
 const BUILDERS: Record<ShipModelId, (root: THREE.Group, materials: ShipGeometryMaterials) => void> = {
   hammerhead: buildHammerhead,
   archer: buildArcher,
@@ -347,5 +462,6 @@ export function createShipHullGeometry(
   const root = new THREE.Group();
   const builders = variant === "super" ? SUPER_BUILDERS : variant === "detailed" ? DETAILED_BUILDERS : BUILDERS;
   builders[modelId](root, materials);
+  if (variant === "super") addSuperIntricacy(root, materials, modelId);
   return root;
 }

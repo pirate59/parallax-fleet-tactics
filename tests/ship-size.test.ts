@@ -34,6 +34,8 @@ test("size classes apply the agreed hull, shield, visual, and fleet-cost rules",
   );
   assert.ok(resolveSizedModelScale(1, "shuttle") < resolveSizedModelScale(1, "cruiser"));
   assert.ok(resolveSizedModelScale(1, "large") > resolveSizedModelScale(1, "cruiser"));
+  assert.equal(resolveSizedModelScale(1, "large"), 1.85);
+  assert.ok(resolveSizedModelScale(1, "large") >= resolveSizedModelScale(1, "cruiser") * 1.8);
 });
 
 test("directional shield proportions survive size scaling", () => {
