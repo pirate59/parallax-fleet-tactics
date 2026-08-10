@@ -89,6 +89,7 @@ import {
 import { fleetColorFor } from "./fleetPresentation";
 import { preferredTargetId, rememberOrderedTargets } from "./targetMemory";
 import { spectatorOverviewFor } from "./spectatorCamera";
+import type { AiTacticalProfile } from "./aiTactics";
 
 type Phase = "planning" | "executing" | "victory" | "defeat";
 type GameScreen = "menu" | "battle" | "story";
@@ -129,6 +130,7 @@ type Ship = {
   durabilityMultiplier: number;
   modelScale: number;
   weaponMounts: WeaponMount[];
+  aiTactics: AiTacticalProfile;
   turnEndAbility?: ShipTurnEndAbility;
   spawnedByShipId?: string;
   lastTargetId?: string;
@@ -308,6 +310,7 @@ function createShipFromArchetype(archetype: ShipArchetype, deployment: ShipDeplo
     maxHull: durability.hull,
     modelScale: resolveSizedModelScale(archetype.baseModelScale, archetype.sizeClass),
     weaponMounts: archetype.weaponMounts.map((mount) => ({ ...mount })),
+    aiTactics: { ...archetype.aiTactics },
     turnEndAbility: archetype.turnEndAbility ? {
       ...archetype.turnEndAbility,
       launchOffsets: archetype.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
@@ -516,6 +519,7 @@ function copyShips(ships: Ship[]) {
     shields: { ...ship.shields },
     maxShields: { ...ship.maxShields },
     weaponMounts: ship.weaponMounts.map((mount) => ({ ...mount })),
+    aiTactics: { ...ship.aiTactics },
     turnEndAbility: ship.turnEndAbility ? {
       ...ship.turnEndAbility,
       launchOffsets: ship.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
@@ -559,6 +563,7 @@ function createStoryStarter() {
     durabilityMultiplier: archetype.durabilityMultiplier ?? 1,
     modelScale: modelScaleForArchetype(archetype),
     weaponMounts: archetype.weaponMounts.map((mount) => ({ ...mount })),
+    aiTactics: { ...archetype.aiTactics },
     turnEndAbility: archetype.turnEndAbility ? {
       ...archetype.turnEndAbility,
       launchOffsets: archetype.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
@@ -653,7 +658,7 @@ function createLaunchedFighter(carrier: Ship, sequence: number, ability: ShipTur
     color: carrier.color,
     team: carrier.team,
     controller: "ai",
-    aiDoctrine: carrier.aiDoctrine ?? "aggressive",
+    aiDoctrine: "aggressive",
     position: [
       clamp(launchPosition.x, -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
       clamp(launchPosition.y, -BATTLEFIELD_VERTICAL_HALF, BATTLEFIELD_VERTICAL_HALF),
@@ -2363,7 +2368,7 @@ export function SpaceGame() {
   }, [selectedShip, phase]);
 
   const updateAiDoctrine = useCallback((doctrine: AiDoctrine) => {
-    if (!selectedShip || selectedShip.controller !== "ai" || selectedShip.team === "enemy" || phase !== "planning") return;
+    if (!selectedShip || selectedShip.controller !== "ai" || selectedShip.team === "enemy" || selectedShip.spawnedByShipId || phase !== "planning") return;
     setShips((current) => current.map((ship) => ship.id === selectedShip.id ? { ...ship, aiDoctrine: doctrine } : ship));
   }, [selectedShip, phase]);
 
@@ -2759,6 +2764,7 @@ export function SpaceGame() {
   const selectedAiDoctrine = selectedShip.aiDoctrine ?? "standard";
   const selectedAiRule = AI_DOCTRINE_RULES[selectedAiDoctrine];
   const selectedAiCondition = shipConditionScore(selectedShip);
+  const selectedIsCarrierFighter = Boolean(selectedShip.spawnedByShipId);
   const translationDisabled = controlsDisabled || selectedFlightMode === "focus-fire";
   const weaponControlDisabled = controlsDisabled || selectedFlightMode !== "normal";
   const selectedWeapons = weaponProfilesFor(selectedShip);
@@ -3084,8 +3090,10 @@ export function SpaceGame() {
           ) : selectedShip.controller === "ai" && selectedShip.team !== "enemy" ? (
             <section className="npc-block doctrine-block">
               <span className="eyebrow">AI WINGMATE · AUTONOMOUS COMMAND</span>
-              <h2>Set tactical doctrine</h2>
-              <p>You set intent; {selectedShip.name} weighs its own hull and shielding against enemy condition before choosing movement, orientation, target, and weapon stance.</p>
+              <h2>{selectedIsCarrierFighter ? "Disposable strike doctrine" : "Set tactical doctrine"}</h2>
+              <p>{selectedIsCarrierFighter
+                ? `${selectedShip.name} is carrier-launched strike craft and will press its attack regardless of damage.`
+                : `You set intent; ${selectedShip.name} weighs its hull role, shielding, weapon range, and incoming threats before choosing its order.`}</p>
               <fieldset className="doctrine-options">
                 <legend>Choose the wingmate&apos;s standing order</legend>
                 {AI_DOCTRINE_ORDER.map((doctrine) => {
@@ -3093,7 +3101,7 @@ export function SpaceGame() {
                   const inputId = `doctrine-${selectedShip.id}-${doctrine}`;
                   return (
                     <label className="doctrine-option" data-doctrine={doctrine} key={doctrine} htmlFor={inputId} aria-label={`${rule.label}: ${rule.description}`}>
-                      <input id={inputId} type="radio" name={`doctrine-${selectedShip.id}`} checked={selectedAiDoctrine === doctrine} disabled={phase !== "planning" || selectedShip.hull <= 0} aria-label={rule.label} onChange={() => updateAiDoctrine(doctrine)} />
+                      <input id={inputId} type="radio" name={`doctrine-${selectedShip.id}`} checked={selectedAiDoctrine === doctrine} disabled={selectedIsCarrierFighter || phase !== "planning" || selectedShip.hull <= 0} aria-label={rule.label} onChange={() => updateAiDoctrine(doctrine)} />
                       <span><strong>{rule.label}</strong><small>{rule.shortRule}</small></span>
                     </label>
                   );
@@ -3102,7 +3110,7 @@ export function SpaceGame() {
               <div className="doctrine-status" data-doctrine={selectedAiDoctrine} role="status" aria-live="polite">
                 <span><strong>{selectedAiRule.label} doctrine</strong><b>{Math.round(selectedAiCondition * 100)}% COMBAT CONDITION</b></span>
                 <p>{selectedAiRule.description}</p>
-                <small>AI READY · ORDER CALCULATED ON COMMIT</small>
+                <small>{selectedIsCarrierFighter ? "DOCTRINE LOCKED · DISPOSABLE ATTACK RUN" : "AI READY · HULL-AWARE ORDER CALCULATED ON COMMIT"}</small>
               </div>
             </section>
           ) : (

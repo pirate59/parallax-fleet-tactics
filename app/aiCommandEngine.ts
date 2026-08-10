@@ -8,6 +8,7 @@ import {
   type Vec3,
 } from "./combatEngine.ts";
 import { fireStateForMode, movementLimitFor, type FlightMode } from "./orderRules.ts";
+import type { AiTacticalProfile } from "./aiTactics.ts";
 
 export type AiDoctrine = "aggressive" | "standard" | "defensive";
 
@@ -17,6 +18,9 @@ export type AiCommandShip = CombatShip & {
   maxPitch: number;
   maxRoll: number;
   aiDoctrine?: AiDoctrine;
+  aiTactics?: AiTacticalProfile;
+  archetypeId?: string;
+  spawnedByShipId?: string;
 };
 
 export type AiCommandOrder = {
@@ -43,8 +47,8 @@ export const AI_DOCTRINE_RULES: Record<AiDoctrine, {
   },
   standard: {
     label: "Standard",
-    shortRule: "BALANCE · ADAPT",
-    description: "Balance target weakness, range, incoming threat, and the wingmate's remaining combat strength.",
+    shortRule: "HULL · ADAPT",
+    description: "Fight to the hull's strengths, preserve its preferred range and facing, and protect damaged non-fighters.",
   },
   defensive: {
     label: "Defensive",
@@ -64,6 +68,21 @@ const normalizeAngle = (angle: number) => {
 };
 
 const ratio = (value: number, maximum: number) => clamp(value / Math.max(1, maximum), 0, 1);
+
+const DEFAULT_TACTICS: AiTacticalProfile = {
+  role: "brawler",
+  preferredRangeRatio: 0.62,
+  facingPriority: "weapon-target",
+  survivalHullRatio: 0.48,
+};
+
+function tacticsFor(ship: AiCommandShip) {
+  return ship.aiTactics ?? DEFAULT_TACTICS;
+}
+
+function effectiveDoctrineFor(ship: AiCommandShip, requested: AiDoctrine = ship.aiDoctrine ?? "standard") {
+  return ship.spawnedByShipId ? "aggressive" : requested;
+}
 
 export function shipConditionScore(ship: CombatShip) {
   const hullCondition = ratio(ship.hull, ship.maxHull);
@@ -99,9 +118,32 @@ function targetScore(ship: AiCommandShip, target: AiCommandShip, doctrine: AiDoc
 }
 
 export function chooseAiTarget(ship: AiCommandShip, ships: AiCommandShip[], doctrine: AiDoctrine = ship.aiDoctrine ?? "standard") {
+  const effectiveDoctrine = effectiveDoctrineFor(ship, doctrine);
   return targetCandidates(ship, ships)
-    .map((target) => ({ target, score: targetScore(ship, target, doctrine) }))
+    .map((target) => ({ target, score: targetScore(ship, target, effectiveDoctrine) }))
     .sort((left, right) => right.score - left.score || left.target.id.localeCompare(right.target.id))[0]?.target;
+}
+
+function likelyAttackersFor(ship: AiCommandShip, ships: AiCommandShip[]) {
+  return targetCandidates(ship, ships)
+    .map((attacker) => {
+      const predictedTarget = chooseAiTarget(attacker, ships, effectiveDoctrineFor(attacker));
+      if (predictedTarget?.id !== ship.id) return null;
+      const weapons = weaponProfilesFor(attacker);
+      if (!weapons.length) return null;
+      const distance = new THREE.Vector3(...attacker.position).distanceTo(new THREE.Vector3(...ship.position));
+      const maximumRange = Math.max(...weapons.map((weapon) => weapon.range), 1);
+      const currentlyLockedDamage = weapons
+        .filter((weapon) => shotSolutionForWeapon(attacker, ship, weapon).valid)
+        .reduce((sum, weapon) => sum + weapon.damage, 0);
+      const potentialDamage = weapons.reduce((sum, weapon) => sum + weapon.damage, 0);
+      const rangePressure = 1 - clamp(distance / (maximumRange * 1.25), 0, 1);
+      const projectedDamage = currentlyLockedDamage || potentialDamage * rangePressure * 0.55;
+      const score = currentlyLockedDamage * 2 + projectedDamage + potentialDamage * 0.2 + rangePressure * 12;
+      return { attacker, projectedDamage, score };
+    })
+    .filter((entry): entry is { attacker: AiCommandShip; projectedDamage: number; score: number } => Boolean(entry))
+    .sort((left, right) => right.score - left.score || left.attacker.id.localeCompare(right.attacker.id));
 }
 
 function clampDestination(
@@ -124,11 +166,17 @@ function clampDestination(
   return [result.x, result.y, result.z];
 }
 
+function directionAwayFrom(ship: AiCommandShip, target: AiCommandShip) {
+  const away = new THREE.Vector3(...ship.position).sub(new THREE.Vector3(...target.position));
+  return away.lengthSq() > 1e-9 ? away.normalize() : new THREE.Vector3(0, 0, 1);
+}
+
 function retreatDestination(
   ship: AiCommandShip,
   target: AiCommandShip,
   away: THREE.Vector3,
   distance: number,
+  mode: FlightMode,
   battlefieldHalf: number,
   battlefieldVerticalHalf: number,
 ) {
@@ -157,7 +205,7 @@ function retreatDestination(
       const destination = clampDestination(
         ship,
         origin.clone().addScaledVector(direction, distance),
-        "extra-move",
+        mode,
         battlefieldHalf,
         battlefieldVerticalHalf,
       );
@@ -193,29 +241,51 @@ export function generateAiCommandOrder(
   battlefieldHalf = 20,
   battlefieldVerticalHalf = 7,
 ): AiCommandOrder | null {
-  const target = chooseAiTarget(ship, ships, doctrine);
+  const effectiveDoctrine = effectiveDoctrineFor(ship, doctrine);
+  const target = chooseAiTarget(ship, ships, effectiveDoctrine);
   if (!target) return null;
 
+  const tactics = tacticsFor(ship);
+  const isFighter = tactics.role === "interceptor";
+  const isDisposable = Boolean(ship.spawnedByShipId);
   const ownCondition = shipConditionScore(ship);
   const targetCondition = shipConditionScore(target);
   const assessment = firingAssessment(ship, target);
   const toTarget = new THREE.Vector3(...target.position).sub(new THREE.Vector3(...ship.position));
   const distance = toTarget.length();
-  const maximumRange = Math.max(...weaponProfilesFor(ship).map((weapon) => weapon.range), 1);
+  const weapons = weaponProfilesFor(ship);
+  const maximumRange = Math.max(...weapons.map((weapon) => weapon.range), 1);
+  const targetMaximumRange = Math.max(...weaponProfilesFor(target).map((weapon) => weapon.range), 12);
+  const preferredRange = tactics.role === "carrier"
+    ? targetMaximumRange * tactics.preferredRangeRatio
+    : maximumRange * tactics.preferredRangeRatio;
   const isOutmatched = ownCondition + 0.12 < targetCondition;
+  const likelyAttackers = likelyAttackersFor(ship, ships);
+  const expectedThreat = likelyAttackers[0]?.attacker;
+  const incomingDamage = likelyAttackers.reduce((sum, entry) => sum + entry.projectedDamage, 0);
+  const averageShield = SHIELD_FACES.reduce((sum, face) => sum + ship.shields[face], 0) / SHIELD_FACES.length;
+  const hullDamaged = !isFighter && ship.hull < ship.maxHull;
+  const remainingBuffer = ship.hull + averageShield * 0.4;
+  const imminentDestruction = hullDamaged && (
+    ratio(ship.hull, ship.maxHull) <= tactics.survivalHullRatio
+    || incomingDamage >= remainingBuffer * 0.55
+  );
+  const canCommitFocus = tactics.facingPriority === "weapon-target"
+    || !expectedThreat
+    || expectedThreat.id === target.id;
 
   let mode: FlightMode = "normal";
-  if (doctrine === "aggressive") {
+  if (effectiveDoctrine === "aggressive") {
     if (ownCondition >= 0.38 && assessment.hasSolution && (assessment.canFinishWithFocus || targetCondition < 0.42)) {
       mode = "focus-fire";
     } else if (distance > maximumRange * 1.05) {
       mode = "extra-move";
     }
-  } else if (doctrine === "defensive") {
+  } else if (effectiveDoctrine === "defensive") {
     if (ownCondition < 0.72 || isOutmatched || distance < maximumRange * 0.58) mode = "extra-move";
-  } else if (ownCondition < 0.34 && (isOutmatched || distance < maximumRange)) {
+  } else if (imminentDestruction) {
     mode = "extra-move";
-  } else if (ownCondition > 0.66 && assessment.hasSolution && assessment.canFinishWithFocus) {
+  } else if ((!hullDamaged || !expectedThreat) && ownCondition > 0.66 && assessment.hasSolution && assessment.canFinishWithFocus && canCommitFocus) {
     mode = "focus-fire";
   }
 
@@ -227,15 +297,20 @@ export function generateAiCommandOrder(
   let movementFraction = 0;
   let selectedDestination: Vec3 | null = null;
   if (mode === "extra-move") {
-    const shouldRetreat = doctrine === "defensive" || ownCondition < 0.4 || isOutmatched;
+    const shouldRetreat = effectiveDoctrine === "defensive"
+      || imminentDestruction
+      || (!isDisposable && !isFighter && (ownCondition < 0.4 || isOutmatched));
     movementDirection = shouldRetreat ? direction.clone().multiplyScalar(-1) : direction;
     movementFraction = shouldRetreat ? 0.88 : 0.9;
     if (shouldRetreat) {
+      const retreatTarget = expectedThreat ?? target;
+      const retreatDirection = directionAwayFrom(ship, retreatTarget);
       const retreat = retreatDestination(
         ship,
-        target,
-        movementDirection,
+        retreatTarget,
+        retreatDirection,
         movementLimit * movementFraction,
+        mode,
         battlefieldHalf,
         battlefieldVerticalHalf,
       );
@@ -250,12 +325,47 @@ export function generateAiCommandOrder(
       }
     }
   } else if (mode === "normal") {
-    if (doctrine === "aggressive") movementFraction = distance > maximumRange * 0.45 ? 0.78 : 0.22;
-    if (doctrine === "standard") {
-      movementDirection = distance < maximumRange * 0.48 ? direction.clone().multiplyScalar(-1) : direction;
-      movementFraction = distance > maximumRange * 0.78 ? 0.58 : distance < maximumRange * 0.48 ? 0.34 : 0.2;
+    if (effectiveDoctrine === "aggressive") movementFraction = distance > maximumRange * 0.45 ? 0.78 : 0.22;
+    if (effectiveDoctrine === "standard") {
+      if (hullDamaged) {
+        const retreatTarget = expectedThreat ?? target;
+        const retreatDirection = directionAwayFrom(ship, retreatTarget);
+        const retreat = retreatDestination(
+          ship,
+          retreatTarget,
+          retreatDirection,
+          movementLimit * 0.58,
+          mode,
+          battlefieldHalf,
+          battlefieldVerticalHalf,
+        );
+        if (retreat?.travel && retreat.travel > 0.25) selectedDestination = retreat.destination;
+      } else {
+        const lowerBand = preferredRange * 0.82;
+        const upperBand = preferredRange * 1.06;
+        if (distance > upperBand) {
+          movementDirection = direction;
+          movementFraction = clamp((distance - preferredRange) / Math.max(1, movementLimit), 0.22, tactics.role === "standoff" ? 0.7 : 0.62);
+        } else if (distance < lowerBand) {
+          const retreat = retreatDestination(
+            ship,
+            target,
+            direction.clone().multiplyScalar(-1),
+            movementLimit * (tactics.role === "standoff" ? 0.52 : 0.38),
+            mode,
+            battlefieldHalf,
+            battlefieldVerticalHalf,
+          );
+          if (retreat?.travel && retreat.travel > 0.25) selectedDestination = retreat.destination;
+        } else {
+          const reference = Math.abs(direction.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+          movementDirection = new THREE.Vector3().crossVectors(direction, reference).normalize();
+          if (ship.id.length % 2) movementDirection.multiplyScalar(-1);
+          movementFraction = tactics.role === "standoff" ? 0.22 : 0.14;
+        }
+      }
     }
-    if (doctrine === "defensive") {
+    if (effectiveDoctrine === "defensive") {
       movementDirection = distance < maximumRange * 0.92 ? direction.clone().multiplyScalar(-1) : direction;
       movementFraction = distance < maximumRange * 0.92 ? 0.62 : 0.16;
     }
@@ -265,12 +375,17 @@ export function generateAiCommandOrder(
     .addScaledVector(movementDirection, movementLimit * movementFraction);
   const destination = selectedDestination
     ?? clampDestination(ship, desiredDestination, mode, battlefieldHalf, battlefieldVerticalHalf);
-  const aimDelta = new THREE.Vector3(...target.position).sub(new THREE.Vector3(...destination));
+  const facingTarget = effectiveDoctrine === "standard"
+    && tactics.facingPriority === "expected-threat"
+    && expectedThreat
+    ? expectedThreat
+    : target;
+  const aimDelta = new THREE.Vector3(...facingTarget.position).sub(new THREE.Vector3(...destination));
   const desiredTurn = THREE.MathUtils.radToDeg(Math.atan2(aimDelta.x, -aimDelta.z));
   const desiredPitch = THREE.MathUtils.radToDeg(Math.atan2(aimDelta.y, Math.hypot(aimDelta.x, aimDelta.z)));
   const turn = clamp(normalizeAngle(desiredTurn - ship.rotation[1]), -ship.maxTurn, ship.maxTurn);
   const pitch = clamp(desiredPitch - ship.rotation[0], -ship.maxPitch, ship.maxPitch);
-  const rollFactor = doctrine === "aggressive" ? -0.42 : doctrine === "defensive" ? 0.46 : -0.18;
+  const rollFactor = effectiveDoctrine === "aggressive" ? -0.42 : effectiveDoctrine === "defensive" ? 0.46 : -0.18;
 
   return {
     destination,

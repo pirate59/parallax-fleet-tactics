@@ -8,7 +8,7 @@ import {
   type AiCommandShip,
 } from "../app/aiCommandEngine.ts";
 import type { Shields } from "../app/combatEngine.ts";
-import { createPrimaryWeaponMount } from "../app/shipCatalog.ts";
+import { createPrimaryWeaponMount, createWeaponMount } from "../app/shipCatalog.ts";
 
 const shieldsAt = (value: number): Shields => ({
   fore: value,
@@ -80,6 +80,103 @@ test("healthy aggressive AI uses Focus Fire against a vulnerable target already 
   assert.equal(order.mode, "focus-fire");
   assert.equal(order.fire, true);
   assert.deepEqual(order.destination, ally.position);
+});
+
+test("carrier-launched fighters override defensive orders with disposable aggression", () => {
+  const fighter = makeShip("carrier-fighter", {
+    modelId: "fighter",
+    spawnedByShipId: "carrier",
+    aiDoctrine: "defensive",
+    aiTactics: { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const target = makeShip("target", {
+    team: "enemy",
+    position: [0, 0, -8],
+    hull: 8,
+    shields: shieldsAt(0),
+  });
+
+  const order = generateAiCommandOrder(fighter, [fighter, target], "defensive");
+  assert.ok(order);
+  assert.equal(order.mode, "focus-fire");
+  assert.equal(order.fire, true);
+});
+
+test("standard Hammerhead faces the hostile most likely to shoot it", () => {
+  const hammerhead = makeShip("hammerhead", {
+    maxTurn: 60,
+    aiTactics: { role: "bow-tank", preferredRangeRatio: 0.62, facingPriority: "expected-threat", survivalHullRatio: 0.5 },
+  });
+  const vulnerableTarget = makeShip("vulnerable", {
+    team: "enemy",
+    position: [0, 0, -8],
+    rotation: [0, 180, 0],
+    hull: 10,
+    shields: shieldsAt(0),
+    weaponDamage: 5,
+  });
+  const incomingThreat = makeShip("threat", {
+    team: "enemy",
+    position: [8, 0, 0],
+    rotation: [0, -90, 0],
+    weaponDamage: 40,
+  });
+
+  const order = generateAiCommandOrder(hammerhead, [hammerhead, vulnerableTarget, incomingThreat], "standard");
+  assert.ok(order);
+  assert.equal(order.targetId, vulnerableTarget.id, "weapon targeting should still favour the vulnerable ship");
+  assert.equal(order.turn, hammerhead.maxTurn, "reinforced bow should turn as far as possible toward the expected shooter");
+});
+
+test("standard standoff ships close using normal movement so their guns remain active", () => {
+  const archer = makeShip("archer", {
+    modelId: "archer",
+    maxMove: 6,
+    weaponRange: 20,
+    weaponMounts: [createWeaponMount("railgun")],
+    aiTactics: { role: "standoff", preferredRangeRatio: 0.82, facingPriority: "weapon-target", survivalHullRatio: 0.52 },
+  });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -70] });
+
+  const order = generateAiCommandOrder(archer, [archer, target], "standard", 100, 20);
+  assert.ok(order);
+  assert.equal(order.mode, "normal");
+  assert.equal(order.fire, true);
+  assert.ok(order.destination[2] < archer.position[2]);
+});
+
+test("a damaged non-fighter retreats with guns active until destruction becomes imminent", () => {
+  const damaged = makeShip("damaged", {
+    hull: 75,
+    aiTactics: { role: "brawler", preferredRangeRatio: 0.62, facingPriority: "weapon-target", survivalHullRatio: 0.48 },
+  });
+  const target = makeShip("target", {
+    team: "enemy",
+    position: [0, 0, -6],
+    rotation: [0, 180, 0],
+    weaponDamage: 5,
+  });
+
+  const order = generateAiCommandOrder(damaged, [damaged, target], "standard");
+  assert.ok(order);
+  assert.equal(order.mode, "normal");
+  assert.equal(order.fire, true);
+  assert.ok(order.destination[2] > damaged.position[2]);
+});
+
+test("fighters do not switch to survival-only movement after hull damage", () => {
+  const fighter = makeShip("fighter", {
+    modelId: "fighter",
+    hull: 15,
+    shields: shieldsAt(0),
+    aiTactics: { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const target = makeShip("target", { team: "enemy", position: [0, 0, -6] });
+
+  const order = generateAiCommandOrder(fighter, [fighter, target], "standard");
+  assert.ok(order);
+  assert.equal(order.mode, "normal");
+  assert.equal(order.fire, true);
 });
 
 test("damaged defensive AI doubles movement to retreat and keeps weapons safe", () => {

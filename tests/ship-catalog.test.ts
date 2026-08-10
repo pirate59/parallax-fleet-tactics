@@ -40,6 +40,9 @@ test("the canonical roster contains the six designed hull roles", () => {
   assert.equal(durabilityForArchetype(SHIP_ARCHETYPES.behemoth).multiplier, 3);
   assert.equal(SHIP_ARCHETYPES.carrier.weaponMounts.length, 0);
   assert.equal(SHIP_ARCHETYPES.carrier.turnEndAbility?.maxActive, 3);
+  assert.equal(SHIP_ARCHETYPES.hammerhead.aiTactics.facingPriority, "expected-threat");
+  assert.equal(SHIP_ARCHETYPES.archer.aiTactics.role, "standoff");
+  assert.equal(SHIP_ARCHETYPES.fighter.aiTactics.survivalHullRatio, 0);
 });
 
 test("hull blueprints support distinct shielding, movement, and rendered sizes", () => {
