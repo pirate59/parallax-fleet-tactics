@@ -11,8 +11,8 @@ import type { ShipSizeClass } from "./shipSize.ts";
 export const GAME_STATE_SCHEMA_VERSION = 2;
 export const GAME_RULES_VERSION = 2;
 
-export type GameMode = "story" | "skirmish" | "endless" | "hardcore" | "fishtank";
-export type GamePhase = "planning" | "executing" | "victory" | "defeat";
+export type GameMode = "story" | "skirmish" | "endless" | "hardcore" | "fishtank" | "multiplayer";
+export type GamePhase = "planning" | "waiting" | "executing" | "victory" | "defeat" | "draw";
 
 /** Complete serializable state for one deployed ship. */
 export type GameShip = {

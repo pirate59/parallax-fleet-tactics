@@ -1,0 +1,93 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  canonicalTeamForSide,
+  createMultiplayerMatchState,
+  multiplayerFleetPointTotal,
+  resolveMultiplayerTurn,
+  stateForMultiplayerPerspective,
+  validateMultiplayerOrders,
+} from "../app/multiplayerMode.ts";
+import type { GameShip, TurnOrder, TurnOrders } from "../app/gameTypes.ts";
+
+const holdOrder = (ship: GameShip, targetId: string): TurnOrder => ({
+  destination: [...ship.position],
+  turn: 0,
+  pitch: 0,
+  roll: 0,
+  targetId,
+  fire: true,
+  mode: "normal",
+});
+
+function completeOrders(state: ReturnType<typeof createMultiplayerMatchState>, side: "host" | "guest") {
+  const team = canonicalTeamForSide(side);
+  const target = state.ships.find((ship) => ship.team !== team && ship.hull > 0)!;
+  return Object.fromEntries(
+    state.ships
+      .filter((ship) => ship.team === team && ship.hull > 0)
+      .map((ship) => [ship.id, holdOrder(ship, target.id)]),
+  ) as TurnOrders;
+}
+
+test("multiplayer creates mirrored ten-point fleets under server-owned teams", () => {
+  const state = createMultiplayerMatchState("ABC234");
+  const host = state.ships.filter((ship) => ship.team === "player");
+  const guest = state.ships.filter((ship) => ship.team === "enemy");
+
+  assert.equal(multiplayerFleetPointTotal(), 10);
+  assert.equal(host.length, 4);
+  assert.equal(guest.length, 4);
+  assert.deepEqual(host.map((ship) => ship.archetypeId), guest.map((ship) => ship.archetypeId));
+  assert.ok(state.ships.every((ship) => ship.controller === "player"));
+  assert.equal(state.mode, "multiplayer");
+});
+
+test("guest perspective makes the guest fleet friendly without changing stable IDs", () => {
+  const state = createMultiplayerMatchState("ABC234");
+  const view = stateForMultiplayerPerspective(state, "guest");
+  const canonicalGuest = state.ships.find((ship) => ship.id === "multiplayer-guest-hammerhead")!;
+  const viewedGuest = view.ships.find((ship) => ship.id === canonicalGuest.id)!;
+  const viewedHost = view.ships.find((ship) => ship.id === "multiplayer-host-hammerhead")!;
+
+  assert.equal(canonicalGuest.team, "enemy");
+  assert.equal(viewedGuest.team, "player");
+  assert.equal(viewedHost.team, "enemy");
+  assert.deepEqual(viewedGuest.position, canonicalGuest.position);
+});
+
+test("server accepts only a complete order envelope for the authenticated side", () => {
+  const state = createMultiplayerMatchState("ABC234");
+  const hostOrders = completeOrders(state, "host");
+
+  assert.deepEqual(validateMultiplayerOrders(state, "host", hostOrders), hostOrders);
+  assert.throws(() => validateMultiplayerOrders(state, "host", {}), /Missing orders/);
+  assert.throws(() => validateMultiplayerOrders(state, "guest", hostOrders), /outside this fleet/);
+});
+
+test("server resolves both hidden submissions together and alternates activation priority", () => {
+  const state = createMultiplayerMatchState("ABC234");
+  const hostOrders = completeOrders(state, "host");
+  const guestOrders = completeOrders(state, "guest");
+  const source = JSON.stringify({ state, hostOrders, guestOrders });
+
+  const result = resolveMultiplayerTurn(state, hostOrders, guestOrders);
+
+  assert.equal(JSON.stringify({ state, hostOrders, guestOrders }), source);
+  assert.equal(result.resolution.turn, 1);
+  assert.equal(result.nextState.turn, 2);
+  assert.equal(result.nextState.mode, "multiplayer");
+  assert.equal(JSON.stringify(JSON.parse(JSON.stringify(result))), JSON.stringify(result));
+  assert.ok(result.resolution.orders["multiplayer-host-hammerhead"]);
+  assert.ok(result.resolution.orders["multiplayer-guest-hammerhead"]);
+});
+
+test("mutual fleet destruction is reported as a draw", () => {
+  const state = createMultiplayerMatchState("ABC234");
+  state.ships = state.ships.map((ship) => ({ ...ship, hull: 0 }));
+
+  const result = resolveMultiplayerTurn(state, {}, {});
+
+  assert.equal(result.winner, "draw");
+  assert.equal(result.nextState.phase, "draw");
+});
