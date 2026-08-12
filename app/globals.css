@@ -1650,6 +1650,174 @@ kbd {
   font-weight: 600;
 }
 
+.fleet-comms {
+  position: absolute;
+  z-index: 7;
+  top: 210px;
+  left: 18px;
+  width: min(430px, calc(100% - 36px));
+  border: 1px solid rgba(104, 210, 226, 0.24);
+  background: linear-gradient(135deg, rgba(5, 18, 26, 0.94), rgba(7, 13, 21, 0.8));
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.28), inset 2px 0 rgba(74, 224, 210, 0.3);
+  backdrop-filter: blur(16px);
+  pointer-events: none;
+  animation: comms-arrival 0.28s ease-out both;
+}
+
+[data-mode="fishtank"] .fleet-comms {
+  top: 70px;
+}
+
+.fleet-comms > header {
+  display: grid;
+  grid-template-columns: 30px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(105, 223, 255, 0.16);
+  background: rgba(59, 174, 187, 0.06);
+}
+
+.fleet-comms > header > span {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 18px;
+}
+
+.fleet-comms > header > span i {
+  width: 3px;
+  height: 7px;
+  background: #64d8dd;
+  box-shadow: 0 0 8px rgba(100, 216, 221, 0.5);
+  animation: comms-signal 0.7s ease-in-out infinite alternate;
+}
+
+.fleet-comms > header > span i:nth-child(2) {
+  height: 13px;
+  animation-delay: -0.45s;
+}
+
+.fleet-comms > header > span i:nth-child(3) {
+  height: 18px;
+  animation-delay: -0.2s;
+}
+
+.fleet-comms > header div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.fleet-comms > header small,
+.fleet-comms > header strong,
+.fleet-comms > header b {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.13em;
+}
+
+.fleet-comms > header small {
+  color: #668e9c;
+  font-size: 9px;
+}
+
+.fleet-comms > header strong {
+  color: #d5fbff;
+  font-size: var(--type-label);
+}
+
+.fleet-comms > header b {
+  padding: 3px 6px;
+  border: 1px solid rgba(104, 210, 226, 0.2);
+  color: #67cfd5;
+  font-size: 9px;
+}
+
+.fleet-comms ol {
+  display: flex;
+  flex-direction: column;
+  max-height: 250px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+}
+
+.fleet-comms li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 10px;
+  padding: 9px 11px 10px 14px;
+  border-bottom: 1px solid rgba(104, 210, 226, 0.09);
+}
+
+.fleet-comms li:last-child {
+  border-bottom: 0;
+}
+
+.fleet-comms li::before {
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: 0;
+  width: 2px;
+  background: #4fd7c9;
+  content: "";
+}
+
+.fleet-comms li.enemy::before,
+.fleet-comms li.urgent::before {
+  background: #ff7c67;
+}
+
+.fleet-comms li > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.fleet-comms li strong {
+  overflow: hidden;
+  color: #bff5f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--type-label);
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fleet-comms li.enemy strong,
+.fleet-comms li.urgent strong {
+  color: #ffaea2;
+}
+
+.fleet-comms li small {
+  color: #6b8d99;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.fleet-comms li p {
+  align-self: center;
+  margin: 0;
+  color: #b0c9d2;
+  font-size: var(--type-small);
+  line-height: 1.35;
+}
+
+@keyframes comms-arrival {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes comms-signal {
+  from { opacity: 0.35; transform: scaleY(0.55); }
+  to { opacity: 1; transform: scaleY(1); }
+}
+
 .resolution-banner {
   position: absolute;
   z-index: 8;
@@ -3517,6 +3685,11 @@ input[type="range"]::-moz-range-thumb {
     bottom: 96px;
   }
 
+  .fleet-comms {
+    left: 8px;
+    width: min(410px, calc(100% - 16px));
+  }
+
   .resolution-banner {
     bottom: 96px;
   }
@@ -3779,6 +3952,47 @@ input[type="range"]::-moz-range-thumb {
     padding: 7px 8px;
     overflow-y: auto;
     scroll-snap-align: start;
+  }
+
+  .fleet-comms {
+    top: 260px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+    max-height: 142px;
+    overflow: hidden;
+  }
+
+  [data-mode="fishtank"] .fleet-comms {
+    top: 70px;
+    max-height: 196px;
+  }
+
+  .fleet-comms > header {
+    min-height: 38px;
+    padding: 5px 8px;
+  }
+
+  .fleet-comms ol {
+    max-height: 104px;
+  }
+
+  [data-mode="fishtank"] .fleet-comms ol {
+    max-height: 158px;
+  }
+
+  .fleet-comms li {
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 7px;
+    padding: 7px 8px 8px 11px;
+  }
+
+  .fleet-comms li p {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 10px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   .tactical-telemetry .shield-grid {

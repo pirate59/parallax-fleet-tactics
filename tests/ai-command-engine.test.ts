@@ -4,6 +4,7 @@ import * as THREE from "three";
 import {
   carrierWingTargetAssignments,
   chooseAiTarget,
+  generateAiCommandDecision,
   generateAiCommandOrder,
   shipConditionScore,
   type AiCommandShip,
@@ -566,4 +567,84 @@ test("critical shared risk overrides aggressive doctrine for a damaged non-fight
 
   assert.equal(order?.mode, "extra-move");
   assert.equal(order?.fire, false);
+});
+
+test("AI decision comms preserve the selected target and movement stance", () => {
+  const ally = makeShip("ally", { callsign: "BLUE-02", aiMission: "assault" });
+  const target = makeShip("target", {
+    callsign: "RED-01",
+    team: "enemy",
+    position: [0, 0, -8],
+    hull: 8,
+    shields: shieldsAt(0),
+  });
+  const decision = generateAiCommandDecision(ally, [ally, target], "aggressive");
+
+  assert.ok(decision);
+  assert.equal(decision.comms.targetId, decision.order.targetId);
+  assert.equal(decision.comms.targetName, target.callsign);
+  assert.match(decision.comms.message, /RED-01/);
+  assert.match(decision.comms.message, /double salvo/i);
+});
+
+test("carrier fighter comms announce shared wing focus", () => {
+  const fighter = makeShip("fighter", {
+    callsign: "DART-03",
+    modelId: "fighter",
+    spawnedByShipId: "carrier",
+    aiMission: "assault",
+    aiTactics: { role: "interceptor", defaultMission: "interception", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const target = makeShip("target", { callsign: "BULWARK", team: "enemy", position: [0, 0, -8] });
+  const decision = generateAiCommandDecision(fighter, [fighter, target], "defensive");
+
+  assert.ok(decision);
+  assert.equal(decision.comms.mission, "assault");
+  assert.match(decision.comms.message, /Wing focus on BULWARK/);
+});
+
+test("damaged non-fighter comms report survival breakaway", () => {
+  const damaged = makeShip("damaged", {
+    callsign: "WARDEN",
+    hull: 20,
+    shields: shieldsAt(0),
+    aiDoctrine: "defensive",
+    aiTactics: { role: "brawler", defaultMission: "defense", preferredRangeRatio: 0.62, facingPriority: "weapon-target", survivalHullRatio: 0.48 },
+  });
+  const target = makeShip("target", { callsign: "RAIDER", team: "enemy", position: [0, 0, -6] });
+  const decision = generateAiCommandDecision(damaged, [damaged, target]);
+
+  assert.ok(decision);
+  assert.equal(decision.order.mode, "extra-move");
+  assert.equal(decision.comms.tone, "urgent");
+  assert.match(decision.comms.message, /Hull breached.*RAIDER/i);
+});
+
+test("bow-tank comms expose the threat used for defensive orientation", () => {
+  const hammerhead = makeShip("hammerhead", {
+    callsign: "HAMMER",
+    aiMission: "assault",
+    aiTactics: { role: "bow-tank", defaultMission: "assault", preferredRangeRatio: 0.62, facingPriority: "expected-threat", survivalHullRatio: 0.5 },
+  });
+  const target = makeShip("vulnerable", {
+    callsign: "PREY",
+    team: "enemy",
+    position: [0, 0, -8],
+    hull: 10,
+    shields: shieldsAt(0),
+    weaponDamage: 5,
+  });
+  const threat = makeShip("threat", {
+    callsign: "GUNSHIP",
+    team: "enemy",
+    position: [8, 0, 0],
+    weaponDamage: 40,
+    lastTargetId: hammerhead.id,
+  });
+  const decision = generateAiCommandDecision(hammerhead, [hammerhead, target, threat], "standard");
+
+  assert.ok(decision);
+  assert.equal(decision.order.targetId, target.id);
+  assert.match(decision.comms.message, /Engaging PREY/);
+  assert.match(decision.comms.message, /Reinforced bow toward GUNSHIP/);
 });

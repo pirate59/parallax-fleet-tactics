@@ -64,8 +64,9 @@ import {
   AI_DOCTRINE_RULES,
   carrierWingTargetAssignments,
   defaultAiMissionFor,
-  generateAiCommandOrder,
+  generateAiCommandDecision,
   shipConditionScore,
+  type AiCommandComms,
   type AiDoctrine,
 } from "./aiCommandEngine";
 import { AI_MISSION_ORDER, AI_MISSION_RULES, type AiMissionOrder } from "./aiTactics";
@@ -2939,6 +2940,7 @@ export function SpaceGame() {
   const [log, setLog] = useState(INITIAL_LOG);
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [combatFocus, setCombatFocus] = useState<CombatFocus | null>(null);
+  const [aiComms, setAiComms] = useState<AiCommandComms[]>([]);
   const [cameraCommand, setCameraCommand] = useState<CameraCommand>({ kind: "reset", nonce: 0 });
   const [helpOpen, setHelpOpen] = useState(true);
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
@@ -3177,6 +3179,7 @@ export function SpaceGame() {
   const generateNpcOrders = useCallback((currentShips: Ship[]) => {
     const bounds = battlefieldForMode(activeMode);
     const orders: Record<string, Order> = {};
+    const comms: AiCommandComms[] = [];
     const wingTargets = carrierWingTargetAssignments(currentShips);
     currentShips
       .filter((ship) => ship.controller === "ai" && ship.hull > 0)
@@ -3184,7 +3187,7 @@ export function SpaceGame() {
         const reservedDestinations = Object.fromEntries(
           Object.entries(orders).map(([id, order]) => [id, order.destination]),
         );
-        const order = generateAiCommandOrder(
+        const decision = generateAiCommandDecision(
           ship,
           currentShips,
           ship.aiDoctrine ?? "standard",
@@ -3198,9 +3201,12 @@ export function SpaceGame() {
             battlefieldWidthHalf: bounds.halfWidth,
           },
         );
-        if (order) orders[ship.id] = order;
+        if (decision) {
+          orders[ship.id] = decision.order;
+          comms.push(decision.comms);
+        }
       });
-    return orders;
+    return { orders, comms };
   }, [activeMode]);
 
   const executeTurn = useCallback((automatic = false) => {
@@ -3217,8 +3223,11 @@ export function SpaceGame() {
       .every(commandOrderIsValid);
     const fleetReadyNow = isFleetCommitReady(ships, staged, commandOrderIsValid);
     if (phase !== "planning" || (!fishtankCommit && (!fleetReadyNow || !ordersValidNow))) return;
-    const npcOrders = generateNpcOrders(ships);
-    const allOrders: Record<string, Order> = fishtankCommit ? npcOrders : { ...drafts, ...npcOrders };
+    const npcPlan = generateNpcOrders(ships);
+    const allOrders: Record<string, Order> = fishtankCommit ? npcPlan.orders : { ...drafts, ...npcPlan.orders };
+    const visibleComms = activeMode === "fishtank"
+      ? npcPlan.comms
+      : npcPlan.comms.filter((transmission) => transmission.team !== "enemy");
     const result = resolveTurn({
       turn,
       ships,
@@ -3228,12 +3237,14 @@ export function SpaceGame() {
     });
     setPhase("executing");
     setMobileControlsOpen(false);
+    setAiComms(visibleComms);
     setLog((current) => [
       activeMode === "fishtank"
         ? `Turn ${turn}: both AI fleets released their vectors.`
         : `Turn ${turn}: vectors move simultaneously; impacts resolve before ordered fire.`,
+      ...visibleComms.slice(0, 3).map((transmission) => `${transmission.callsign}: ${transmission.message}`),
       ...current,
-    ].slice(0, 8));
+    ].slice(0, 12));
     setResolution(result);
   }, [activeMode, drafts, generateNpcOrders, phase, ships, staged, turn]);
 
@@ -3243,6 +3254,7 @@ export function SpaceGame() {
     const results = finalized.ships;
     setShips(results);
     setResolution(null);
+    setAiComms([]);
     setLog((current) => [...finalized.outcomes, ...current].slice(0, 12));
 
     const enemyAlive = results.some((ship) => ship.team === "enemy" && ship.hull > 0);
@@ -3294,6 +3306,7 @@ export function SpaceGame() {
     setLog(nextLog);
     setResolution(null);
     setCombatFocus(null);
+    setAiComms([]);
     setCameraCommand({ kind: "reset", nonce: Date.now() });
   }, []);
 
@@ -3780,7 +3793,7 @@ export function SpaceGame() {
             <button type="button" className={helpOpen ? "active" : ""} onClick={() => setHelpOpen((open) => !open)}>Controls</button>
           </div>}
 
-          {activeMode !== "fishtank" && helpOpen && (
+          {activeMode !== "fishtank" && helpOpen && phase !== "executing" && (
             <div className="help-card">
               <button type="button" aria-label="Close camera help" onClick={() => setHelpOpen(false)}>×</button>
               <strong>CAMERA</strong>
@@ -3789,6 +3802,24 @@ export function SpaceGame() {
               <span><b>Click ship</b> select or target</span>
               <span><b>Cone tip</b> ship centre · beams use gun mounts</span>
             </div>
+          )}
+
+          {phase === "executing" && !combatFocus && aiComms.length > 0 && (
+            <section className={`fleet-comms ${activeMode === "fishtank" ? "dual-fleet" : "friendly-only"}`} aria-label="AI fleet communications" aria-live="polite">
+              <header>
+                <span aria-hidden="true"><i /><i /><i /></span>
+                <div><small>FLEET COMMS</small><strong>ORDERS RELEASED</strong></div>
+                <b>{aiComms.length} TX</b>
+              </header>
+              <ol>
+                {aiComms.slice(0, activeMode === "fishtank" ? 6 : 4).map((transmission) => (
+                  <li key={`${turn}-${transmission.shipId}`} className={`${transmission.team} ${transmission.tone}`}>
+                    <div><strong>{transmission.callsign}</strong><small>{AI_MISSION_RULES[transmission.mission].label.toUpperCase()}</small></div>
+                    <p>{transmission.message}</p>
+                  </li>
+                ))}
+              </ol>
+            </section>
           )}
 
           {phase === "executing" && combatFocus && (

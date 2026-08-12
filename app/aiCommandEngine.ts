@@ -5,6 +5,7 @@ import {
   shotSolutionForWeapon,
   weaponProfilesFor,
   type CombatShip,
+  type Team,
   type Vec3,
 } from "./combatEngine.ts";
 import { fireStateForMode, movementLimitFor, type FlightMode } from "./orderRules.ts";
@@ -39,6 +40,7 @@ export type AiCommandShip = CombatShip & {
   lastTargetId?: string;
   fighterReserveRemaining?: number;
   turnEndAbility?: ShipTurnEndAbility;
+  callsign?: string;
 };
 
 export type AiCommandOrder = {
@@ -57,6 +59,24 @@ export type AiCommandOptions = {
   mission?: AiMissionOrder;
   reservedDestinations?: Record<string, Vec3>;
   battlefieldWidthHalf?: number;
+};
+
+export type AiCommsTone = "attack" | "guard" | "urgent" | "maneuver";
+
+export type AiCommandComms = {
+  shipId: string;
+  callsign: string;
+  team: Team;
+  mission: AiMissionOrder;
+  targetId: string;
+  targetName: string;
+  tone: AiCommsTone;
+  message: string;
+};
+
+export type AiCommandDecision = {
+  order: AiCommandOrder;
+  comms: AiCommandComms;
 };
 
 export const AI_DOCTRINE_ORDER: AiDoctrine[] = ["aggressive", "standard", "defensive"];
@@ -649,5 +669,99 @@ export function generateAiCommandOrder(
     fire: fireStateForMode(mode, true),
     mode,
     ramTargetId: rammingOpportunity ? target.id : undefined,
+  };
+}
+
+/**
+ * Turns an AI order into concise fleet traffic using the same threat picture,
+ * mission, hull role, and movement stance that produced the order.
+ */
+export function commsForAiCommand(
+  ship: AiCommandShip,
+  ships: AiCommandShip[],
+  order: AiCommandOrder,
+  requestedMission: AiMissionOrder = defaultAiMissionFor(ship),
+): AiCommandComms {
+  const mission = effectiveMissionFor(ship, requestedMission);
+  const target = ships.find((candidate) => candidate.id === order.targetId) ?? ship;
+  const risk = assessFleetRisk(ship, ships);
+  const primaryThreat = risk.primaryThreat?.enemy;
+  const tactics = tacticsFor(ship);
+  const callsign = ship.callsign ?? ship.name;
+  const targetName = target.callsign ?? target.name;
+  const threatName = primaryThreat ? primaryThreat.callsign ?? primaryThreat.name : targetName;
+  const hullDamaged = tactics.role !== "interceptor" && ship.hull < ship.maxHull;
+
+  let tone: AiCommsTone = "maneuver";
+  let intent: string;
+
+  if (order.ramTargetId) {
+    tone = "attack";
+    intent = `Impact course on ${targetName}. Reinforced hull committed.`;
+  } else if (hullDamaged && order.mode === "extra-move") {
+    tone = "urgent";
+    intent = `Hull breached. Breaking from ${targetName} and preserving the ship.`;
+  } else if (ship.spawnedByShipId && mission === "assault") {
+    tone = "attack";
+    intent = `Wing focus on ${targetName}. Saturating its defenses.`;
+  } else if (tactics.role === "bow-tank") {
+    tone = "guard";
+    intent = `Engaging ${targetName}. Reinforced bow toward ${threatName}.`;
+  } else if (mission === "bombing") {
+    tone = "attack";
+    intent = `Beginning bombing run on ${targetName}. Holding the long-range envelope.`;
+  } else if (mission === "interception") {
+    tone = "guard";
+    intent = `Intercepting ${targetName} before it reaches the fleet.`;
+  } else if (mission === "defense") {
+    tone = "guard";
+    intent = `Defending the formation. ${targetName} is the priority threat.`;
+  } else {
+    tone = "attack";
+    intent = `Pressing ${targetName} at close range.`;
+  }
+
+  if (!order.ramTargetId && !(hullDamaged && order.mode === "extra-move")) {
+    if (order.mode === "focus-fire") {
+      intent += " Holding position for a double salvo.";
+    } else if (order.mode === "extra-move") {
+      intent += " Full thrust; weapons held until intercept.";
+    } else if (order.fire) {
+      intent += " Moving with weapons available.";
+    }
+  }
+
+  return {
+    shipId: ship.id,
+    callsign,
+    team: ship.team,
+    mission,
+    targetId: target.id,
+    targetName,
+    tone,
+    message: intent,
+  };
+}
+
+export function generateAiCommandDecision(
+  ship: AiCommandShip,
+  ships: AiCommandShip[],
+  doctrine: AiDoctrine = ship.aiDoctrine ?? "standard",
+  battlefieldHalf = 20,
+  battlefieldVerticalHalf = 7,
+  options: AiCommandOptions = {},
+): AiCommandDecision | null {
+  const order = generateAiCommandOrder(
+    ship,
+    ships,
+    doctrine,
+    battlefieldHalf,
+    battlefieldVerticalHalf,
+    options,
+  );
+  if (!order) return null;
+  return {
+    order,
+    comms: commsForAiCommand(ship, ships, order, options.mission ?? defaultAiMissionFor(ship)),
   };
 }
