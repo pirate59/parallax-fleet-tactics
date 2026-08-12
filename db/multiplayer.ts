@@ -7,10 +7,12 @@ import {
   multiplayerTimeoutOrders,
   multiplayerTurnDuration,
   multiplayerWinnerAfterConcession,
+  replaceMultiplayerSideFleet,
   resolutionForMultiplayerPerspective,
   resolveMultiplayerTurn,
   stateForMultiplayerPerspective,
   validateMultiplayerControls,
+  validateMultiplayerFleetSelection,
   validateMultiplayerOrders,
   type MultiplayerControlSettings,
   type MultiplayerCompletionReason,
@@ -198,17 +200,18 @@ function viewFromRow(row: MatchRow, side: MultiplayerSide): MultiplayerView {
   };
 }
 
-export async function createMultiplayerMatch(name: unknown): Promise<{ session: MultiplayerSession; view: MultiplayerView }> {
+export async function createMultiplayerMatch(name: unknown, fleetInput: unknown): Promise<{ session: MultiplayerSession; view: MultiplayerView }> {
   await ensureMultiplayerSchema();
   const db = database();
   const token = randomToken();
   const hash = await tokenHash(token);
   const hostName = normalizePlayerName(name, "Azure Commander");
+  const hostFleet = validateMultiplayerFleetSelection(fleetInput);
   const now = Date.now();
 
   for (let attempt = 0; attempt < CODE_ATTEMPTS; attempt += 1) {
     const code = randomCode();
-    const state = createMultiplayerMatchState(code);
+    const state = createMultiplayerMatchState(code, hostFleet);
     const result = await db.prepare(`INSERT OR IGNORE INTO multiplayer_matches (
       code, status, turn, state_json, resolution_json, host_token_hash, guest_token_hash,
       host_name, guest_name, host_submitted_turn, guest_submitted_turn, winner, created_at, updated_at
@@ -224,23 +227,25 @@ export async function createMultiplayerMatch(name: unknown): Promise<{ session: 
   throw new Error("A unique match code could not be allocated. Try again.");
 }
 
-export async function joinMultiplayerMatch(codeInput: string, name: unknown): Promise<{ session: MultiplayerSession; view: MultiplayerView }> {
+export async function joinMultiplayerMatch(codeInput: string, name: unknown, fleetInput: unknown): Promise<{ session: MultiplayerSession; view: MultiplayerView }> {
   await ensureMultiplayerSchema();
   const code = normalizeMatchCode(codeInput);
   if (code.length !== 6) throw new Error("Enter the complete six-character match code.");
   const token = randomToken();
   const hash = await tokenHash(token);
   const guestName = normalizePlayerName(name, "Crimson Commander");
+  const guestFleet = validateMultiplayerFleetSelection(fleetInput);
   const now = Date.now();
+  const existing = await matchRow(code);
+  if (!existing) throw new Error("No match was found for that code.");
+  const nextState = replaceMultiplayerSideFleet(parseState(existing), "guest", guestFleet);
   const result = await database().prepare(`UPDATE multiplayer_matches
-    SET guest_token_hash = ?, guest_name = ?, status = 'planning', deadline_at = ?,
+    SET guest_token_hash = ?, guest_name = ?, state_json = ?, status = 'planning', deadline_at = ?,
       last_turn_timed_out = 0, completion_reason = NULL, conceded_by = NULL, updated_at = ?
     WHERE code = ? AND status = 'waiting' AND guest_token_hash IS NULL`)
-    .bind(hash, guestName, now + MULTIPLAYER_TURN_MS, now, code)
+    .bind(hash, guestName, JSON.stringify(nextState), now + MULTIPLAYER_TURN_MS, now, code)
     .run();
   if ((result.meta.changes ?? 0) === 0) {
-    const existing = await matchRow(code);
-    if (!existing) throw new Error("No match was found for that code.");
     throw new Error("That match already has two commanders or is no longer joinable.");
   }
   const row = await matchRow(code);

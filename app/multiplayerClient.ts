@@ -1,5 +1,5 @@
 import type { TurnOrders } from "./gameTypes.ts";
-import type { MultiplayerControlSettings, MultiplayerSession, MultiplayerView } from "./multiplayerMode.ts";
+import type { MultiplayerControlSettings, MultiplayerFleetSelection, MultiplayerSession, MultiplayerView } from "./multiplayerMode.ts";
 
 const SESSION_KEY = "parallax.multiplayer.session.v1";
 
@@ -17,17 +17,17 @@ async function jsonRequest<T>(path: string, init: RequestInit = {}): Promise<T> 
   return body;
 }
 
-export async function createRemoteMatch(name: string) {
+export async function createRemoteMatch(name: string, fleet: MultiplayerFleetSelection) {
   return jsonRequest<{ session: MultiplayerSession; view: MultiplayerView }>("/api/multiplayer/matches", {
     method: "POST",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, fleet }),
   });
 }
 
-export async function joinRemoteMatch(code: string, name: string) {
+export async function joinRemoteMatch(code: string, name: string, fleet: MultiplayerFleetSelection) {
   return jsonRequest<{ session: MultiplayerSession; view: MultiplayerView }>("/api/multiplayer/join", {
     method: "POST",
-    body: JSON.stringify({ code, name }),
+    body: JSON.stringify({ code, name, fleet }),
   });
 }
 

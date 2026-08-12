@@ -4,16 +4,19 @@ import {
   applyMultiplayerControls,
   canonicalTeamForSide,
   createMultiplayerMatchState,
+  DEFAULT_MULTIPLAYER_FLEET,
   multiplayerControlsForSide,
-  multiplayerFleetPointTotal,
+  MULTIPLAYER_FLEET_SIZE,
   multiplayerTimeoutOrders,
   multiplayerTurnDuration,
   multiplayerWinnerAfterConcession,
   MULTIPLAYER_TIMEOUT_TURN_MS,
   MULTIPLAYER_TURN_MS,
   resolveMultiplayerTurn,
+  replaceMultiplayerSideFleet,
   stateForMultiplayerPerspective,
   validateMultiplayerControls,
+  validateMultiplayerFleetSelection,
   validateMultiplayerOrders,
 } from "../app/multiplayerMode.ts";
 import type { GameShip, TurnOrder, TurnOrders } from "../app/gameTypes.ts";
@@ -38,17 +41,36 @@ function completeOrders(state: ReturnType<typeof createMultiplayerMatchState>, s
   ) as TurnOrders;
 }
 
-test("multiplayer creates mirrored ten-point fleets under server-owned teams", () => {
+test("multiplayer creates one Large, three Cruisers, and one Fighter per commander", () => {
   const state = createMultiplayerMatchState("ABC234");
   const host = state.ships.filter((ship) => ship.team === "player");
   const guest = state.ships.filter((ship) => ship.team === "enemy");
 
-  assert.equal(multiplayerFleetPointTotal(), 10);
-  assert.equal(host.length, 4);
-  assert.equal(guest.length, 4);
+  assert.equal(host.length, MULTIPLAYER_FLEET_SIZE);
+  assert.equal(guest.length, MULTIPLAYER_FLEET_SIZE);
+  for (const fleet of [host, guest]) {
+    assert.equal(fleet.filter((ship) => ship.sizeClass === "large").length, 1);
+    assert.equal(fleet.filter((ship) => ship.sizeClass === "cruiser").length, 3);
+    assert.equal(fleet.filter((ship) => ship.sizeClass === "shuttle").length, 1);
+  }
   assert.deepEqual(host.map((ship) => ship.archetypeId), guest.map((ship) => ship.archetypeId));
   assert.ok(state.ships.every((ship) => ship.controller === "player"));
   assert.equal(state.mode, "multiplayer");
+});
+
+test("fleet selections allow repeated Cruisers and reject invalid compositions", () => {
+  const selection = validateMultiplayerFleetSelection({
+    large: "carrier",
+    cruisers: ["archer", "archer", "hulk"],
+    fighter: "fighter",
+  });
+  const state = replaceMultiplayerSideFleet(createMultiplayerMatchState("ABC234"), "guest", selection);
+  const guest = state.ships.filter((ship) => ship.team === "enemy");
+
+  assert.deepEqual(guest.map((ship) => ship.archetypeId), ["carrier", "archer", "archer", "hulk", "fighter"]);
+  assert.equal(new Set(guest.map((ship) => ship.id)).size, 5);
+  assert.throws(() => validateMultiplayerFleetSelection({ ...DEFAULT_MULTIPLAYER_FLEET, cruisers: ["archer", "hulk"] }), /exactly three/);
+  assert.throws(() => validateMultiplayerFleetSelection({ ...DEFAULT_MULTIPLAYER_FLEET, large: "hammerhead" }), /Large/);
 });
 
 test("guest perspective makes the guest fleet friendly without changing stable IDs", () => {
@@ -126,8 +148,8 @@ test("an expired commander receives a complete legal AI order envelope", () => {
   const hostOrders = multiplayerTimeoutOrders(state, "host");
   const guestOrders = multiplayerTimeoutOrders(state, "guest");
 
-  assert.equal(Object.keys(hostOrders).length, 4);
-  assert.equal(Object.keys(guestOrders).length, 4);
+  assert.equal(Object.keys(hostOrders).length, 5);
+  assert.equal(Object.keys(guestOrders).length, 5);
   assert.doesNotThrow(() => validateMultiplayerOrders(state, "host", hostOrders));
   assert.doesNotThrow(() => validateMultiplayerOrders(state, "guest", guestOrders));
 });

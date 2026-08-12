@@ -106,9 +106,15 @@ import {
   submitRemoteOrders,
 } from "./multiplayerClient";
 import {
-  MULTIPLAYER_FLEET_POINTS,
+  DEFAULT_MULTIPLAYER_FLEET,
+  MULTIPLAYER_CRUISER_HULLS,
+  MULTIPLAYER_FLEET_SIZE,
+  MULTIPLAYER_LARGE_HULLS,
   MULTIPLAYER_POLL_MS,
   type MultiplayerControlSettings,
+  type MultiplayerCruiserHull,
+  type MultiplayerFleetSelection,
+  type MultiplayerLargeHull,
   type MultiplayerSession,
   type MultiplayerView,
 } from "./multiplayerMode";
@@ -2751,6 +2757,57 @@ function MainMenu({
   );
 }
 
+function MultiplayerFleetBuilder({
+  selection,
+  disabled,
+  onChange,
+}: {
+  selection: MultiplayerFleetSelection;
+  disabled: boolean;
+  onChange: (selection: MultiplayerFleetSelection) => void;
+}) {
+  const hullOption = (id: MultiplayerLargeHull | MultiplayerCruiserHull) => {
+    const hull = SHIP_ARCHETYPES[id];
+    return <option key={id} value={id}>{hull.name} · {hull.aiTactics.role.replace("-", " ")}</option>;
+  };
+  return (
+    <section className="multiplayer-fleet-builder" aria-labelledby="fleet-builder-title">
+      <header>
+        <span><small>FLEET COMPOSITION</small><strong id="fleet-builder-title">Choose your five-ship command</strong></span>
+        <b>{MULTIPLAYER_FLEET_SIZE} / {MULTIPLAYER_FLEET_SIZE}</b>
+      </header>
+      <div className="fleet-builder-grid">
+        <label className="fleet-builder-large">
+          <span><b>01</b><small>LARGE SHIP</small></span>
+          <select disabled={disabled} value={selection.large} onChange={(event) => onChange({ ...selection, large: event.target.value as MultiplayerLargeHull })}>
+            {MULTIPLAYER_LARGE_HULLS.map((id) => hullOption(id))}
+          </select>
+          <p>{SHIP_ARCHETYPES[selection.large].className}</p>
+        </label>
+        {selection.cruisers.map((cruiser, index) => (
+          <label key={index}>
+            <span><b>{String(index + 2).padStart(2, "0")}</b><small>MEDIUM · CRUISER {index + 1}</small></span>
+            <select disabled={disabled} value={cruiser} onChange={(event) => {
+              const cruisers = [...selection.cruisers] as MultiplayerFleetSelection["cruisers"];
+              cruisers[index] = event.target.value as MultiplayerCruiserHull;
+              onChange({ ...selection, cruisers });
+            }}>
+              {MULTIPLAYER_CRUISER_HULLS.map((id) => hullOption(id))}
+            </select>
+            <p>{SHIP_ARCHETYPES[cruiser].className}</p>
+          </label>
+        ))}
+        <div className="fleet-builder-fighter">
+          <span><b>05</b><small>FIGHTER</small></span>
+          <strong>Fighter</strong>
+          <p>{SHIP_ARCHETYPES.fighter.className}</p>
+        </div>
+      </div>
+      <p className="fleet-builder-note">Cruiser hulls may be repeated. The rival fleet remains concealed until both commanders connect.</p>
+    </section>
+  );
+}
+
 function MultiplayerLobby({
   session,
   view,
@@ -2765,14 +2822,18 @@ function MultiplayerLobby({
   view: MultiplayerView | null;
   busy: boolean;
   error: string;
-  onCreate: (name: string) => void;
-  onJoin: (code: string, name: string) => void;
+  onCreate: (name: string, fleet: MultiplayerFleetSelection) => void;
+  onJoin: (code: string, name: string, fleet: MultiplayerFleetSelection) => void;
   onAbandon: () => void;
   onMenu: () => void;
 }) {
   const [name, setName] = useState("Commander");
   const [joinCode, setJoinCode] = useState("");
   const [copied, setCopied] = useState(false);
+  const [fleet, setFleet] = useState<MultiplayerFleetSelection>(() => ({
+    ...DEFAULT_MULTIPLAYER_FLEET,
+    cruisers: [...DEFAULT_MULTIPLAYER_FLEET.cruisers],
+  }));
   const waiting = Boolean(session && view?.status === "waiting");
 
   const copyCode = async () => {
@@ -2799,7 +2860,7 @@ function MultiplayerLobby({
         <h1 id="multiplayer-title">HIDDEN ORDERS.<br /><em>ONE BATTLEFIELD.</em></h1>
         <p>Each commander plots their entire fleet in private. When both envelopes are locked, movement resolves together and weapon activations begin.</p>
         <div className="multiplayer-rules">
-          <span><b>01</b><strong>{MULTIPLAYER_FLEET_POINTS} POINT FLEETS</strong><small>Mirrored first-play roster</small></span>
+          <span><b>01</b><strong>1 LARGE · 3 MEDIUM · 1 FIGHTER</strong><small>Each commander chooses five hulls</small></span>
           <span><b>02</b><strong>HIDDEN VECTORS</strong><small>No order information leaks</small></span>
           <span><b>03</b><strong>SERVER RESOLUTION</strong><small>Same rules for both commanders</small></span>
         </div>
@@ -2827,6 +2888,8 @@ function MultiplayerLobby({
           <button className="multiplayer-secondary" type="button" onClick={onAbandon}>Forget saved match</button>
         </section>
       ) : (
+        <>
+        <MultiplayerFleetBuilder selection={fleet} disabled={busy} onChange={setFleet} />
         <section className="multiplayer-actions">
           <article>
             <span className="action-number">01</span>
@@ -2834,7 +2897,7 @@ function MultiplayerLobby({
             <h2>Create match</h2>
             <p>Generate a private six-character code and wait for another commander to join.</p>
             <label><span>COMMANDER NAME</span><input value={name} maxLength={24} autoComplete="nickname" onChange={(event) => setName(event.target.value)} /></label>
-            <button type="button" disabled={busy} onClick={() => onCreate(name)}>{busy ? "ESTABLISHING LINK…" : "CREATE PRIVATE MATCH"}<b>→</b></button>
+            <button type="button" disabled={busy} onClick={() => onCreate(name, fleet)}>{busy ? "ESTABLISHING LINK…" : "CREATE PRIVATE MATCH"}<b>→</b></button>
           </article>
           <div className="multiplayer-divider"><span>OR</span></div>
           <article>
@@ -2844,9 +2907,10 @@ function MultiplayerLobby({
             <p>Enter the code supplied by the host. Your fleet appears as friendly from your perspective.</p>
             <label><span>MATCH CODE</span><input className="code-input" value={joinCode} maxLength={6} autoCapitalize="characters" autoComplete="off" placeholder="ABC234" onChange={(event) => setJoinCode(event.target.value.toUpperCase().replace(/[^A-Z2-9]/g, ""))} /></label>
             <label><span>COMMANDER NAME</span><input value={name} maxLength={24} autoComplete="nickname" onChange={(event) => setName(event.target.value)} /></label>
-            <button type="button" disabled={busy || joinCode.length !== 6} onClick={() => onJoin(joinCode, name)}>{busy ? "JOINING…" : "JOIN MATCH"}<b>→</b></button>
+            <button type="button" disabled={busy || joinCode.length !== 6} onClick={() => onJoin(joinCode, name, fleet)}>{busy ? "JOINING…" : "JOIN MATCH"}<b>→</b></button>
           </article>
         </section>
+        </>
       )}
 
       {error && !session && <p className="multiplayer-error" role="alert">{error}</p>}
@@ -3526,11 +3590,11 @@ export function SpaceGame() {
     setScreen("battle");
   }, [loadCombatState]);
 
-  const createMultiplayer = useCallback(async (name: string) => {
+  const createMultiplayer = useCallback(async (name: string, fleet: MultiplayerFleetSelection) => {
     setMultiplayerBusy(true);
     setMultiplayerError("");
     try {
-      const created = await createRemoteMatch(name);
+      const created = await createRemoteMatch(name, fleet);
       saveMultiplayerSession(created.session);
       setMultiplayerSession(created.session);
       setMultiplayerView(created.view);
@@ -3541,11 +3605,11 @@ export function SpaceGame() {
     }
   }, []);
 
-  const joinMultiplayer = useCallback(async (code: string, name: string) => {
+  const joinMultiplayer = useCallback(async (code: string, name: string, fleet: MultiplayerFleetSelection) => {
     setMultiplayerBusy(true);
     setMultiplayerError("");
     try {
-      const joined = await joinRemoteMatch(code, name);
+      const joined = await joinRemoteMatch(code, name, fleet);
       saveMultiplayerSession(joined.session);
       setMultiplayerSession(joined.session);
       beginMultiplayerBattle(joined.view);

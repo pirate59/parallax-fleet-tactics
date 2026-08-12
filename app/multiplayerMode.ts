@@ -28,7 +28,7 @@ import { createShipFromArchetype } from "./shipFactory.ts";
 
 export const MULTIPLAYER_CODE_LENGTH = 6;
 export const MULTIPLAYER_POLL_MS = 1200;
-export const MULTIPLAYER_FLEET_POINTS = 10;
+export const MULTIPLAYER_FLEET_SIZE = 5;
 export const MULTIPLAYER_TURN_MS = 120_000;
 export const MULTIPLAYER_TIMEOUT_TURN_MS = 30_000;
 
@@ -36,6 +36,21 @@ export type MultiplayerSide = "host" | "guest";
 export type MultiplayerMatchStatus = "waiting" | "planning" | "resolving" | "complete";
 export type MultiplayerWinner = MultiplayerSide | "draw" | null;
 export type MultiplayerCompletionReason = "combat" | "concession" | null;
+export type MultiplayerLargeHull = "behemoth" | "carrier";
+export type MultiplayerCruiserHull = "hammerhead" | "archer" | "hulk";
+export type MultiplayerFleetSelection = {
+  large: MultiplayerLargeHull;
+  cruisers: [MultiplayerCruiserHull, MultiplayerCruiserHull, MultiplayerCruiserHull];
+  fighter: "fighter";
+};
+
+export const MULTIPLAYER_LARGE_HULLS: MultiplayerLargeHull[] = ["behemoth", "carrier"];
+export const MULTIPLAYER_CRUISER_HULLS: MultiplayerCruiserHull[] = ["hammerhead", "archer", "hulk"];
+export const DEFAULT_MULTIPLAYER_FLEET: MultiplayerFleetSelection = {
+  large: "behemoth",
+  cruisers: ["hammerhead", "archer", "hulk"],
+  fighter: "fighter",
+};
 
 export type MultiplayerShipControl = {
   controller: ShipController;
@@ -75,25 +90,45 @@ const LEFT_SLOTS: Vec3[] = [
   [-FLEET_TEAM_START_X + 2, -5, -3],
   [-FLEET_TEAM_START_X - 2, 5, 5],
   [-FLEET_TEAM_START_X + 1, 1, 12],
+  [-FLEET_TEAM_START_X + 4, -2, 18],
 ];
 
 const RIGHT_SLOTS: Vec3[] = LEFT_SLOTS.map(([x, y, z]) => [-x, -y, -z]);
 
-const FLEET_BLUEPRINT = [
-  { archetypeId: "hammerhead", points: 3, label: "Vanguard" },
-  { archetypeId: "archer", points: 3, label: "Longbow" },
-  { archetypeId: "hulk", points: 3, label: "Bulwark" },
-  { archetypeId: "fighter", points: 1, label: "Dart" },
-] as const;
+export function validateMultiplayerFleetSelection(value: unknown): MultiplayerFleetSelection {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Choose a multiplayer fleet before continuing.");
+  const source = value as Partial<MultiplayerFleetSelection>;
+  if (!source.large || !MULTIPLAYER_LARGE_HULLS.includes(source.large)) throw new Error("Choose one valid Large ship.");
+  if (!Array.isArray(source.cruisers) || source.cruisers.length !== 3 || source.cruisers.some((hull) => !MULTIPLAYER_CRUISER_HULLS.includes(hull))) {
+    throw new Error("Choose exactly three valid Cruiser ships.");
+  }
+  if (source.fighter !== "fighter") throw new Error("The fleet must include one Fighter.");
+  return {
+    large: source.large,
+    cruisers: [...source.cruisers] as MultiplayerFleetSelection["cruisers"],
+    fighter: "fighter",
+  };
+}
 
-export function createMultiplayerFleet(): GameShip[] {
-  const buildSide = (side: MultiplayerSide, team: "player" | "enemy", slots: Vec3[]) =>
-    FLEET_BLUEPRINT.map((entry, index) => {
-      const archetype = SHIP_ARCHETYPES[entry.archetypeId];
+const fleetBlueprint = (selection: MultiplayerFleetSelection) => [
+  selection.large,
+  ...selection.cruisers,
+  selection.fighter,
+];
+
+function createMultiplayerSideFleet(side: MultiplayerSide, selection: MultiplayerFleetSelection): GameShip[] {
+  const team = canonicalTeamForSide(side);
+  const slots = side === "host" ? LEFT_SLOTS : RIGHT_SLOTS;
+  const counts = new Map<string, number>();
+  return fleetBlueprint(selection).map((archetypeId, index) => {
+      const archetype = SHIP_ARCHETYPES[archetypeId];
       const prefix = side === "host" ? "AZ" : "CR";
+      const sequence = (counts.get(archetypeId) ?? 0) + 1;
+      counts.set(archetypeId, sequence);
+      const duplicateSuffix = sequence > 1 ? `-${sequence}` : "";
       return createShipFromArchetype(archetype, {
-        id: `multiplayer-${side}-${entry.archetypeId}`,
-        name: `${entry.label}-${prefix}`,
+        id: `multiplayer-${side}-${archetypeId}${duplicateSuffix}`,
+        name: `${archetype.name}-${prefix}${duplicateSuffix}`,
         callsign: `${prefix}-${String(index + 1).padStart(2, "0")}`,
         className: `${side === "host" ? "Azure" : "Crimson"} ${archetype.className.toLowerCase()}`,
         team,
@@ -102,22 +137,45 @@ export function createMultiplayerFleet(): GameShip[] {
         rotation: [index % 2 ? 4 : -3, side === "host" ? 90 : -90, index % 2 ? -5 : 5],
       });
     });
-
-  return [...buildSide("host", "player", LEFT_SLOTS), ...buildSide("guest", "enemy", RIGHT_SLOTS)];
 }
 
-export function createMultiplayerMatchState(code: string): MatchState {
+export function createMultiplayerFleet(
+  hostSelection: MultiplayerFleetSelection = DEFAULT_MULTIPLAYER_FLEET,
+  guestSelection: MultiplayerFleetSelection = DEFAULT_MULTIPLAYER_FLEET,
+): GameShip[] {
+  return [
+    ...createMultiplayerSideFleet("host", validateMultiplayerFleetSelection(hostSelection)),
+    ...createMultiplayerSideFleet("guest", validateMultiplayerFleetSelection(guestSelection)),
+  ];
+}
+
+export function createMultiplayerMatchState(
+  code: string,
+  hostSelection: MultiplayerFleetSelection = DEFAULT_MULTIPLAYER_FLEET,
+  guestSelection: MultiplayerFleetSelection = DEFAULT_MULTIPLAYER_FLEET,
+): MatchState {
   return createMatchState({
     matchId: code,
     mode: "multiplayer",
     turn: 1,
     phase: "planning",
-    ships: createMultiplayerFleet(),
+    ships: createMultiplayerFleet(hostSelection, guestSelection),
   });
 }
 
-export function multiplayerFleetPointTotal() {
-  return FLEET_BLUEPRINT.reduce((sum, entry) => sum + entry.points, 0);
+export function replaceMultiplayerSideFleet(
+  state: MatchState,
+  side: MultiplayerSide,
+  selection: MultiplayerFleetSelection,
+): MatchState {
+  const team = canonicalTeamForSide(side);
+  return {
+    ...state,
+    ships: [
+      ...state.ships.filter((ship) => ship.team !== team),
+      ...createMultiplayerSideFleet(side, validateMultiplayerFleetSelection(selection)),
+    ],
+  };
 }
 
 export function canonicalTeamForSide(side: MultiplayerSide): "player" | "enemy" {
