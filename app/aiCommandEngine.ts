@@ -126,7 +126,7 @@ export function defaultAiMissionFor(ship: AiCommandShip): AiMissionOrder {
 }
 
 function effectiveMissionFor(ship: AiCommandShip, requested: AiMissionOrder = defaultAiMissionFor(ship)) {
-  return ship.spawnedByShipId ? "assault" : requested;
+  return ship.aiMission ?? (ship.spawnedByShipId ? "assault" : requested);
 }
 
 export function shipConditionScore(ship: CombatShip) {

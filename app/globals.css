@@ -2904,6 +2904,52 @@ input[type="range"]::-moz-range-thumb {
   background: linear-gradient(145deg, rgba(97, 233, 189, 0.045), rgba(105, 223, 255, 0.018));
 }
 
+.control-mode-block {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(116, 171, 195, 0.13);
+  background: linear-gradient(145deg, rgba(105, 223, 255, 0.035), rgba(97, 233, 189, 0.018));
+}
+
+.control-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.control-mode-options button {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(116, 171, 195, 0.2);
+  background: rgba(255, 255, 255, 0.018);
+  color: #8ca9b8;
+  text-align: left;
+}
+
+.control-mode-options button.active {
+  border-color: rgba(97, 233, 189, 0.55);
+  background: rgba(97, 233, 189, 0.085);
+  color: #e9fff8;
+}
+
+.control-mode-options strong,
+.control-mode-options small {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.control-mode-options strong {
+  font-size: var(--type-control);
+  letter-spacing: 0.04em;
+}
+
+.control-mode-options small {
+  margin-top: 5px;
+  color: #6f8c9b;
+  font-size: var(--type-meta);
+  line-height: 1.35;
+}
+
 .doctrine-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

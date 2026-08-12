@@ -72,6 +72,7 @@ import { AI_MISSION_ORDER, AI_MISSION_RULES, type AiMissionOrder } from "./aiTac
 import { assessFleetRisk, threatBandFor } from "./aiThreatEngine";
 import {
   AI_RECRUIT_CONTROL,
+  canToggleFriendlyControl,
   isDirectCommandShip,
   isFleetCommitReady,
   retainStoryPlayerFleet,
@@ -283,7 +284,7 @@ const MODEL_VARIANT_OPTIONS: Record<ShipModelVariant, {
 
 const TEAM_LABELS: Record<Team, string> = {
   player: "Your fleet",
-  ally: "Allied NPC",
+  ally: "Allied fleet",
   enemy: "Corsair NPC",
 };
 
@@ -3011,13 +3012,13 @@ export function SpaceGame() {
   const battlefieldBounds = battlefieldForMode(activeMode);
   const showFleetStations = activeMode !== "story";
   const selectedShip = ships.find((ship) => ship.id === selectedShipId)
-    ?? ships.find((ship) => ship.controller === "player" && ship.hull > 0)
-    ?? ships.find((ship) => ship.team === "player" && ship.hull > 0)
+    ?? ships.find((ship) => ship.team !== "enemy" && ship.controller === "player" && ship.hull > 0)
+    ?? ships.find((ship) => ship.team !== "enemy" && ship.hull > 0)
     ?? ships[0];
   const selectedDraft = selectedShip ? drafts[selectedShip.id] : undefined;
   const enemies = ships.filter((ship) => ship.team === "enemy" && ship.hull > 0);
-  const playerShips = ships.filter((ship) => ship.team === "player");
-  const commandShips = ships.filter(isDirectCommandShip);
+  const friendlyShips = ships.filter((ship) => ship.team !== "enemy");
+  const commandShips = friendlyShips.filter(isDirectCommandShip);
   const livingCommandShips = commandShips.filter((ship) => ship.hull > 0);
   const alliedNPCs = ships.filter((ship) => ship.controller === "ai" && ship.team !== "enemy" && ship.hull > 0);
   const selectedTargetId = selectedDraft?.targetId ?? "";
@@ -3030,7 +3031,6 @@ export function SpaceGame() {
     if (!order || !isDestinationValid(ship, order.destination, order.mode, bounds)) return false;
     return order.mode !== "focus-fire" || ships.some((candidate) => candidate.id === order.targetId && candidate.team === "enemy" && candidate.hull > 0);
   };
-  const allOrdersValid = livingCommandShips.every(isCommandOrderValid);
   const allReady = isFleetCommitReady(ships, staged, isCommandOrderValid);
   const plottedDistance = selectedShip && selectedDraft ? distanceBetween(selectedShip.position, selectedDraft.destination) : 0;
   const movementLimit = selectedShip && selectedDraft ? movementLimitFor(selectedShip.maxMove, selectedDraft.mode) : 0;
@@ -3089,9 +3089,45 @@ export function SpaceGame() {
   }, [selectedShip, phase]);
 
   const updateAiMission = useCallback((mission: AiMissionOrder) => {
-    if (!selectedShip || selectedShip.controller !== "ai" || selectedShip.team === "enemy" || selectedShip.spawnedByShipId || phase !== "planning") return;
+    if (!selectedShip || selectedShip.controller !== "ai" || selectedShip.team === "enemy" || phase !== "planning") return;
     setShips((current) => current.map((ship) => ship.id === selectedShip.id ? { ...ship, aiMission: mission } : ship));
   }, [selectedShip, phase]);
+
+  const updateShipController = useCallback((controller: "player" | "ai") => {
+    if (!selectedShip || phase !== "planning" || activeMode === "fishtank") return;
+    const lockedFlagshipId = activeMode === "story" ? STORY_STARTER_ARCHETYPE.id : undefined;
+    if (!canToggleFriendlyControl(selectedShip, lockedFlagshipId) || selectedShip.controller === controller) return;
+
+    const updatedShip: Ship = controller === "ai"
+      ? {
+          ...selectedShip,
+          controller,
+          aiDoctrine: selectedShip.aiDoctrine ?? "standard",
+          aiMission: selectedShip.aiMission ?? defaultAiMissionFor(selectedShip),
+        }
+      : { ...selectedShip, controller };
+    setShips((current) => current.map((ship) => ship.id === selectedShip.id ? updatedShip : ship));
+    setDrafts((current) => {
+      if (controller === "player") {
+        return {
+          ...current,
+          [selectedShip.id]: defaultOrderFor(updatedShip, ships, battlefieldForMode(activeMode)),
+        };
+      }
+      const next = { ...current };
+      delete next[selectedShip.id];
+      return next;
+    });
+    setStaged((current) => {
+      const next = new Set(current);
+      next.delete(selectedShip.id);
+      return next;
+    });
+    setLog((current) => [
+      `${selectedShip.name} transferred to ${controller === "ai" ? "AI mission control" : "manual command"}.`,
+      ...current,
+    ].slice(0, 12));
+  }, [activeMode, phase, selectedShip, ships]);
 
   const updateRelativeMovement = useCallback((axis: keyof ShipRelativeMovement, value: number) => {
     if (!selectedShip || !selectedDraft) return;
@@ -3154,7 +3190,9 @@ export function SpaceGame() {
           bounds.halfLength,
           bounds.halfHeight,
           {
-            forcedTargetId: wingTargets[ship.id],
+            forcedTargetId: ship.spawnedByShipId && defaultAiMissionFor(ship) === "assault"
+              ? wingTargets[ship.id]
+              : undefined,
             reservedDestinations,
             battlefieldWidthHalf: bounds.halfWidth,
           },
@@ -3167,7 +3205,17 @@ export function SpaceGame() {
   const executeTurn = useCallback((automatic = false) => {
     const bounds = battlefieldForMode(activeMode);
     const fishtankCommit = activeMode === "fishtank" && automatic;
-    if (phase !== "planning" || (!fishtankCommit && (!allReady || !allOrdersValid))) return;
+    const commandOrderIsValid = (ship: Ship) => {
+      const order = drafts[ship.id];
+      if (!order || !isDestinationValid(ship, order.destination, order.mode, bounds)) return false;
+      return order.mode !== "focus-fire"
+        || ships.some((candidate) => candidate.id === order.targetId && candidate.team === "enemy" && candidate.hull > 0);
+    };
+    const ordersValidNow = ships
+      .filter((ship) => ship.team !== "enemy" && isDirectCommandShip(ship) && ship.hull > 0)
+      .every(commandOrderIsValid);
+    const fleetReadyNow = isFleetCommitReady(ships, staged, commandOrderIsValid);
+    if (phase !== "planning" || (!fishtankCommit && (!fleetReadyNow || !ordersValidNow))) return;
     const npcOrders = generateNpcOrders(ships);
     const allOrders: Record<string, Order> = fishtankCommit ? npcOrders : { ...drafts, ...npcOrders };
     const result = resolveTurn({
@@ -3185,7 +3233,7 @@ export function SpaceGame() {
       ...current,
     ].slice(0, 8));
     setResolution(result);
-  }, [activeMode, allOrdersValid, allReady, drafts, generateNpcOrders, phase, ships, turn]);
+  }, [activeMode, drafts, generateNpcOrders, phase, ships, staged, turn]);
 
   const resolveCombat = useCallback((finished: Resolution) => {
     const bounds = battlefieldForMode(activeMode);
@@ -3197,6 +3245,7 @@ export function SpaceGame() {
 
     const enemyAlive = results.some((ship) => ship.team === "enemy" && ship.hull > 0);
     const playerAlive = results.some((ship) => ship.team === "player" && ship.hull > 0);
+    const friendlyAlive = results.some((ship) => ship.team !== "enemy" && ship.hull > 0);
     const fishtankAllyAlive = results.some((ship) => ship.team === "ally" && ship.hull > 0);
     if (activeMode === "story" && !playerAlive) {
       setPhase("defeat");
@@ -3216,7 +3265,7 @@ export function SpaceGame() {
       setPhase("defeat");
       return;
     }
-    if (activeMode !== "fishtank" && !playerAlive) {
+    if (activeMode !== "story" && activeMode !== "fishtank" && !friendlyAlive) {
       setPhase("defeat");
       return;
     }
@@ -3225,13 +3274,15 @@ export function SpaceGame() {
     setPhase("planning");
     setStaged(new Set());
     setDrafts(buildDrafts(results, bounds));
-    const nextPlayer = results.find((ship) => ship.team === "player" && ship.hull > 0);
-    if (nextPlayer) setSelectedShipId(nextPlayer.id);
+    const nextFriendly = results.find((ship) => ship.team !== "enemy" && ship.controller === "player" && ship.hull > 0)
+      ?? results.find((ship) => ship.team !== "enemy" && ship.hull > 0);
+    if (nextFriendly) setSelectedShipId(nextFriendly.id);
   }, [activeMode]);
 
   const loadCombatState = useCallback((nextShips: Ship[], nextLog: string[], bounds: BattlefieldBounds) => {
     const encounterShips = copyShips(nextShips);
-    const firstPlayer = encounterShips.find((ship) => ship.team === "player" && ship.hull > 0);
+    const firstPlayer = encounterShips.find((ship) => ship.team !== "enemy" && ship.controller === "player" && ship.hull > 0)
+      ?? encounterShips.find((ship) => ship.team !== "enemy" && ship.hull > 0);
     setShips(encounterShips);
     setDrafts(buildDrafts(encounterShips, bounds));
     setStaged(new Set());
@@ -3503,6 +3554,10 @@ export function SpaceGame() {
   const selectedAiCondition = shipConditionScore(selectedShip);
   const selectedAiRisk = assessFleetRisk(selectedShip, ships);
   const selectedIsCarrierFighter = Boolean(selectedShip.spawnedByShipId);
+  const selectedControlToggleAllowed = activeMode !== "fishtank" && canToggleFriendlyControl(
+    selectedShip,
+    activeMode === "story" ? STORY_STARTER_ARCHETYPE.id : undefined,
+  );
   const translationDisabled = controlsDisabled || selectedFlightMode === "focus-fire";
   const weaponControlDisabled = controlsDisabled || selectedFlightMode !== "normal";
   const selectedWeapons = weaponProfilesFor(selectedShip);
@@ -3777,13 +3832,13 @@ export function SpaceGame() {
             </div>
           )}
 
-          {activeMode !== "fishtank" && <div className="fleet-dock" aria-label="Player fleet orders">
+          {activeMode !== "fishtank" && <div className="fleet-dock" aria-label="Friendly fleet orders">
             <div className="dock-title">
               <small>COMMAND WING</small>
               <strong>{livingCommandShips.length ? `${readyCount}/${livingCommandShips.length} VECTORS STAGED` : "AI WING AUTONOMOUS"}</strong>
             </div>
             <div className="ship-tabs">
-              {playerShips.map((ship, index) => (
+              {friendlyShips.map((ship, index) => (
                 <button
                   type="button"
                   key={ship.id}
@@ -3820,6 +3875,20 @@ export function SpaceGame() {
             </div>
             <span className={`team-glyph ${selectedShip.team}`} aria-hidden="true" />
           </section>
+
+          {selectedControlToggleAllowed && (
+            <section className="control-mode-block" aria-label={`${selectedShip.name} control mode`}>
+              <div className="section-heading"><span>CONTROL MODE</span><strong>{selectedShip.controller === "ai" ? "AI ASSISTED" : "MANUAL"}</strong></div>
+              <div className="control-mode-options">
+                <button type="button" className={selectedShip.controller === "player" ? "active" : ""} disabled={phase !== "planning"} aria-pressed={selectedShip.controller === "player"} onClick={() => updateShipController("player")}>
+                  <strong>Manual control</strong><small>Plot movement, orientation, and weapons directly.</small>
+                </button>
+                <button type="button" className={selectedShip.controller === "ai" ? "active" : ""} disabled={phase !== "planning"} aria-pressed={selectedShip.controller === "ai"} onClick={() => updateShipController("ai")}>
+                  <strong>AI control</strong><small>Select a mission and let the captain execute it.</small>
+                </button>
+              </div>
+            </section>
+          )}
 
           {selectedShip.controller === "player" && selectedDraft ? (
             <>
@@ -3894,7 +3963,7 @@ export function SpaceGame() {
               <span className="eyebrow">AI WINGMATE · AUTONOMOUS COMMAND</span>
               <h2>{selectedIsCarrierFighter ? "Disposable assault package" : "Set autonomous command"}</h2>
               <p>{selectedIsCarrierFighter
-                ? `${selectedShip.name} is carrier-launched strike craft and will press its attack regardless of damage. Its one-use evasive manoeuvre diverts a collision course but forfeits that turn's attack.`
+                ? `${selectedShip.name} remains highly aggressive regardless of damage. Assault keeps it with the carrier wing's shared target; another mission redirects its target priorities. Its one-use evasive manoeuvre avoids a collision but forfeits that turn's attack.`
                 : `Mission defines the job; doctrine defines acceptable risk. ${selectedShip.name} then weighs individual and fleet threats against its hull, fit, and unique traits.`}</p>
               <fieldset className="doctrine-options mission-options">
                 <legend>Choose the wingmate&apos;s mission order</legend>
@@ -3903,7 +3972,7 @@ export function SpaceGame() {
                   const inputId = `mission-${selectedShip.id}-${mission}`;
                   return (
                     <label className="doctrine-option mission-option" data-mission={mission} key={mission} htmlFor={inputId} aria-label={`${rule.label}: ${rule.description}`}>
-                      <input id={inputId} type="radio" name={`mission-${selectedShip.id}`} checked={selectedAiMission === mission} disabled={selectedIsCarrierFighter || phase !== "planning" || selectedShip.hull <= 0} aria-label={rule.label} onChange={() => updateAiMission(mission)} />
+                      <input id={inputId} type="radio" name={`mission-${selectedShip.id}`} checked={selectedAiMission === mission} disabled={phase !== "planning" || selectedShip.hull <= 0} aria-label={rule.label} onChange={() => updateAiMission(mission)} />
                       <span><strong>{rule.label}</strong><small>{rule.shortRule}</small></span>
                     </label>
                   );

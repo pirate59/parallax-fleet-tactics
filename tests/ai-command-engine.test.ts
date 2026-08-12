@@ -105,6 +105,37 @@ test("carrier-launched fighters override defensive orders with disposable aggres
   assert.equal(order.fire, true);
 });
 
+test("carrier fighters retain aggressive risk tolerance while accepting a selected mission", () => {
+  const fighter = makeShip("carrier-fighter", {
+    modelId: "fighter",
+    sizeClass: "shuttle",
+    spawnedByShipId: "carrier",
+    aiDoctrine: "defensive",
+    aiMission: "bombing",
+    aiTactics: { role: "interceptor", defaultMission: "interception", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const enemyFighter = makeShip("enemy-fighter", {
+    team: "enemy",
+    modelId: "fighter",
+    sizeClass: "shuttle",
+    position: [0, 0, -6],
+  });
+  const enemyCarrier = makeShip("enemy-carrier", {
+    team: "enemy",
+    modelId: "carrier",
+    sizeClass: "large",
+    position: [0, 0, -8],
+    weaponMounts: [],
+    fighterReserveRemaining: 9,
+    turnEndAbility: { kind: "launch-fighter", fighterArchetypeId: "fighter", maxActive: 3, fighterReserve: 9, fighterDamageMultiplier: 1.6, fighterDurabilityMultiplier: 0.55, launchOffsets: [[0, 0, 1]] },
+    aiTactics: { role: "carrier", defaultMission: "defense", preferredRangeRatio: 0.9, facingPriority: "expected-threat", survivalHullRatio: 0.62 },
+  });
+
+  const order = generateAiCommandOrder(fighter, [fighter, enemyFighter, enemyCarrier], "defensive");
+  assert.equal(order?.targetId, enemyCarrier.id);
+  assert.equal(order?.mode, "focus-fire", "carrier craft should remain aggressive despite a defensive doctrine value");
+});
+
 test("damaged carrier fighters focus fire whenever their target is in solution", () => {
   const fighter = makeShip("carrier-fighter", {
     modelId: "fighter",

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AI_RECRUIT_CONTROL,
+  canToggleFriendlyControl,
   isDirectCommandShip,
   isFleetCommitReady,
   retainStoryPlayerFleet,
@@ -52,4 +53,25 @@ test("an AI-only surviving player fleet can commit a turn", () => {
 
   assert.equal(isFleetCommitReady([destroyedHammerhead, recruit], new Set(), () => false), true);
   assert.equal(isFleetCommitReady([destroyedHammerhead], new Set(), () => true), false);
+});
+
+test("friendly ships can switch control except for the locked story flagship", () => {
+  const hammerhead = makeShip("hammerhead");
+  const recruit = makeShip("recruit", { controller: "ai" });
+  const alliedCarrier = makeShip("carrier", { team: "ally", controller: "ai" });
+  const enemy = makeShip("enemy", { team: "enemy", controller: "ai" });
+
+  assert.equal(canToggleFriendlyControl(hammerhead, hammerhead.id), false);
+  assert.equal(canToggleFriendlyControl(recruit, hammerhead.id), true);
+  assert.equal(canToggleFriendlyControl(alliedCarrier, hammerhead.id), true);
+  assert.equal(canToggleFriendlyControl(enemy, hammerhead.id), false);
+});
+
+test("manually controlled allied-team ships add a staging requirement", () => {
+  const hammerhead = makeShip("hammerhead");
+  const alliedCarrier = makeShip("carrier", { team: "ally", controller: "player" });
+  const ships = [hammerhead, alliedCarrier];
+
+  assert.equal(isFleetCommitReady(ships, new Set([hammerhead.id]), () => true), false);
+  assert.equal(isFleetCommitReady(ships, new Set([hammerhead.id, alliedCarrier.id]), () => true), true);
 });
