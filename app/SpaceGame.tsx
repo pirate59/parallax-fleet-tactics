@@ -32,7 +32,6 @@ import {
 import {
   SHIELD_FACES,
   passiveWeaponProfilesFor,
-  resolveCombatTurn,
   shotSolutionForWeapon,
   weaponLocalOriginFor,
   weaponOriginFor,
@@ -44,7 +43,6 @@ import {
   type Vec3,
 } from "./combatEngine";
 import {
-  CARRIER_FIGHTER_EVASIVE_TRAIT,
   SHIP_ARCHETYPES,
   STORY_STARTER_ARCHETYPE,
   createWeaponMount,
@@ -53,18 +51,14 @@ import {
   modelScaleForArchetype,
   type EliteWeaponKind,
   type ShipArchetype,
-  type ShipPassiveTrait,
-  type ShipTurnEndAbility,
-  type WeaponMount,
 } from "./shipCatalog";
 import {
   SHIP_MODEL_VARIANTS,
   shipModelProfileFor,
-  type ShipModelId,
   type ShipModelVariant,
 } from "./shipModels";
 import { createShipHullGeometry } from "./shipGeometry";
-import { applyCarrierFighterCombatProfile, applyCarrierLaunches, isDisposableCarrierFighter } from "./carrierEngine";
+import { isDisposableCarrierFighter } from "./carrierEngine";
 import {
   AI_DOCTRINE_ORDER,
   AI_DOCTRINE_RULES,
@@ -78,7 +72,6 @@ import {
   isDirectCommandShip,
   isFleetCommitReady,
   retainStoryPlayerFleet,
-  type ShipController,
 } from "./fleetControl";
 import {
   FISHTANK_CINEMATIC_TIMINGS,
@@ -91,19 +84,14 @@ import {
 } from "./fishtankMode";
 import {
   SHIP_SIZE_PROFILES,
-  resolveSizedDurability,
-  resolveSizedModelScale,
   totalDurabilityMultiplier,
   type ShipSizeClass,
 } from "./shipSize";
 import { fleetColorFor } from "./fleetPresentation";
-import { preferredTargetId, rememberOrderedTargets } from "./targetMemory";
+import { preferredTargetId } from "./targetMemory";
 import { spectatorOverviewFor } from "./spectatorCamera";
-import type { AiTacticalProfile } from "./aiTactics";
 import {
   clampCollisionPosition,
-  resolveMovementCollisions,
-  type MovementCollisionEvent,
 } from "./collisionEngine";
 import {
   FLEET_BATTLEFIELD,
@@ -121,11 +109,22 @@ import {
   scaledAnimationDuration,
   type AnimationSpeed,
 } from "./animationSpeed";
-import { applyAiMovementAvoidance, collisionSafeLaunchPosition } from "./movementAvoidanceEngine";
+import {
+  cloneGameShips as copyShips,
+  type GameMode,
+  type GamePhase,
+  type GameShip,
+  type TurnOrder,
+  type TurnResolution,
+} from "./gameTypes";
+import { endStateForOrder as endStateFor, finalizeTurn, resolveTurn } from "./gameEngine";
+import { createShipFromArchetype } from "./shipFactory";
 
-type Phase = "planning" | "executing" | "victory" | "defeat";
+type Phase = GamePhase;
 type GameScreen = "menu" | "battle" | "story";
-type GameMode = "story" | "skirmish" | "endless" | "hardcore" | "fishtank";
+type Ship = GameShip;
+type Order = TurnOrder;
+type Resolution = TurnResolution;
 type StoryStage = "briefing" | "combat" | "salvage" | "encounter" | "outcome" | "won" | "lost";
 
 type AudioSettings = {
@@ -138,65 +137,6 @@ type AudioSettings = {
 type OverlayLabelSettings = {
   showShipNames: boolean;
   showHealth: boolean;
-};
-
-type Ship = {
-  id: string;
-  name: string;
-  callsign: string;
-  className: string;
-  team: Team;
-  controller: ShipController;
-  aiDoctrine?: AiDoctrine;
-  color: string;
-  position: Vec3;
-  rotation: Vec3;
-  shields: Shields;
-  maxShields: Shields;
-  hull: number;
-  maxHull: number;
-  maxMove: number;
-  maxTurn: number;
-  maxPitch: number;
-  maxRoll: number;
-  weaponRange: number;
-  weaponDamage: number;
-  archetypeId: string;
-  modelId: ShipModelId;
-  modelVariants: readonly ShipModelVariant[];
-  sizeClass: ShipSizeClass;
-  durabilityMultiplier: number;
-  modelScale: number;
-  weaponMounts: WeaponMount[];
-  passiveTraits?: ShipPassiveTrait[];
-  aiTactics: AiTacticalProfile;
-  turnEndAbility?: ShipTurnEndAbility;
-  fighterReserveRemaining?: number;
-  spawnedByShipId?: string;
-  evasiveManeuverAvailable?: boolean;
-  lastTargetId?: string;
-};
-
-type Order = {
-  destination: Vec3;
-  turn: number;
-  pitch: number;
-  roll: number;
-  targetId: string;
-  fire: boolean;
-  mode: FlightMode;
-  ramTargetId?: string;
-};
-
-type Resolution = {
-  token: number;
-  endShips: Ship[];
-  resolvedShips: Ship[];
-  orders: Record<string, Order>;
-  collisions: MovementCollisionEvent[];
-  shots: CombatShotEvent[];
-  outcomes: string[];
-  destroyedIds: string[];
 };
 
 type CameraCommand = {
@@ -348,65 +288,6 @@ const INITIAL_LOG = [
   "Corsair formation detected inside the Kestrel Reach.",
   "Plot a grid endpoint, set final orientation, then stage both command ships.",
 ];
-
-type ShipDeployment = {
-  id?: string;
-  name?: string;
-  callsign?: string;
-  className?: string;
-  color?: string;
-  team: Team;
-  controller: ShipController;
-  aiDoctrine?: AiDoctrine;
-  position: Vec3;
-  rotation: Vec3;
-};
-
-function createShipFromArchetype(archetype: ShipArchetype, deployment: ShipDeployment): Ship {
-  const durabilityMultiplier = archetype.durabilityMultiplier ?? 1;
-  const durability = resolveSizedDurability(
-    archetype.baseHull,
-    archetype.baseShieldCapacity,
-    archetype.sizeClass,
-    durabilityMultiplier,
-  );
-  return {
-    id: deployment.id ?? archetype.id,
-    name: deployment.name ?? archetype.name,
-    callsign: deployment.callsign ?? archetype.callsign,
-    className: deployment.className ?? archetype.className,
-    color: deployment.color ?? fleetColorFor(deployment.team, archetype.id),
-    team: deployment.team,
-    controller: deployment.controller,
-    aiDoctrine: deployment.aiDoctrine,
-    position: [...deployment.position] as Vec3,
-    rotation: [...deployment.rotation] as Vec3,
-    maxMove: archetype.maxMove,
-    maxTurn: archetype.maxTurn,
-    maxPitch: archetype.maxPitch,
-    maxRoll: archetype.maxRoll,
-    weaponRange: archetype.weaponRange,
-    weaponDamage: archetype.weaponDamage,
-    archetypeId: archetype.id,
-    modelId: archetype.modelId,
-    modelVariants: [...archetype.modelVariants],
-    sizeClass: archetype.sizeClass,
-    durabilityMultiplier,
-    shields: { ...durability.shields },
-    maxShields: { ...durability.shields },
-    hull: durability.hull,
-    maxHull: durability.hull,
-    modelScale: resolveSizedModelScale(archetype.baseModelScale, archetype.sizeClass),
-    weaponMounts: archetype.weaponMounts.map((mount) => ({ ...mount })),
-    passiveTraits: archetype.passiveTraits?.map((trait) => ({ ...trait })),
-    aiTactics: { ...archetype.aiTactics },
-    turnEndAbility: archetype.turnEndAbility ? {
-      ...archetype.turnEndAbility,
-      launchOffsets: archetype.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
-    } : undefined,
-    fighterReserveRemaining: archetype.turnEndAbility?.fighterReserve,
-  };
-}
 
 const INITIAL_SHIPS: Ship[] = [
   createShipFromArchetype(SHIP_ARCHETYPES.hammerhead, {
@@ -599,40 +480,7 @@ const buildDrafts = (ships: Ship[], bounds: BattlefieldBounds = FLEET_BATTLEFIEL
       .map((ship) => [ship.id, defaultOrderFor(ship, ships, bounds)]),
   ) as Record<string, Order>;
 
-const endStateFor = (ship: Ship, order: Order, bounds: BattlefieldBounds = FLEET_BATTLEFIELD): Ship => {
-  const finalRotation: Vec3 = [
-    clamp(ship.rotation[0] + clamp(order.pitch, -ship.maxPitch, ship.maxPitch), -85, 85),
-    normalizeAngle(ship.rotation[1] + clamp(order.turn, -ship.maxTurn, ship.maxTurn)),
-    normalizeAngle(ship.rotation[2] + clamp(order.roll, -ship.maxRoll, ship.maxRoll)),
-  ];
-  const destination = clampDestination(ship, order.destination, order.mode, bounds);
-
-  return {
-    ...ship,
-    position: destination,
-    rotation: finalRotation,
-  };
-};
-
 const titleCase = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
-
-function copyShips(ships: Ship[]) {
-  return ships.map((ship) => ({
-    ...ship,
-    shields: { ...ship.shields },
-    maxShields: { ...ship.maxShields },
-    weaponMounts: ship.weaponMounts.map((mount) => ({ ...mount })),
-    modelVariants: [...ship.modelVariants],
-    passiveTraits: ship.passiveTraits?.map((trait) => ({ ...trait })),
-    aiTactics: { ...ship.aiTactics },
-    turnEndAbility: ship.turnEndAbility ? {
-      ...ship.turnEndAbility,
-      launchOffsets: ship.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
-    } : undefined,
-    position: [...ship.position] as Vec3,
-    rotation: [...ship.rotation] as Vec3,
-  }));
-}
 
 function createStoryRun(): StoryRun {
   return {
@@ -747,53 +595,6 @@ function createRecruitShip(kind: "scout" | "escort" | "gunboat", currentShips: S
     color: fleetColorFor("player", `${archetypeId}-${index}`),
     position: [...slot.position] as Vec3,
     rotation: [...slot.rotation] as Vec3,
-  };
-}
-
-function createLaunchedFighter(
-  carrier: Ship,
-  sequence: number,
-  ability: ShipTurnEndAbility,
-  bounds: BattlefieldBounds = FLEET_BATTLEFIELD,
-): Ship {
-  const archetype = SHIP_ARCHETYPES[ability.fighterArchetypeId];
-  const localOffset = ability.launchOffsets[(sequence - 1) % ability.launchOffsets.length] ?? [0, -0.5, 1];
-  const worldOffset = new THREE.Vector3(...localOffset)
-    .multiplyScalar(carrier.modelScale)
-    .applyQuaternion(quaternionFor(carrier.rotation));
-  const launchPosition = new THREE.Vector3(...carrier.position).add(worldOffset);
-  const fighter = createShipFromArchetype(archetype, {
-    id: `${carrier.id}-fighter-${sequence}`,
-    name: `${carrier.name} Wing-${sequence}`,
-    callsign: `${carrier.callsign}-F${sequence}`,
-    className: `Carrier-launched ${archetype.className.toLowerCase()}`,
-    color: carrier.color,
-    team: carrier.team,
-    controller: "ai",
-    aiDoctrine: "aggressive",
-    position: [
-      clamp(launchPosition.x, -bounds.halfLength, bounds.halfLength),
-      clamp(launchPosition.y, -bounds.halfHeight, bounds.halfHeight),
-      clamp(launchPosition.z, -bounds.halfWidth, bounds.halfWidth),
-    ],
-    rotation: [...carrier.rotation] as Vec3,
-  });
-  const safeLaunchPosition = collisionSafeLaunchPosition(
-    carrier,
-    fighter,
-    [launchPosition.x, launchPosition.y, launchPosition.z],
-    bounds,
-  );
-  return {
-    ...applyCarrierFighterCombatProfile(fighter, ability),
-    position: safeLaunchPosition,
-    spawnedByShipId: carrier.id,
-    passiveTraits: [
-      ...(fighter.passiveTraits ?? []),
-      { ...CARRIER_FIGHTER_EVASIVE_TRAIT },
-    ],
-    evasiveManeuverAvailable: true,
-    turnEndAbility: undefined,
   };
 }
 
@@ -3361,26 +3162,13 @@ export function SpaceGame() {
     if (phase !== "planning" || (!fishtankCommit && (!allReady || !allOrdersValid))) return;
     const npcOrders = generateNpcOrders(ships);
     const allOrders: Record<string, Order> = fishtankCommit ? npcOrders : { ...drafts, ...npcOrders };
-    const intendedShips = ships.map((ship) => {
-      const order = allOrders[ship.id];
-      return ship.hull > 0 && order ? endStateFor(ship, order, bounds) : ship;
-    });
-    const avoidance = applyAiMovementAvoidance(ships, intendedShips, allOrders, bounds);
-    const collision = resolveMovementCollisions(
+    const result = resolveTurn({
+      turn,
       ships,
-      avoidance.ships,
-      bounds.halfLength,
-      bounds.halfHeight,
-      bounds.halfWidth,
-    );
-    const combat = resolveCombatTurn(
-      collision.ships,
-      avoidance.orders,
-      {
-        ...(fishtankCommit ? { teamOrder: fishtankActivationOrder(turn) } : {}),
-        preHitFaces: collision.hitFaces,
-      },
-    );
+      orders: allOrders,
+      bounds,
+      ...(fishtankCommit ? { activationTeamOrder: fishtankActivationOrder(turn) } : {}),
+    });
     setPhase("executing");
     setLog((current) => [
       activeMode === "fishtank"
@@ -3388,32 +3176,16 @@ export function SpaceGame() {
         : `Turn ${turn}: vectors move simultaneously; impacts resolve before ordered fire.`,
       ...current,
     ].slice(0, 8));
-    setResolution({
-      token: Date.now(),
-      endShips: collision.ships,
-      resolvedShips: combat.ships,
-      orders: avoidance.orders,
-      collisions: collision.collisions,
-      shots: combat.shots,
-      outcomes: [...avoidance.outcomes, ...collision.outcomes, ...combat.outcomes],
-      destroyedIds: [...new Set([...collision.destroyedIds, ...combat.destroyedIds])],
-    });
+    setResolution(result);
   }, [activeMode, allOrdersValid, allReady, drafts, generateNpcOrders, phase, ships, turn]);
 
   const resolveCombat = useCallback((finished: Resolution) => {
     const bounds = battlefieldForMode(activeMode);
-    const rememberedShips = rememberOrderedTargets(finished.resolvedShips, finished.orders);
-    const launched = applyCarrierLaunches(
-      copyShips(rememberedShips),
-      (carrier, sequence, ability) => createLaunchedFighter(carrier, sequence, ability, bounds),
-    );
-    const results = copyShips(launched.ships);
+    const finalized = finalizeTurn(finished, bounds);
+    const results = finalized.ships;
     setShips(results);
     setResolution(null);
-    const launchOutcomes = launched.launches.map((launch) =>
-      `${launch.carrierName} launched ${launch.fighterName} at the end of the turn.`,
-    );
-    setLog((current) => [...launchOutcomes, ...finished.outcomes, ...current].slice(0, 12));
+    setLog((current) => [...finalized.outcomes, ...current].slice(0, 12));
 
     const enemyAlive = results.some((ship) => ship.team === "enemy" && ship.hull > 0);
     const playerAlive = results.some((ship) => ship.team === "player" && ship.hull > 0);
