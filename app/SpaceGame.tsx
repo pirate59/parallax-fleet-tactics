@@ -32,7 +32,6 @@ import {
 import {
   SHIELD_FACES,
   passiveWeaponProfilesFor,
-  resolveCombatTurn,
   shotSolutionForWeapon,
   weaponLocalOriginFor,
   weaponOriginFor,
@@ -52,32 +51,32 @@ import {
   modelScaleForArchetype,
   type EliteWeaponKind,
   type ShipArchetype,
-  type ShipPassiveTrait,
-  type ShipTurnEndAbility,
-  type WeaponMount,
 } from "./shipCatalog";
 import {
   SHIP_MODEL_VARIANTS,
   shipModelProfileFor,
-  type ShipModelId,
   type ShipModelVariant,
 } from "./shipModels";
 import { createShipHullGeometry } from "./shipGeometry";
-import { applyCarrierFighterCombatProfile, applyCarrierLaunches, isDisposableCarrierFighter } from "./carrierEngine";
+import { isDisposableCarrierFighter } from "./carrierEngine";
 import {
   AI_DOCTRINE_ORDER,
   AI_DOCTRINE_RULES,
   carrierWingTargetAssignments,
-  generateAiCommandOrder,
+  defaultAiMissionFor,
+  generateAiCommandDecision,
   shipConditionScore,
+  type AiCommandComms,
   type AiDoctrine,
 } from "./aiCommandEngine";
+import { AI_MISSION_ORDER, AI_MISSION_RULES, type AiMissionOrder } from "./aiTactics";
+import { assessFleetRisk, threatBandFor } from "./aiThreatEngine";
 import {
   AI_RECRUIT_CONTROL,
+  canToggleFriendlyControl,
   isDirectCommandShip,
   isFleetCommitReady,
   retainStoryPlayerFleet,
-  type ShipController,
 } from "./fleetControl";
 import {
   FISHTANK_CINEMATIC_TIMINGS,
@@ -90,24 +89,47 @@ import {
 } from "./fishtankMode";
 import {
   SHIP_SIZE_PROFILES,
-  resolveSizedDurability,
-  resolveSizedModelScale,
   totalDurabilityMultiplier,
   type ShipSizeClass,
 } from "./shipSize";
 import { fleetColorFor } from "./fleetPresentation";
-import { preferredTargetId, rememberOrderedTargets } from "./targetMemory";
+import { preferredTargetId } from "./targetMemory";
 import { spectatorOverviewFor } from "./spectatorCamera";
-import type { AiTacticalProfile } from "./aiTactics";
 import {
   clampCollisionPosition,
-  resolveMovementCollisions,
-  type MovementCollisionEvent,
 } from "./collisionEngine";
+import {
+  FLEET_BATTLEFIELD,
+  FLEET_STATION_X,
+  FLEET_TEAM_START_X,
+  STORY_BATTLEFIELD,
+  type BattlefieldBounds,
+} from "./battlefieldConfig";
+import {
+  ANIMATION_SPEED_OPTIONS,
+  DEFAULT_ANIMATION_SPEED,
+  advanceAnimationElapsed,
+  animationSpeedAt,
+  animationSpeedIndex,
+  scaledAnimationDuration,
+  type AnimationSpeed,
+} from "./animationSpeed";
+import {
+  cloneGameShips as copyShips,
+  type GameMode,
+  type GamePhase,
+  type GameShip,
+  type TurnOrder,
+  type TurnResolution,
+} from "./gameTypes";
+import { endStateForOrder as endStateFor, finalizeTurn, resolveTurn } from "./gameEngine";
+import { createShipFromArchetype } from "./shipFactory";
 
-type Phase = "planning" | "executing" | "victory" | "defeat";
+type Phase = GamePhase;
 type GameScreen = "menu" | "battle" | "story";
-type GameMode = "story" | "skirmish" | "endless" | "hardcore" | "fishtank";
+type Ship = GameShip;
+type Order = TurnOrder;
+type Resolution = TurnResolution;
 type StoryStage = "briefing" | "combat" | "salvage" | "encounter" | "outcome" | "won" | "lost";
 
 type AudioSettings = {
@@ -120,63 +142,6 @@ type AudioSettings = {
 type OverlayLabelSettings = {
   showShipNames: boolean;
   showHealth: boolean;
-};
-
-type Ship = {
-  id: string;
-  name: string;
-  callsign: string;
-  className: string;
-  team: Team;
-  controller: ShipController;
-  aiDoctrine?: AiDoctrine;
-  color: string;
-  position: Vec3;
-  rotation: Vec3;
-  shields: Shields;
-  maxShields: Shields;
-  hull: number;
-  maxHull: number;
-  maxMove: number;
-  maxTurn: number;
-  maxPitch: number;
-  maxRoll: number;
-  weaponRange: number;
-  weaponDamage: number;
-  archetypeId: string;
-  modelId: ShipModelId;
-  modelVariants: readonly ShipModelVariant[];
-  sizeClass: ShipSizeClass;
-  durabilityMultiplier: number;
-  modelScale: number;
-  weaponMounts: WeaponMount[];
-  passiveTraits?: ShipPassiveTrait[];
-  aiTactics: AiTacticalProfile;
-  turnEndAbility?: ShipTurnEndAbility;
-  fighterReserveRemaining?: number;
-  spawnedByShipId?: string;
-  lastTargetId?: string;
-};
-
-type Order = {
-  destination: Vec3;
-  turn: number;
-  pitch: number;
-  roll: number;
-  targetId: string;
-  fire: boolean;
-  mode: FlightMode;
-};
-
-type Resolution = {
-  token: number;
-  endShips: Ship[];
-  resolvedShips: Ship[];
-  orders: Record<string, Order>;
-  collisions: MovementCollisionEvent[];
-  shots: CombatShotEvent[];
-  outcomes: string[];
-  destroyedIds: string[];
 };
 
 type CameraCommand = {
@@ -230,8 +195,9 @@ type StoryRun = {
   history: string[];
 };
 
-const BATTLEFIELD_HALF = 20;
-const BATTLEFIELD_VERTICAL_HALF = 7;
+const battlefieldForMode = (mode: GameMode): BattlefieldBounds => mode === "story"
+  ? STORY_BATTLEFIELD
+  : FLEET_BATTLEFIELD;
 
 const MODE_OPTIONS: Array<{
   id: GameMode;
@@ -319,7 +285,7 @@ const MODEL_VARIANT_OPTIONS: Record<ShipModelVariant, {
 
 const TEAM_LABELS: Record<Team, string> = {
   player: "Your fleet",
-  ally: "Allied NPC",
+  ally: "Allied fleet",
   enemy: "Corsair NPC",
 };
 
@@ -328,109 +294,50 @@ const INITIAL_LOG = [
   "Plot a grid endpoint, set final orientation, then stage both command ships.",
 ];
 
-type ShipDeployment = {
-  id?: string;
-  name?: string;
-  callsign?: string;
-  className?: string;
-  color?: string;
-  team: Team;
-  controller: ShipController;
-  aiDoctrine?: AiDoctrine;
-  position: Vec3;
-  rotation: Vec3;
-};
-
-function createShipFromArchetype(archetype: ShipArchetype, deployment: ShipDeployment): Ship {
-  const durabilityMultiplier = archetype.durabilityMultiplier ?? 1;
-  const durability = resolveSizedDurability(
-    archetype.baseHull,
-    archetype.baseShieldCapacity,
-    archetype.sizeClass,
-    durabilityMultiplier,
-  );
-  return {
-    id: deployment.id ?? archetype.id,
-    name: deployment.name ?? archetype.name,
-    callsign: deployment.callsign ?? archetype.callsign,
-    className: deployment.className ?? archetype.className,
-    color: deployment.color ?? fleetColorFor(deployment.team, archetype.id),
-    team: deployment.team,
-    controller: deployment.controller,
-    aiDoctrine: deployment.aiDoctrine,
-    position: [...deployment.position] as Vec3,
-    rotation: [...deployment.rotation] as Vec3,
-    maxMove: archetype.maxMove,
-    maxTurn: archetype.maxTurn,
-    maxPitch: archetype.maxPitch,
-    maxRoll: archetype.maxRoll,
-    weaponRange: archetype.weaponRange,
-    weaponDamage: archetype.weaponDamage,
-    archetypeId: archetype.id,
-    modelId: archetype.modelId,
-    modelVariants: [...archetype.modelVariants],
-    sizeClass: archetype.sizeClass,
-    durabilityMultiplier,
-    shields: { ...durability.shields },
-    maxShields: { ...durability.shields },
-    hull: durability.hull,
-    maxHull: durability.hull,
-    modelScale: resolveSizedModelScale(archetype.baseModelScale, archetype.sizeClass),
-    weaponMounts: archetype.weaponMounts.map((mount) => ({ ...mount })),
-    passiveTraits: archetype.passiveTraits?.map((trait) => ({ ...trait })),
-    aiTactics: { ...archetype.aiTactics },
-    turnEndAbility: archetype.turnEndAbility ? {
-      ...archetype.turnEndAbility,
-      launchOffsets: archetype.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
-    } : undefined,
-    fighterReserveRemaining: archetype.turnEndAbility?.fighterReserve,
-  };
-}
-
 const INITIAL_SHIPS: Ship[] = [
   createShipFromArchetype(SHIP_ARCHETYPES.hammerhead, {
     id: "hammerhead-skirmish",
     name: "Hammerhead",
     team: "player",
     controller: "player",
-    position: [-9, 0, 5],
-    rotation: [0, 36, 0],
+    position: [-FLEET_TEAM_START_X, 0, -8],
+    rotation: [0, 90, 0],
   }),
   createShipFromArchetype(SHIP_ARCHETYPES.fighter, {
     id: "fighter-skirmish",
     team: "player",
     controller: "player",
-    position: [-10, -3, -4],
-    rotation: [8, 50, -8],
+    position: [-FLEET_TEAM_START_X + 1, -5, 5],
+    rotation: [8, 88, -8],
   }),
   createShipFromArchetype(SHIP_ARCHETYPES.carrier, {
     id: "carrier-skirmish",
     team: "ally",
     controller: "ai",
     aiDoctrine: "standard",
-    position: [-6, 3, 0],
-    rotation: [-5, 42, 6],
+    position: [-FLEET_TEAM_START_X - 3, 5, 0],
+    rotation: [-5, 92, 6],
   }),
   createShipFromArchetype(SHIP_ARCHETYPES.hulk, {
     id: "hulk-skirmish",
     team: "enemy",
     controller: "ai",
-    position: [8, 1, -7],
-    rotation: [0, -118, 0],
+    position: [FLEET_TEAM_START_X, 1, -10],
+    rotation: [0, -90, 0],
   }),
   createShipFromArchetype(SHIP_ARCHETYPES.archer, {
     id: "archer-skirmish",
     team: "enemy",
     controller: "ai",
-    position: [10, -2, 3],
-    rotation: [-4, -108, 7],
+    position: [FLEET_TEAM_START_X - 1, -4, 2],
+    rotation: [-4, -92, 7],
   }),
   createShipFromArchetype(SHIP_ARCHETYPES.behemoth, {
     id: "behemoth-skirmish",
     team: "enemy",
     controller: "ai",
-    position: [7, 5, 8],
-    rotation: [7, -138, -5],
+    position: [FLEET_TEAM_START_X + 3, 6, 10],
+    rotation: [7, -88, -5],
   }),
 ];
 
@@ -504,13 +411,19 @@ const quaternionFor = shipQuaternionForRotation;
 const distanceBetween = (a: Vec3, b: Vec3) =>
   new THREE.Vector3(...a).distanceTo(new THREE.Vector3(...b));
 
-const clampDestination = (ship: Ship, destination: Vec3, mode: FlightMode = "normal"): Vec3 => {
+const clampDestination = (
+  ship: Ship,
+  destination: Vec3,
+  mode: FlightMode = "normal",
+  bounds: BattlefieldBounds = FLEET_BATTLEFIELD,
+): Vec3 => {
   const origin = new THREE.Vector3(...ship.position);
   const target = new THREE.Vector3(...clampCollisionPosition(
     ship,
     destination,
-    BATTLEFIELD_HALF,
-    BATTLEFIELD_VERTICAL_HALF,
+    bounds.halfLength,
+    bounds.halfHeight,
+    bounds.halfWidth,
   ));
   const offset = target.sub(origin);
   const movementLimit = movementLimitFor(ship.maxMove, mode);
@@ -519,8 +432,13 @@ const clampDestination = (ship: Ship, destination: Vec3, mode: FlightMode = "nor
   return [result.x, result.y, result.z];
 };
 
-const isDestinationValid = (ship: Ship, destination: Vec3, mode: FlightMode = "normal") => {
-  const bounded = clampCollisionPosition(ship, destination, BATTLEFIELD_HALF, BATTLEFIELD_VERTICAL_HALF);
+const isDestinationValid = (
+  ship: Ship,
+  destination: Vec3,
+  mode: FlightMode = "normal",
+  bounds: BattlefieldBounds = FLEET_BATTLEFIELD,
+) => {
+  const bounded = clampCollisionPosition(ship, destination, bounds.halfLength, bounds.halfHeight, bounds.halfWidth);
   return distanceBetween(ship.position, destination) <= movementLimitFor(ship.maxMove, mode) + 0.01
     && distanceBetween(bounded, destination) <= 0.01;
 };
@@ -532,6 +450,7 @@ const destinationFromManeuver = (
   pitch: number,
   roll: number,
   mode: FlightMode = "normal",
+  bounds: BattlefieldBounds = FLEET_BATTLEFIELD,
 ) => {
   const finalRotation: Vec3 = [
     clamp(ship.rotation[0] + clamp(pitch, -ship.maxPitch, ship.maxPitch), -85, 85),
@@ -543,13 +462,13 @@ const destinationFromManeuver = (
     forwardVector(finalRotation),
     clamp(distance, 0, movementLimit),
   );
-  return clampDestination(ship, [destination.x, destination.y, destination.z], mode);
+  return clampDestination(ship, [destination.x, destination.y, destination.z], mode, bounds);
 };
 
-const defaultOrderFor = (ship: Ship, ships: Ship[]): Order => {
+const defaultOrderFor = (ship: Ship, ships: Ship[], bounds: BattlefieldBounds = FLEET_BATTLEFIELD): Order => {
   const defaultDistance = Math.min(ship.maxMove, ship.team === "player" ? 3 : ship.maxMove * 0.55);
   return {
-    destination: destinationFromManeuver(ship, defaultDistance, 0, 0, 0, "normal"),
+    destination: destinationFromManeuver(ship, defaultDistance, 0, 0, 0, "normal", bounds),
     turn: 0,
     pitch: 0,
     roll: 0,
@@ -559,47 +478,14 @@ const defaultOrderFor = (ship: Ship, ships: Ship[]): Order => {
   };
 };
 
-const buildDrafts = (ships: Ship[]) =>
+const buildDrafts = (ships: Ship[], bounds: BattlefieldBounds = FLEET_BATTLEFIELD) =>
   Object.fromEntries(
     ships
       .filter((ship) => isDirectCommandShip(ship) && ship.hull > 0)
-      .map((ship) => [ship.id, defaultOrderFor(ship, ships)]),
+      .map((ship) => [ship.id, defaultOrderFor(ship, ships, bounds)]),
   ) as Record<string, Order>;
 
-const endStateFor = (ship: Ship, order: Order): Ship => {
-  const finalRotation: Vec3 = [
-    clamp(ship.rotation[0] + clamp(order.pitch, -ship.maxPitch, ship.maxPitch), -85, 85),
-    normalizeAngle(ship.rotation[1] + clamp(order.turn, -ship.maxTurn, ship.maxTurn)),
-    normalizeAngle(ship.rotation[2] + clamp(order.roll, -ship.maxRoll, ship.maxRoll)),
-  ];
-  const destination = clampDestination(ship, order.destination, order.mode);
-
-  return {
-    ...ship,
-    position: destination,
-    rotation: finalRotation,
-  };
-};
-
 const titleCase = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
-
-function copyShips(ships: Ship[]) {
-  return ships.map((ship) => ({
-    ...ship,
-    shields: { ...ship.shields },
-    maxShields: { ...ship.maxShields },
-    weaponMounts: ship.weaponMounts.map((mount) => ({ ...mount })),
-    modelVariants: [...ship.modelVariants],
-    passiveTraits: ship.passiveTraits?.map((trait) => ({ ...trait })),
-    aiTactics: { ...ship.aiTactics },
-    turnEndAbility: ship.turnEndAbility ? {
-      ...ship.turnEndAbility,
-      launchOffsets: ship.turnEndAbility.launchOffsets.map((offset) => [...offset] as Vec3),
-    } : undefined,
-    position: [...ship.position] as Vec3,
-    rotation: [...ship.rotation] as Vec3,
-  }));
-}
 
 function createStoryRun(): StoryRun {
   return {
@@ -714,36 +600,6 @@ function createRecruitShip(kind: "scout" | "escort" | "gunboat", currentShips: S
     color: fleetColorFor("player", `${archetypeId}-${index}`),
     position: [...slot.position] as Vec3,
     rotation: [...slot.rotation] as Vec3,
-  };
-}
-
-function createLaunchedFighter(carrier: Ship, sequence: number, ability: ShipTurnEndAbility): Ship {
-  const archetype = SHIP_ARCHETYPES[ability.fighterArchetypeId];
-  const localOffset = ability.launchOffsets[(sequence - 1) % ability.launchOffsets.length] ?? [0, -0.5, 1];
-  const worldOffset = new THREE.Vector3(...localOffset)
-    .multiplyScalar(carrier.modelScale)
-    .applyQuaternion(quaternionFor(carrier.rotation));
-  const launchPosition = new THREE.Vector3(...carrier.position).add(worldOffset);
-  const fighter = createShipFromArchetype(archetype, {
-    id: `${carrier.id}-fighter-${sequence}`,
-    name: `${carrier.name} Wing-${sequence}`,
-    callsign: `${carrier.callsign}-F${sequence}`,
-    className: `Carrier-launched ${archetype.className.toLowerCase()}`,
-    color: carrier.color,
-    team: carrier.team,
-    controller: "ai",
-    aiDoctrine: "aggressive",
-    position: [
-      clamp(launchPosition.x, -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
-      clamp(launchPosition.y, -BATTLEFIELD_VERTICAL_HALF, BATTLEFIELD_VERTICAL_HALF),
-      clamp(launchPosition.z, -BATTLEFIELD_HALF, BATTLEFIELD_HALF),
-    ],
-    rotation: [...carrier.rotation] as Vec3,
-  });
-  return {
-    ...applyCarrierFighterCombatProfile(fighter, ability),
-    spawnedByShipId: carrier.id,
-    turnEndAbility: undefined,
   };
 }
 
@@ -1291,6 +1147,103 @@ function createSpaceScenery() {
   return scenery;
 }
 
+function createBattlefieldGrid(bounds: BattlefieldBounds, height: number, emphasized: boolean) {
+  const positions: number[] = [];
+  const step = 5;
+  for (let x = -bounds.halfLength; x <= bounds.halfLength + 0.01; x += step) {
+    positions.push(x, height, -bounds.halfWidth, x, height, bounds.halfWidth);
+  }
+  for (let z = -bounds.halfWidth; z <= bounds.halfWidth + 0.01; z += step) {
+    positions.push(-bounds.halfLength, height, z, bounds.halfLength, height, z);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  return new THREE.LineSegments(
+    geometry,
+    new THREE.LineBasicMaterial({
+      color: emphasized ? "#4a8ba9" : "#25465b",
+      transparent: true,
+      opacity: emphasized ? 0.3 : 0.12,
+    }),
+  );
+}
+
+function createFleetStation(team: "ally" | "enemy") {
+  const station = new THREE.Group();
+  const friendly = team === "ally";
+  const accent = friendly ? "#47e1d1" : "#ff744f";
+  const glow = friendly ? "#1d7f80" : "#8c321f";
+  const inward = friendly ? 1 : -1;
+  const hull = new THREE.MeshStandardMaterial({ color: "#53616b", metalness: 0.86, roughness: 0.34 });
+  const dark = new THREE.MeshStandardMaterial({ color: "#151d24", metalness: 0.78, roughness: 0.48 });
+  const trim = new THREE.MeshStandardMaterial({ color: accent, emissive: glow, emissiveIntensity: 1.2, metalness: 0.72, roughness: 0.26 });
+  const windowMaterial = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.9 });
+
+  const spine = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.35, 10.5, 16), hull);
+  spine.rotation.z = Math.PI / 2;
+  station.add(spine);
+  const reactor = new THREE.Mesh(new THREE.IcosahedronGeometry(1.8, 2), trim);
+  station.add(reactor);
+
+  [-2.9, 0, 2.9].forEach((x, ringIndex) => {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(3.4 - ringIndex * 0.18, 0.24, 10, 32), ringIndex === 1 ? trim : hull);
+    ring.position.x = x;
+    ring.rotation.y = Math.PI / 2;
+    station.add(ring);
+  });
+
+  for (let index = 0; index < 6; index += 1) {
+    const angle = index / 6 * Math.PI * 2;
+    const y = Math.cos(angle) * 3.2;
+    const z = Math.sin(angle) * 3.2;
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.55, 4.8, 0.48), index % 2 ? dark : hull);
+    arm.position.set(index % 2 ? -1.4 : 1.4, y * 0.52, z * 0.52);
+    arm.rotation.x = angle;
+    station.add(arm);
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), windowMaterial);
+    beacon.position.set(arm.position.x, y, z);
+    station.add(beacon);
+  }
+
+  const hangar = new THREE.Mesh(new THREE.BoxGeometry(3.2, 3.5, 5.4), dark);
+  hangar.position.x = inward * 5.3;
+  station.add(hangar);
+  const hangarMouth = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.25, 4.15), trim);
+  hangarMouth.position.x = inward * 6.94;
+  station.add(hangarMouth);
+  [-1.45, 0, 1.45].forEach((z) => {
+    const launchLight = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.7), windowMaterial);
+    launchLight.position.set(inward * 7.04, -1.3, z);
+    station.add(launchLight);
+  });
+
+  [-1, 1].forEach((side) => {
+    const radiator = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.12, 2.8), dark);
+    radiator.position.set(-inward * 1.4, side * 4.45, 0);
+    radiator.rotation.z = side * 0.12;
+    station.add(radiator);
+    for (let stripe = -1; stripe <= 1; stripe += 1) {
+      const panelLine = new THREE.Mesh(new THREE.BoxGeometry(3.55, 0.03, 0.08), trim);
+      panelLine.position.set(radiator.position.x, radiator.position.y + side * 0.08, stripe * 0.86);
+      station.add(panelLine);
+    }
+  });
+
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.15, 4.2, 10), hull);
+  antenna.position.y = 5.2;
+  station.add(antenna);
+  const dish = new THREE.Mesh(new THREE.ConeGeometry(1.1, 0.42, 20, 1, true), trim);
+  dish.position.y = 7.25;
+  dish.rotation.z = friendly ? -0.45 : 0.45;
+  station.add(dish);
+
+  const stationLight = new THREE.PointLight(accent, 18, 22, 2);
+  stationLight.position.set(inward * 4, 0, 0);
+  station.add(stationLight);
+  station.userData.team = team;
+  return station;
+}
+
 function addWeaponEnvelope(
   parent: THREE.Group,
   _ship: Ship,
@@ -1486,14 +1439,14 @@ function spawnExplosion(context: SceneContext, position: THREE.Vector3, color: s
   context.explosions.push({ root, flash, shock, particles, velocities, startedAt: performance.now(), duration });
 }
 
-function destroyShipVisual(context: SceneContext, ship: Ship) {
+function destroyShipVisual(context: SceneContext, ship: Ship, explosionDuration = 1750) {
   const liveGroup = context.shipGroups.get(ship.id);
   if (isDisposableCarrierFighter(ship)) {
     const position = liveGroup?.position.clone() ?? new THREE.Vector3(...ship.position);
     if (liveGroup) liveGroup.visible = false;
     const hud = context.shipHuds.get(ship.id);
     if (hud) hud.sprite.visible = false;
-    spawnExplosion(context, position, ship.team === "enemy" ? "#ff536b" : "#71ebff");
+    spawnExplosion(context, position, ship.team === "enemy" ? "#ff536b" : "#71ebff", 1, explosionDuration);
     return;
   }
   if (context.wrecks.has(ship.id)) return;
@@ -1503,7 +1456,7 @@ function destroyShipVisual(context: SceneContext, ship: Ship) {
   if (liveGroup) liveGroup.visible = false;
   const hud = context.shipHuds.get(ship.id);
   if (hud) hud.sprite.visible = false;
-  spawnExplosion(context, wreck.position, ship.team === "enemy" ? "#ff536b" : "#71ebff");
+  spawnExplosion(context, wreck.position, ship.team === "enemy" ? "#ff536b" : "#71ebff", 1, explosionDuration);
 }
 
 type SceneContext = {
@@ -1648,6 +1601,15 @@ function restoreCombatVisibility(
   });
 }
 
+function overviewSubjects(ships: Ship[], includeStations: boolean) {
+  if (!includeStations) return ships;
+  return [
+    ...ships,
+    { position: [-FLEET_STATION_X, 0, 0] as Vec3, hull: 1, modelScale: 4.5 },
+    { position: [FLEET_STATION_X, 0, 0] as Vec3, hull: 1, modelScale: 4.5 },
+  ];
+}
+
 function TacticalScene({
   ships,
   drafts,
@@ -1660,7 +1622,10 @@ function TacticalScene({
   onCombatFocus,
   onResolutionComplete,
   overlayLabels,
+  animationSpeed,
   modelVariant,
+  battlefieldBounds,
+  showFleetStations,
   presentation = "command",
 }: {
   ships: Ship[];
@@ -1674,7 +1639,10 @@ function TacticalScene({
   onCombatFocus: (focus: CombatFocus | null) => void;
   onResolutionComplete: (resolution: Resolution) => void;
   overlayLabels: OverlayLabelSettings;
+  animationSpeed: AnimationSpeed;
   modelVariant: ShipModelVariant;
+  battlefieldBounds: BattlefieldBounds;
+  showFleetStations: boolean;
   presentation?: "command" | "spectator";
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -1683,22 +1651,28 @@ function TacticalScene({
   const focusRef = useRef(onCombatFocus);
   const completeRef = useRef(onResolutionComplete);
   const overlayLabelsRef = useRef(overlayLabels);
-  const spectatorViewRef = useRef(0);
+  const animationSpeedRef = useRef<AnimationSpeed>(animationSpeed);
+  const overviewViewRef = useRef(0);
 
   useEffect(() => {
     selectRef.current = onSelect;
     focusRef.current = onCombatFocus;
     completeRef.current = onResolutionComplete;
     overlayLabelsRef.current = overlayLabels;
-  }, [onSelect, onCombatFocus, onResolutionComplete, overlayLabels]);
+    animationSpeedRef.current = animationSpeed;
+  }, [animationSpeed, onSelect, onCombatFocus, onResolutionComplete, overlayLabels]);
 
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 160);
-    camera.position.set(19, 16, 22);
+    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 320);
+    camera.position.set(
+      battlefieldBounds.halfLength * 0.95,
+      battlefieldBounds.halfHeight * 2.4,
+      battlefieldBounds.halfWidth * 1.15,
+    );
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
@@ -1713,7 +1687,7 @@ function TacticalScene({
     controls.enableDamping = true;
     controls.dampingFactor = 0.075;
     controls.minDistance = 8;
-    controls.maxDistance = 55;
+    controls.maxDistance = showFleetStations ? 170 : 70;
     controls.maxPolarAngle = Math.PI * 0.92;
     controls.target.set(0, 0, 0);
     controls.update();
@@ -1726,27 +1700,32 @@ function TacticalScene({
     enemyLight.position.set(12, 4, -4);
     scene.add(enemyLight);
 
-    [-7, 0, 7].forEach((height, index) => {
-      const grid = new THREE.GridHelper(40, 20, index === 1 ? "#4a8ba9" : "#25465b", "#183043");
-      grid.position.y = height;
-      const materials = Array.isArray(grid.material) ? grid.material : [grid.material];
-      materials.forEach((material) => {
-        material.transparent = true;
-        material.opacity = index === 1 ? 0.32 : 0.13;
-      });
-      scene.add(grid);
+    [-battlefieldBounds.halfHeight, 0, battlefieldBounds.halfHeight].forEach((height, index) => {
+      scene.add(createBattlefieldGrid(battlefieldBounds, height, index === 1));
     });
 
     const volume = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(40, 14, 40)),
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(
+        battlefieldBounds.length,
+        battlefieldBounds.height,
+        battlefieldBounds.width,
+      )),
       new THREE.LineBasicMaterial({ color: "#315971", transparent: true, opacity: 0.38 }),
     );
     scene.add(volume);
 
+    if (showFleetStations) {
+      const alliedStation = createFleetStation("ally");
+      alliedStation.position.set(-FLEET_STATION_X, 0, 0);
+      const enemyStation = createFleetStation("enemy");
+      enemyStation.position.set(FLEET_STATION_X, 0, 0);
+      scene.add(alliedStation, enemyStation);
+    }
+
     const starGeometry = new THREE.BufferGeometry();
     const starPositions = new Float32Array(900 * 3);
     for (let index = 0; index < 900; index += 1) {
-      const radius = 45 + Math.random() * 45;
+      const radius = battlefieldBounds.halfLength + 32 + Math.random() * 65;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       starPositions[index * 3] = radius * Math.sin(phi) * Math.cos(theta);
@@ -1941,7 +1920,7 @@ function TacticalScene({
       renderer.domElement.remove();
       contextRef.current = null;
     };
-  }, []);
+  }, [battlefieldBounds, showFleetStations]);
 
   useEffect(() => {
     const context = contextRef.current;
@@ -2028,7 +2007,7 @@ function TacticalScene({
       .filter((ship) => ship.controller === "player" && ship.hull > 0 && drafts[ship.id])
       .forEach((ship) => {
         const order = drafts[ship.id];
-        const end = endStateFor(ship, order);
+        const end = endStateFor(ship, order, battlefieldBounds);
         const startPoint = new THREE.Vector3(...ship.position);
         const endPoint = new THREE.Vector3(...end.position);
         const midpoint = startPoint.clone().lerp(endPoint, 0.5).add(new THREE.Vector3(0, 0.85, 0));
@@ -2090,14 +2069,18 @@ function TacticalScene({
           }
         }
       });
-  }, [ships, drafts, staged, selectedShipId, selectedTargetId, resolution, overlayLabels, modelVariant]);
+  }, [ships, drafts, staged, selectedShipId, selectedTargetId, resolution, overlayLabels, modelVariant, battlefieldBounds]);
 
   useEffect(() => {
     const context = contextRef.current;
     if (!context || !cameraCommand.nonce) return;
     if (cameraCommand.kind === "reset") {
-      if (presentation === "spectator") {
-        const overview = spectatorOverviewFor(ships, context.camera.aspect, spectatorViewRef.current);
+      if (presentation === "spectator" || showFleetStations) {
+        const overview = spectatorOverviewFor(
+          overviewSubjects(ships, showFleetStations),
+          context.camera.aspect,
+          overviewViewRef.current,
+        );
         context.camera.position.set(...overview.position);
         context.controls.target.set(...overview.target);
         context.camera.fov = overview.fov;
@@ -2116,39 +2099,47 @@ function TacticalScene({
       }
     }
     context.controls.update();
-  }, [cameraCommand, presentation, ships]);
+  }, [cameraCommand, presentation, ships, showFleetStations]);
 
   useEffect(() => {
     const context = contextRef.current;
     if (!context || presentation !== "spectator" || resolution) return;
-    context.controls.maxDistance = 75;
-    spectatorViewRef.current += 1;
-    const overview = spectatorOverviewFor(ships, context.camera.aspect, spectatorViewRef.current);
+    context.controls.maxDistance = showFleetStations ? 170 : 75;
+    const overview = spectatorOverviewFor(
+      overviewSubjects(ships, showFleetStations),
+      context.camera.aspect,
+      overviewViewRef.current,
+    );
     context.camera.position.set(...overview.position);
     context.controls.target.set(...overview.target);
     context.camera.fov = overview.fov;
     context.camera.updateProjectionMatrix();
     context.controls.update();
-  }, [presentation, resolution, ships]);
+  }, [presentation, resolution, ships, showFleetStations]);
 
   useEffect(() => {
     const context = contextRef.current;
     if (!context || !resolution) return;
     let cancelled = false;
     let combatVisibility: CombatVisibilitySnapshot | null = null;
-    const timers = new Set<ReturnType<typeof setTimeout>>();
-    const spectatorOverview = presentation === "spectator"
-      ? spectatorOverviewFor(resolution.endShips, context.camera.aspect, spectatorViewRef.current + 1)
+    const hasCinematicEvent = resolution.collisions.length > 0 || resolution.shots.some((shot) => shot.valid);
+    if (hasCinematicEvent) overviewViewRef.current += 1;
+    const returnOverview = presentation === "spectator" || hasCinematicEvent
+      ? spectatorOverviewFor(
+        overviewSubjects(resolution.endShips, false),
+        context.camera.aspect,
+        overviewViewRef.current,
+        1.03,
+      )
       : null;
-    const tacticalPosition = spectatorOverview
-      ? new THREE.Vector3(...spectatorOverview.position)
+    const tacticalPosition = returnOverview
+      ? new THREE.Vector3(...returnOverview.position)
       : context.camera.position.clone();
-    const tacticalTarget = spectatorOverview
-      ? new THREE.Vector3(...spectatorOverview.target)
+    const tacticalTarget = returnOverview
+      ? new THREE.Vector3(...returnOverview.target)
       : context.controls.target.clone();
-    const tacticalFov = spectatorOverview?.fov ?? context.camera.fov;
-    const started = performance.now();
-    const duration = presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.movement : 1550;
+    const tacticalFov = returnOverview?.fov ?? context.camera.fov;
+    const scaledNow = (milliseconds: number) => scaledAnimationDuration(milliseconds, animationSpeedRef.current);
     const starts = new Map(
       ships.map((ship) => [
         ship.id,
@@ -2159,60 +2150,54 @@ function TacticalScene({
       ]),
     );
 
-    const delay = (milliseconds: number) => new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        timers.delete(timer);
-        resolve();
-      }, milliseconds);
-      timers.add(timer);
+    const runTimedAnimation = (
+      milliseconds: number,
+      update: (progress: number) => void = () => undefined,
+    ) => new Promise<void>((resolve) => {
+      let elapsed = 0;
+      let previous = performance.now();
+      const step = (time: number) => {
+        if (cancelled) {
+          resolve();
+          return;
+        }
+        const delta = clamp(time - previous, 0, 100);
+        previous = time;
+        elapsed = advanceAnimationElapsed(elapsed, delta, animationSpeedRef.current);
+        const progress = clamp(elapsed / milliseconds, 0, 1);
+        update(progress);
+        if (progress < 1) requestAnimationFrame(step);
+        else resolve();
+      };
+      requestAnimationFrame(step);
     });
+
+    const delay = (milliseconds: number) => runTimedAnimation(milliseconds);
 
     const tweenCamera = (position: THREE.Vector3, lookAt: THREE.Vector3, milliseconds: number) => {
       const fromPosition = context.camera.position.clone();
       const fromLook = context.controls.target.clone();
-      const tweenStarted = performance.now();
-      return new Promise<void>((resolve) => {
-        const step = (time: number) => {
-          if (cancelled) {
-            resolve();
-            return;
-          }
-          const raw = clamp((time - tweenStarted) / milliseconds, 0, 1);
-          const eased = raw * raw * (3 - 2 * raw);
-          context.camera.position.lerpVectors(fromPosition, position, eased);
-          const currentLook = fromLook.clone().lerp(lookAt, eased);
-          context.camera.lookAt(currentLook);
-          context.controls.target.copy(currentLook);
-          if (raw < 1) requestAnimationFrame(step);
-          else resolve();
-        };
-        requestAnimationFrame(step);
+      return runTimedAnimation(milliseconds, (raw) => {
+        const eased = raw * raw * (3 - 2 * raw);
+        context.camera.position.lerpVectors(fromPosition, position, eased);
+        const currentLook = fromLook.clone().lerp(lookAt, eased);
+        context.camera.lookAt(currentLook);
+        context.controls.target.copy(currentLook);
       });
     };
 
     const growBeam = (beam: ReturnType<typeof addCinematicBeam>, milliseconds: number) => {
-      const beamStarted = performance.now();
-      return new Promise<void>((resolve) => {
-        const step = (time: number) => {
-          if (cancelled) {
-            resolve();
-            return;
-          }
-          const raw = clamp((time - beamStarted) / milliseconds, 0, 1);
-          const eased = 1 - Math.pow(1 - raw, 3);
-          const currentLength = Math.max(0.001, beam.length * eased);
-          const currentMidpoint = beam.start.clone().addScaledVector(beam.direction, currentLength / 2);
-          beam.outer.scale.y = currentLength;
-          beam.core.scale.y = currentLength;
-          beam.outer.position.copy(currentMidpoint);
-          beam.core.position.copy(currentMidpoint);
-          beam.muzzleFlash.scale.setScalar(1 + Math.sin(raw * Math.PI) * 0.9);
-          beam.impact.visible = raw > 0.78;
-          if (beam.impact.visible) beam.impact.scale.setScalar(0.7 + (raw - 0.78) * 2.2);
-          if (raw < 1) requestAnimationFrame(step);
-          else resolve();
-        };
-        requestAnimationFrame(step);
+      return runTimedAnimation(milliseconds, (raw) => {
+        const eased = 1 - Math.pow(1 - raw, 3);
+        const currentLength = Math.max(0.001, beam.length * eased);
+        const currentMidpoint = beam.start.clone().addScaledVector(beam.direction, currentLength / 2);
+        beam.outer.scale.y = currentLength;
+        beam.core.scale.y = currentLength;
+        beam.outer.position.copy(currentMidpoint);
+        beam.core.position.copy(currentMidpoint);
+        beam.muzzleFlash.scale.setScalar(1 + Math.sin(raw * Math.PI) * 0.9);
+        beam.impact.visible = raw > 0.78;
+        if (beam.impact.visible) beam.impact.scale.setScalar(0.7 + (raw - 0.78) * 2.2);
       });
     };
 
@@ -2284,7 +2269,7 @@ function TacticalScene({
           presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.cameraApproach : 430,
         );
         if (cancelled) return;
-        spawnExplosion(context, midpoint, "#ffb45a", collision.kind === "wreck" ? 0.38 : 0.56, 920);
+        spawnExplosion(context, midpoint, "#ffb45a", collision.kind === "wreck" ? 0.38 : 0.56, scaledNow(920));
         spawnDamageNumber(
           context,
           positionA,
@@ -2292,7 +2277,7 @@ function TacticalScene({
           collision.hullDamageToA > 0 ? "hull" : "shield",
           collision.hullDamageToA > 0 ? "IMPACT · HULL" : "IMPACT · SHIELD",
           -0.35,
-          presentation === "spectator" ? 1700 : 1350,
+          scaledNow(presentation === "spectator" ? 1700 : 1350),
         );
         spawnDamageNumber(
           context,
@@ -2301,12 +2286,12 @@ function TacticalScene({
           collision.hullDamageToB > 0 ? "hull" : "shield",
           collision.hullDamageToB > 0 ? "IMPACT · HULL" : "IMPACT · SHIELD",
           0.35,
-          presentation === "spectator" ? 1700 : 1350,
+          scaledNow(presentation === "spectator" ? 1700 : 1350),
         );
         [shipA, shipB].forEach((ship) => {
           if (!resolution.destroyedIds.includes(ship.id) || visuallyDestroyedIds.has(ship.id)) return;
           visuallyDestroyedIds.add(ship.id);
-          destroyShipVisual(context, ship);
+          destroyShipVisual(context, ship, scaledNow(1750));
         });
         await delay(presentation === "spectator" ? 980 : 720);
         focusRef.current(null);
@@ -2380,7 +2365,7 @@ function TacticalScene({
           "shield",
           "SHIELD",
           hullDamage > 0 ? -0.55 : 0,
-          presentation === "spectator" ? 1650 : 1300,
+          scaledNow(presentation === "spectator" ? 1650 : 1300),
         );
         spawnDamageNumber(
           context,
@@ -2389,7 +2374,7 @@ function TacticalScene({
           "hull",
           "HULL",
           shieldDamage > 0 ? 0.55 : 0,
-          presentation === "spectator" ? 1650 : 1300,
+          scaledNow(presentation === "spectator" ? 1650 : 1300),
         );
         const hud = context.shipHuds.get(target.id);
         if (hud) updateShipHud(hud, { ...target, hull: shot.hullAfter }, overlayLabelsRef.current);
@@ -2404,7 +2389,7 @@ function TacticalScene({
         }
         if (shot.destroyed) {
           visuallyDestroyedIds.add(target.id);
-          destroyShipVisual(context, target);
+          destroyShipVisual(context, target, scaledNow(1750));
         }
         await delay(
           presentation === "spectator"
@@ -2429,9 +2414,7 @@ function TacticalScene({
 
     context.controls.enabled = false;
 
-    const animateMovement = (time: number) => {
-      if (cancelled) return;
-      const raw = clamp((time - started) / duration, 0, 1);
+    const animateMovement = (raw: number) => {
       const eased = raw < 0.5 ? 4 * raw * raw * raw : 1 - Math.pow(-2 * raw + 2, 3) / 2;
       resolution.endShips.forEach((endShip) => {
         const group = context.shipGroups.get(endShip.id);
@@ -2440,18 +2423,16 @@ function TacticalScene({
         group.position.lerpVectors(start.position, new THREE.Vector3(...endShip.position), eased);
         group.quaternion.slerpQuaternions(start.quaternion, quaternionFor(endShip.rotation), eased);
       });
-
-      if (raw < 1) {
-        requestAnimationFrame(animateMovement);
-        return;
-      }
-      void playResolutionCinematics();
     };
-    requestAnimationFrame(animateMovement);
+    void runTimedAnimation(
+      presentation === "spectator" ? FISHTANK_CINEMATIC_TIMINGS.movement : 1550,
+      animateMovement,
+    ).then(() => {
+      if (!cancelled) void playResolutionCinematics();
+    });
 
     return () => {
       cancelled = true;
-      timers.forEach((timer) => clearTimeout(timer));
       focusRef.current(null);
       clearGroup(context.laserGroup);
       if (combatVisibility) restoreCombatVisibility(context, combatVisibility, resolution.destroyedIds);
@@ -2462,7 +2443,7 @@ function TacticalScene({
       context.camera.updateProjectionMatrix();
       context.controls.update();
     };
-  }, [presentation, resolution, ships]);
+  }, [presentation, resolution, ships, showFleetStations]);
 
   return <div className="three-mount" ref={mountRef} />;
 }
@@ -2947,6 +2928,7 @@ export function SpaceGame() {
   const [audioSettings, setAudioSettings] = useState<AudioSettings>(DEFAULT_AUDIO_SETTINGS);
   const [modelVariant, setModelVariant] = useState<ShipModelVariant>("classic");
   const [overlayLabels, setOverlayLabels] = useState<OverlayLabelSettings>(DEFAULT_OVERLAY_LABELS);
+  const [animationSpeed, setAnimationSpeed] = useState<AnimationSpeed>(DEFAULT_ANIMATION_SPEED);
   const [audioSettingsHydrated, setAudioSettingsHydrated] = useState(false);
   const [modelVariantHydrated, setModelVariantHydrated] = useState(false);
   const [ships, setShips] = useState<Ship[]>(() => copyShips(INITIAL_SHIPS));
@@ -2958,8 +2940,11 @@ export function SpaceGame() {
   const [log, setLog] = useState(INITIAL_LOG);
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [combatFocus, setCombatFocus] = useState<CombatFocus | null>(null);
+  const [aiComms, setAiComms] = useState<AiCommandComms[]>([]);
+  const [commsCollapsed, setCommsCollapsed] = useState(false);
   const [cameraCommand, setCameraCommand] = useState<CameraCommand>({ kind: "reset", nonce: 0 });
   const [helpOpen, setHelpOpen] = useState(true);
+  const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
   const [fishtankMatch, setFishtankMatch] = useState(0);
   const storyActionLockRef = useRef(false);
   const fishtankMatchRef = useRef(0);
@@ -3028,14 +3013,16 @@ export function SpaceGame() {
     storyActionLockRef.current = false;
   }, [storyRun?.stage]);
 
+  const battlefieldBounds = battlefieldForMode(activeMode);
+  const showFleetStations = activeMode !== "story";
   const selectedShip = ships.find((ship) => ship.id === selectedShipId)
-    ?? ships.find((ship) => ship.controller === "player" && ship.hull > 0)
-    ?? ships.find((ship) => ship.team === "player" && ship.hull > 0)
+    ?? ships.find((ship) => ship.team !== "enemy" && ship.controller === "player" && ship.hull > 0)
+    ?? ships.find((ship) => ship.team !== "enemy" && ship.hull > 0)
     ?? ships[0];
   const selectedDraft = selectedShip ? drafts[selectedShip.id] : undefined;
   const enemies = ships.filter((ship) => ship.team === "enemy" && ship.hull > 0);
-  const playerShips = ships.filter((ship) => ship.team === "player");
-  const commandShips = ships.filter(isDirectCommandShip);
+  const friendlyShips = ships.filter((ship) => ship.team !== "enemy");
+  const commandShips = friendlyShips.filter(isDirectCommandShip);
   const livingCommandShips = commandShips.filter((ship) => ship.hull > 0);
   const alliedNPCs = ships.filter((ship) => ship.controller === "ai" && ship.team !== "enemy" && ship.hull > 0);
   const selectedTargetId = selectedDraft?.targetId ?? "";
@@ -3043,15 +3030,17 @@ export function SpaceGame() {
   const cinematicShipIds = new Set(combatFocus ? [combatFocus.left.id, combatFocus.right.id] : []);
   const readyCount = livingCommandShips.filter((ship) => staged.has(ship.id)).length;
   const isCommandOrderValid = (ship: Ship) => {
+    const bounds = battlefieldForMode(activeMode);
     const order = drafts[ship.id];
-    if (!order || !isDestinationValid(ship, order.destination, order.mode)) return false;
+    if (!order || !isDestinationValid(ship, order.destination, order.mode, bounds)) return false;
     return order.mode !== "focus-fire" || ships.some((candidate) => candidate.id === order.targetId && candidate.team === "enemy" && candidate.hull > 0);
   };
-  const allOrdersValid = livingCommandShips.every(isCommandOrderValid);
   const allReady = isFleetCommitReady(ships, staged, isCommandOrderValid);
   const plottedDistance = selectedShip && selectedDraft ? distanceBetween(selectedShip.position, selectedDraft.destination) : 0;
   const movementLimit = selectedShip && selectedDraft ? movementLimitFor(selectedShip.maxMove, selectedDraft.mode) : 0;
-  const destinationValid = selectedShip && selectedDraft ? isDestinationValid(selectedShip, selectedDraft.destination, selectedDraft.mode) : false;
+  const destinationValid = selectedShip && selectedDraft
+    ? isDestinationValid(selectedShip, selectedDraft.destination, selectedDraft.mode, battlefieldBounds)
+    : false;
   const orderReady = Boolean(destinationValid && selectedDraft && (selectedDraft.mode !== "focus-fire" || selectedTarget));
   const relativeMovement = selectedShip && selectedDraft
     ? shipMovementFromDestination(selectedShip.position, selectedShip.rotation, selectedDraft.destination)
@@ -3063,10 +3052,11 @@ export function SpaceGame() {
 
   const forecast = useMemo(() => {
     if (!selectedShip || !selectedDraft) return null;
+    const bounds = battlefieldForMode(activeMode);
     const target = ships.find((ship) => ship.id === selectedDraft.targetId && ship.hull > 0);
     const salvoCount = salvosForOrder(selectedDraft);
     if (!target || salvoCount === 0) return null;
-    const predicted = endStateFor(selectedShip, selectedDraft);
+    const predicted = endStateFor(selectedShip, selectedDraft, bounds);
     const solutions = weaponProfilesFor(predicted).map((weapon) => ({
       weapon,
       solution: shotSolutionForWeapon(predicted, target, weapon),
@@ -3082,7 +3072,7 @@ export function SpaceGame() {
       damage: validSolutions.reduce((sum, { weapon }) => sum + weapon.damage, 0) * salvoCount,
       salvoCount,
     };
-  }, [selectedShip, selectedDraft, ships]);
+  }, [selectedShip, selectedDraft, ships, activeMode]);
 
   const updateDraft = useCallback((patch: Partial<Order>) => {
     if (!selectedShip || selectedShip.controller !== "player" || phase !== "planning") return;
@@ -3102,8 +3092,50 @@ export function SpaceGame() {
     setShips((current) => current.map((ship) => ship.id === selectedShip.id ? { ...ship, aiDoctrine: doctrine } : ship));
   }, [selectedShip, phase]);
 
+  const updateAiMission = useCallback((mission: AiMissionOrder) => {
+    if (!selectedShip || selectedShip.controller !== "ai" || selectedShip.team === "enemy" || phase !== "planning") return;
+    setShips((current) => current.map((ship) => ship.id === selectedShip.id ? { ...ship, aiMission: mission } : ship));
+  }, [selectedShip, phase]);
+
+  const updateShipController = useCallback((controller: "player" | "ai") => {
+    if (!selectedShip || phase !== "planning" || activeMode === "fishtank") return;
+    const lockedFlagshipId = activeMode === "story" ? STORY_STARTER_ARCHETYPE.id : undefined;
+    if (!canToggleFriendlyControl(selectedShip, lockedFlagshipId) || selectedShip.controller === controller) return;
+
+    const updatedShip: Ship = controller === "ai"
+      ? {
+          ...selectedShip,
+          controller,
+          aiDoctrine: selectedShip.aiDoctrine ?? "standard",
+          aiMission: selectedShip.aiMission ?? defaultAiMissionFor(selectedShip),
+        }
+      : { ...selectedShip, controller };
+    setShips((current) => current.map((ship) => ship.id === selectedShip.id ? updatedShip : ship));
+    setDrafts((current) => {
+      if (controller === "player") {
+        return {
+          ...current,
+          [selectedShip.id]: defaultOrderFor(updatedShip, ships, battlefieldForMode(activeMode)),
+        };
+      }
+      const next = { ...current };
+      delete next[selectedShip.id];
+      return next;
+    });
+    setStaged((current) => {
+      const next = new Set(current);
+      next.delete(selectedShip.id);
+      return next;
+    });
+    setLog((current) => [
+      `${selectedShip.name} transferred to ${controller === "ai" ? "AI mission control" : "manual command"}.`,
+      ...current,
+    ].slice(0, 12));
+  }, [activeMode, phase, selectedShip, ships]);
+
   const updateRelativeMovement = useCallback((axis: keyof ShipRelativeMovement, value: number) => {
     if (!selectedShip || !selectedDraft) return;
+    const bounds = battlefieldForMode(activeMode);
     const movement = shipMovementFromDestination(selectedShip.position, selectedShip.rotation, selectedDraft.destination);
     const constrainedMovement = clampShipMovementToRange(
       { ...movement, [axis]: value },
@@ -3115,20 +3147,21 @@ export function SpaceGame() {
       constrainedMovement,
     );
     updateDraft({
-      destination: clampDestination(selectedShip, proposedDestination, selectedDraft.mode),
+      destination: clampDestination(selectedShip, proposedDestination, selectedDraft.mode, bounds),
     });
-  }, [selectedShip, selectedDraft, updateDraft]);
+  }, [selectedShip, selectedDraft, updateDraft, activeMode]);
 
   const updateFlightMode = useCallback((mode: FlightMode) => {
     if (!selectedShip || !selectedDraft) return;
+    const bounds = battlefieldForMode(activeMode);
     updateDraft({
       mode,
       destination: mode === "focus-fire"
         ? [...selectedShip.position] as Vec3
-        : clampDestination(selectedShip, selectedDraft.destination, mode),
+        : clampDestination(selectedShip, selectedDraft.destination, mode, bounds),
       fire: fireStateForMode(mode, true),
     });
-  }, [selectedShip, selectedDraft, updateDraft]);
+  }, [selectedShip, selectedDraft, updateDraft, activeMode]);
 
   const faceTarget = useCallback(() => {
     if (!selectedShip || !selectedDraft) return;
@@ -3145,7 +3178,9 @@ export function SpaceGame() {
   }, [selectedShip, selectedDraft, ships, updateDraft]);
 
   const generateNpcOrders = useCallback((currentShips: Ship[]) => {
+    const bounds = battlefieldForMode(activeMode);
     const orders: Record<string, Order> = {};
+    const comms: AiCommandComms[] = [];
     const wingTargets = carrierWingTargetAssignments(currentShips);
     currentShips
       .filter((ship) => ship.controller === "ai" && ship.hull > 0)
@@ -3153,74 +3188,78 @@ export function SpaceGame() {
         const reservedDestinations = Object.fromEntries(
           Object.entries(orders).map(([id, order]) => [id, order.destination]),
         );
-        const order = generateAiCommandOrder(
+        const decision = generateAiCommandDecision(
           ship,
           currentShips,
           ship.aiDoctrine ?? "standard",
-          BATTLEFIELD_HALF,
-          BATTLEFIELD_VERTICAL_HALF,
-          { forcedTargetId: wingTargets[ship.id], reservedDestinations },
+          bounds.halfLength,
+          bounds.halfHeight,
+          {
+            forcedTargetId: ship.spawnedByShipId && defaultAiMissionFor(ship) === "assault"
+              ? wingTargets[ship.id]
+              : undefined,
+            reservedDestinations,
+            battlefieldWidthHalf: bounds.halfWidth,
+          },
         );
-        if (order) orders[ship.id] = order;
+        if (decision) {
+          orders[ship.id] = decision.order;
+          comms.push(decision.comms);
+        }
       });
-    return orders;
-  }, []);
+    return { orders, comms };
+  }, [activeMode]);
 
   const executeTurn = useCallback((automatic = false) => {
+    const bounds = battlefieldForMode(activeMode);
     const fishtankCommit = activeMode === "fishtank" && automatic;
-    if (phase !== "planning" || (!fishtankCommit && (!allReady || !allOrdersValid))) return;
-    const npcOrders = generateNpcOrders(ships);
-    const allOrders: Record<string, Order> = fishtankCommit ? npcOrders : { ...drafts, ...npcOrders };
-    const intendedShips = ships.map((ship) => {
-      const order = allOrders[ship.id];
-      return ship.hull > 0 && order ? endStateFor(ship, order) : ship;
-    });
-    const collision = resolveMovementCollisions(
+    const commandOrderIsValid = (ship: Ship) => {
+      const order = drafts[ship.id];
+      if (!order || !isDestinationValid(ship, order.destination, order.mode, bounds)) return false;
+      return order.mode !== "focus-fire"
+        || ships.some((candidate) => candidate.id === order.targetId && candidate.team === "enemy" && candidate.hull > 0);
+    };
+    const ordersValidNow = ships
+      .filter((ship) => ship.team !== "enemy" && isDirectCommandShip(ship) && ship.hull > 0)
+      .every(commandOrderIsValid);
+    const fleetReadyNow = isFleetCommitReady(ships, staged, commandOrderIsValid);
+    if (phase !== "planning" || (!fishtankCommit && (!fleetReadyNow || !ordersValidNow))) return;
+    const npcPlan = generateNpcOrders(ships);
+    const allOrders: Record<string, Order> = fishtankCommit ? npcPlan.orders : { ...drafts, ...npcPlan.orders };
+    const visibleComms = activeMode === "fishtank"
+      ? npcPlan.comms
+      : npcPlan.comms.filter((transmission) => transmission.team !== "enemy");
+    const result = resolveTurn({
+      turn,
       ships,
-      intendedShips,
-      BATTLEFIELD_HALF,
-      BATTLEFIELD_VERTICAL_HALF,
-    );
-    const combat = resolveCombatTurn(
-      collision.ships,
-      allOrders,
-      {
-        ...(fishtankCommit ? { teamOrder: fishtankActivationOrder(turn) } : {}),
-        preHitFaces: collision.hitFaces,
-      },
-    );
+      orders: allOrders,
+      bounds,
+      ...(fishtankCommit ? { activationTeamOrder: fishtankActivationOrder(turn) } : {}),
+    });
     setPhase("executing");
+    setMobileControlsOpen(false);
+    setAiComms(visibleComms);
     setLog((current) => [
       activeMode === "fishtank"
         ? `Turn ${turn}: both AI fleets released their vectors.`
         : `Turn ${turn}: vectors move simultaneously; impacts resolve before ordered fire.`,
+      ...visibleComms.slice(0, 3).map((transmission) => `${transmission.callsign}: ${transmission.message}`),
       ...current,
-    ].slice(0, 8));
-    setResolution({
-      token: Date.now(),
-      endShips: collision.ships,
-      resolvedShips: combat.ships,
-      orders: allOrders,
-      collisions: collision.collisions,
-      shots: combat.shots,
-      outcomes: [...collision.outcomes, ...combat.outcomes],
-      destroyedIds: [...new Set([...collision.destroyedIds, ...combat.destroyedIds])],
-    });
-  }, [activeMode, allOrdersValid, allReady, drafts, generateNpcOrders, phase, ships, turn]);
+    ].slice(0, 12));
+    setResolution(result);
+  }, [activeMode, drafts, generateNpcOrders, phase, ships, staged, turn]);
 
   const resolveCombat = useCallback((finished: Resolution) => {
-    const rememberedShips = rememberOrderedTargets(finished.resolvedShips, finished.orders);
-    const launched = applyCarrierLaunches(copyShips(rememberedShips), createLaunchedFighter);
-    const results = copyShips(launched.ships);
+    const bounds = battlefieldForMode(activeMode);
+    const finalized = finalizeTurn(finished, bounds);
+    const results = finalized.ships;
     setShips(results);
     setResolution(null);
-    const launchOutcomes = launched.launches.map((launch) =>
-      `${launch.carrierName} launched ${launch.fighterName} at the end of the turn.`,
-    );
-    setLog((current) => [...launchOutcomes, ...finished.outcomes, ...current].slice(0, 12));
+    setLog((current) => [...finalized.outcomes, ...current].slice(0, 12));
 
     const enemyAlive = results.some((ship) => ship.team === "enemy" && ship.hull > 0);
     const playerAlive = results.some((ship) => ship.team === "player" && ship.hull > 0);
+    const friendlyAlive = results.some((ship) => ship.team !== "enemy" && ship.hull > 0);
     const fishtankAllyAlive = results.some((ship) => ship.team === "ally" && ship.hull > 0);
     if (activeMode === "story" && !playerAlive) {
       setPhase("defeat");
@@ -3240,7 +3279,7 @@ export function SpaceGame() {
       setPhase("defeat");
       return;
     }
-    if (activeMode !== "fishtank" && !playerAlive) {
+    if (activeMode !== "story" && activeMode !== "fishtank" && !friendlyAlive) {
       setPhase("defeat");
       return;
     }
@@ -3248,16 +3287,18 @@ export function SpaceGame() {
     setTurn((current) => current + 1);
     setPhase("planning");
     setStaged(new Set());
-    setDrafts(buildDrafts(results));
-    const nextPlayer = results.find((ship) => ship.team === "player" && ship.hull > 0);
-    if (nextPlayer) setSelectedShipId(nextPlayer.id);
+    setDrafts(buildDrafts(results, bounds));
+    const nextFriendly = results.find((ship) => ship.team !== "enemy" && ship.controller === "player" && ship.hull > 0)
+      ?? results.find((ship) => ship.team !== "enemy" && ship.hull > 0);
+    if (nextFriendly) setSelectedShipId(nextFriendly.id);
   }, [activeMode]);
 
-  const loadCombatState = useCallback((nextShips: Ship[], nextLog: string[]) => {
+  const loadCombatState = useCallback((nextShips: Ship[], nextLog: string[], bounds: BattlefieldBounds) => {
     const encounterShips = copyShips(nextShips);
-    const firstPlayer = encounterShips.find((ship) => ship.team === "player" && ship.hull > 0);
+    const firstPlayer = encounterShips.find((ship) => ship.team !== "enemy" && ship.controller === "player" && ship.hull > 0)
+      ?? encounterShips.find((ship) => ship.team !== "enemy" && ship.hull > 0);
     setShips(encounterShips);
-    setDrafts(buildDrafts(encounterShips));
+    setDrafts(buildDrafts(encounterShips, bounds));
     setStaged(new Set());
     setSelectedShipId(firstPlayer?.id ?? "");
     setPhase("planning");
@@ -3265,17 +3306,18 @@ export function SpaceGame() {
     setLog(nextLog);
     setResolution(null);
     setCombatFocus(null);
+    setAiComms([]);
     setCameraCommand({ kind: "reset", nonce: Date.now() });
   }, []);
 
   const resetGame = useCallback(() => {
-    loadCombatState(INITIAL_SHIPS, INITIAL_LOG);
+    loadCombatState(INITIAL_SHIPS, INITIAL_LOG, FLEET_BATTLEFIELD);
   }, [loadCombatState]);
 
   const startStoryCampaign = useCallback(() => {
     const starter = createStoryStarter();
     setStoryRun(createStoryRun());
-    loadCombatState([starter], STORY_INITIAL_LOG);
+    loadCombatState([starter], STORY_INITIAL_LOG, STORY_BATTLEFIELD);
     setActiveMode("story");
     setSelectedMode("story");
     setScreen("story");
@@ -3289,7 +3331,7 @@ export function SpaceGame() {
     loadCombatState(createFishtankFleet(INITIAL_SHIPS, nextMatch), [
       `Fishtank match ${String(nextMatch).padStart(2, "0")}: two autonomous five-ship fleets connected.`,
       "AI captains are calculating the opening movement phase.",
-    ]);
+    ], FLEET_BATTLEFIELD);
     setActiveMode("fishtank");
     setSelectedMode("fishtank");
     setScreen("battle");
@@ -3306,7 +3348,7 @@ export function SpaceGame() {
       `Warp Gate ${String(gate).padStart(2, "0")}: ${prepared.config.name}. ${prepared.config.threat}.`,
       ...pursuitLog,
       "Stage each directly controlled ship. AI wingmates calculate their doctrine orders when the turn commits.",
-    ]);
+    ], STORY_BATTLEFIELD);
     setStoryRun((current) => current ? {
       ...current,
       stage: "combat",
@@ -3434,15 +3476,21 @@ export function SpaceGame() {
 
   useEffect(() => {
     if (activeMode !== "fishtank" || screen !== "battle" || phase !== "planning" || resolution) return;
-    const timer = window.setTimeout(() => executeTurn(true), FISHTANK_PLANNING_DELAY_MS);
+    const timer = window.setTimeout(
+      () => executeTurn(true),
+      scaledAnimationDuration(FISHTANK_PLANNING_DELAY_MS, animationSpeed),
+    );
     return () => window.clearTimeout(timer);
-  }, [activeMode, executeTurn, phase, resolution, screen]);
+  }, [activeMode, animationSpeed, executeTurn, phase, resolution, screen]);
 
   useEffect(() => {
     if (activeMode !== "fishtank" || screen !== "battle" || (phase !== "victory" && phase !== "defeat")) return;
-    const timer = window.setTimeout(startFishtankMatch, FISHTANK_RESTART_DELAY_MS);
+    const timer = window.setTimeout(
+      startFishtankMatch,
+      scaledAnimationDuration(FISHTANK_RESTART_DELAY_MS, animationSpeed),
+    );
     return () => window.clearTimeout(timer);
-  }, [activeMode, phase, screen, startFishtankMatch]);
+  }, [activeMode, animationSpeed, phase, screen, startFishtankMatch]);
 
   const selectShip = useCallback((id: string) => {
     if (activeMode === "fishtank") return;
@@ -3462,12 +3510,16 @@ export function SpaceGame() {
     const handleShortcuts = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, select, textarea, button")) return;
+      if (event.key === "Escape" && mobileControlsOpen) {
+        setMobileControlsOpen(false);
+        return;
+      }
       if (phase !== "executing" && event.key.toLowerCase() === "f") {
         setCameraCommand({ kind: "focus", shipId: selectedShipId, nonce: Date.now() });
       }
       if (phase !== "executing" && event.key === "1") setCameraCommand({ kind: "reset", nonce: Date.now() });
       if (event.key === "Escape" && selectedShip?.controller === "player" && phase === "planning") {
-        setDrafts((current) => ({ ...current, [selectedShip.id]: defaultOrderFor(selectedShip, ships) }));
+        setDrafts((current) => ({ ...current, [selectedShip.id]: defaultOrderFor(selectedShip, ships, battlefieldBounds) }));
         setStaged((current) => {
           const next = new Set(current);
           next.delete(selectedShip.id);
@@ -3477,7 +3529,7 @@ export function SpaceGame() {
     };
     window.addEventListener("keydown", handleShortcuts);
     return () => window.removeEventListener("keydown", handleShortcuts);
-  }, [selectedShipId, selectedShip, ships, phase, screen]);
+  }, [selectedShipId, selectedShip, ships, phase, screen, battlefieldBounds, mobileControlsOpen]);
 
   if (screen === "menu") {
     return (
@@ -3516,8 +3568,15 @@ export function SpaceGame() {
   const selectedFlightRule = FLIGHT_MODE_RULES[selectedFlightMode];
   const selectedAiDoctrine = selectedShip.aiDoctrine ?? "standard";
   const selectedAiRule = AI_DOCTRINE_RULES[selectedAiDoctrine];
+  const selectedAiMission = defaultAiMissionFor(selectedShip);
+  const selectedAiMissionRule = AI_MISSION_RULES[selectedAiMission];
   const selectedAiCondition = shipConditionScore(selectedShip);
+  const selectedAiRisk = assessFleetRisk(selectedShip, ships);
   const selectedIsCarrierFighter = Boolean(selectedShip.spawnedByShipId);
+  const selectedControlToggleAllowed = activeMode !== "fishtank" && canToggleFriendlyControl(
+    selectedShip,
+    activeMode === "story" ? STORY_STARTER_ARCHETYPE.id : undefined,
+  );
   const translationDisabled = controlsDisabled || selectedFlightMode === "focus-fire";
   const weaponControlDisabled = controlsDisabled || selectedFlightMode !== "normal";
   const selectedWeapons = weaponProfilesFor(selectedShip);
@@ -3582,6 +3641,25 @@ export function SpaceGame() {
               <span>Health</span>
             </label>
           </fieldset>
+          <label className="animation-speed-control">
+            <span>Speed</span>
+            <input
+              type="range"
+              min="0"
+              max={String(ANIMATION_SPEED_OPTIONS.length - 1)}
+              step="1"
+              value={animationSpeedIndex(animationSpeed)}
+              aria-label="Animation speed"
+              aria-valuetext={`${animationSpeed} times speed`}
+              onChange={(event) => setAnimationSpeed(animationSpeedAt(Number(event.target.value)))}
+            />
+            <output>{animationSpeed}×</output>
+          </label>
+          {activeMode !== "fishtank" && (
+            <button className={`quiet-button mobile-command-toggle ${mobileControlsOpen ? "active" : ""}`} type="button" disabled={phase !== "planning"} aria-controls="mobile-command-panel" aria-expanded={mobileControlsOpen} onClick={() => setMobileControlsOpen((open) => !open)}>
+              {mobileControlsOpen ? "Close" : "Orders"}
+            </button>
+          )}
           <button className="quiet-button" type="button" onClick={returnToMenu}>Main menu</button>
           <button className="quiet-button" type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : activeMode === "fishtank" ? "New match" : "Restart"}</button>
         </div>
@@ -3601,7 +3679,10 @@ export function SpaceGame() {
             onCombatFocus={setCombatFocus}
             onResolutionComplete={resolveCombat}
             overlayLabels={overlayLabels}
+            animationSpeed={animationSpeed}
             modelVariant={modelVariant}
+            battlefieldBounds={battlefieldBounds}
+            showFleetStations={showFleetStations}
             presentation={activeMode === "fishtank" ? "spectator" : "command"}
           />
 
@@ -3628,7 +3709,7 @@ export function SpaceGame() {
                 {selectedShip.controller === "player" ? (
                   <span className="stance-chip" data-stance={selectedFlightMode}>{selectedFlightRule.label} · {selectedFlightRule.shortRule}</span>
                 ) : selectedShip.team !== "enemy" ? (
-                  <span className="stance-chip ai" data-doctrine={selectedAiDoctrine}>AI {selectedAiRule.label} · {selectedAiRule.shortRule}</span>
+                  <span className="stance-chip ai" data-doctrine={selectedAiDoctrine}>AI {selectedAiMissionRule.label} · {selectedAiRule.label}</span>
                 ) : (
                   <span className="stance-chip hostile">HOSTILE AI · DOCTRINE HIDDEN</span>
                 )}
@@ -3665,7 +3746,7 @@ export function SpaceGame() {
                   </div>
                 </>
               ) : selectedShip.team !== "enemy" ? (
-                <div className="target-empty"><strong>AUTONOMOUS TARGETING · {selectedAiRule.label.toUpperCase()}</strong><span>Target, vector, facing, and weapon stance are calculated when the turn is committed.</span></div>
+                <div className="target-empty"><strong>{selectedAiMissionRule.label.toUpperCase()} MISSION · {selectedAiRule.label.toUpperCase()}</strong><span>Threat rank, target, vector, facing, and weapon stance are calculated when the turn is committed.</span></div>
               ) : (
                 <div className="target-empty"><strong>HOSTILE ORDERS HIDDEN</strong><span>Predict its maneuver from range, facing, and exposed shielding.</span></div>
               )}
@@ -3675,7 +3756,7 @@ export function SpaceGame() {
 
           <div className="viewport-heading">
             <span>{activeMode === "fishtank" ? "AUTONOMOUS VOLUME" : "TACTICAL VOLUME"}</span>
-            <strong>{activeMode === "fishtank" ? "5 vs 5 · AI vs AI" : "40 × 14 × 40 KM"}</strong>
+            <strong>{activeMode === "fishtank" ? "5 vs 5 · AI vs AI · " : ""}{battlefieldBounds.length} L × {battlefieldBounds.height} H × {battlefieldBounds.width} W KM</strong>
           </div>
 
           {activeMode === "fishtank" && (
@@ -3712,16 +3793,42 @@ export function SpaceGame() {
             <button type="button" className={helpOpen ? "active" : ""} onClick={() => setHelpOpen((open) => !open)}>Controls</button>
           </div>}
 
-          {activeMode !== "fishtank" && helpOpen && (
+          {activeMode !== "fishtank" && helpOpen && phase !== "executing" && (
             <div className="help-card">
               <button type="button" aria-label="Close camera help" onClick={() => setHelpOpen(false)}>×</button>
               <strong>CAMERA</strong>
               <span><b>Drag</b> orbit · <b>Right drag</b> pan</span>
               <span><b>Wheel / pinch</b> zoom · <b>WASD</b> pan</span>
               <span><b>Click ship</b> select or target</span>
-              <span><b>Cone tip</b> bow and cannon origin</span>
+              <span><b>Cone tip</b> ship centre · beams use gun mounts</span>
             </div>
           )}
+
+          <section className={`fleet-comms ${activeMode === "fishtank" ? "dual-fleet" : "friendly-only"} ${commsCollapsed ? "collapsed" : "expanded"}`} aria-label="AI fleet communications" aria-live="polite">
+              <header>
+                <span aria-hidden="true"><i /><i /><i /></span>
+                <div>
+                  <small>FLEET COMMS</small>
+                  <strong>{phase === "executing" ? "ORDERS RELEASED" : aiComms.length ? "LAST TRANSMISSIONS" : "CHANNEL READY"}</strong>
+                </div>
+                <b>{aiComms.length ? `${aiComms.length} TX` : "STANDBY"}</b>
+                <button type="button" aria-expanded={!commsCollapsed} aria-label={`${commsCollapsed ? "Expand" : "Collapse"} fleet communications`} onClick={() => setCommsCollapsed((collapsed) => !collapsed)}>
+                  <span>{commsCollapsed ? "EXPAND" : "COLLAPSE"}</span><i aria-hidden="true">⌃</i>
+                </button>
+              </header>
+              {!commsCollapsed && (
+                <ol>
+                  {aiComms.length ? aiComms.slice(0, activeMode === "fishtank" ? 6 : 4).map((transmission) => (
+                    <li key={`${turn}-${transmission.shipId}`} className={`${transmission.team} ${transmission.tone}`}>
+                      <div><strong>{transmission.callsign}</strong><small>{AI_MISSION_RULES[transmission.mission].label.toUpperCase()}</small></div>
+                      <p>{transmission.message}</p>
+                    </li>
+                  )) : (
+                    <li className="comms-empty"><i aria-hidden="true" /><p>Awaiting friendly AI orders. New transmissions appear when fleet vectors are released.</p></li>
+                  )}
+                </ol>
+              )}
+          </section>
 
           {phase === "executing" && combatFocus && (
             <div className={`cinematic-participant-cards ${combatFocus.kind}`} aria-live="polite">
@@ -3775,21 +3882,25 @@ export function SpaceGame() {
             </div>
           )}
 
-          {activeMode !== "fishtank" && <div className="fleet-dock" aria-label="Player fleet orders">
+          {activeMode !== "fishtank" && <div className="fleet-dock" aria-label="Friendly fleet orders">
             <div className="dock-title">
               <small>COMMAND WING</small>
               <strong>{livingCommandShips.length ? `${readyCount}/${livingCommandShips.length} VECTORS STAGED` : "AI WING AUTONOMOUS"}</strong>
             </div>
             <div className="ship-tabs">
-              {playerShips.map((ship, index) => (
+              {friendlyShips.map((ship, index) => (
                 <button
                   type="button"
                   key={ship.id}
                   className={`${selectedShipId === ship.id ? "selected" : ""} ${ship.hull <= 0 ? "destroyed" : ""} ${cinematicShipIds.has(ship.id) ? "cinematic-active" : ""}`}
-                  onClick={() => ship.hull > 0 && setSelectedShipId(ship.id)}
+                  onClick={() => {
+                    if (ship.hull <= 0) return;
+                    setSelectedShipId(ship.id);
+                    setMobileControlsOpen(true);
+                  }}
                 >
                   <span className="ship-index">0{index + 1}</span>
-                  <span><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "DESTROYED" : `${SHIP_SIZE_PROFILES[ship.sizeClass].label.toUpperCase()} · ${ship.controller === "ai" ? `AI ${AI_DOCTRINE_RULES[ship.aiDoctrine ?? "standard"].label.toUpperCase()}` : staged.has(ship.id) ? "ORDER READY" : "DRAFT VECTOR"}`}</small></span>
+                  <span><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "DESTROYED" : `${SHIP_SIZE_PROFILES[ship.sizeClass].label.toUpperCase()} · ${ship.controller === "ai" ? `AI ${AI_MISSION_RULES[defaultAiMissionFor(ship)].label.toUpperCase()} · ${AI_DOCTRINE_RULES[ship.aiDoctrine ?? "standard"].label.toUpperCase()}` : staged.has(ship.id) ? "ORDER READY" : "DRAFT VECTOR"}`}</small></span>
                   <i className={ship.hull > 0 && (ship.controller === "ai" || staged.has(ship.id)) ? "ready" : ""} />
                 </button>
               ))}
@@ -3801,10 +3912,21 @@ export function SpaceGame() {
           </div>}
         </div>
 
-        {activeMode !== "fishtank" && <aside className="command-panel">
+        {activeMode !== "fishtank" && (
+          <button className={`mobile-drawer-backdrop ${mobileControlsOpen ? "visible" : ""}`} type="button" aria-label="Close ship orders" tabIndex={mobileControlsOpen ? 0 : -1} onClick={() => setMobileControlsOpen(false)} />
+        )}
+
+        {activeMode !== "fishtank" && <aside id="mobile-command-panel" className={`command-panel ${mobileControlsOpen ? "mobile-open" : ""}`}>
+          <div className="mobile-drawer-header">
+            <span><small>SHIP ORDERS</small><strong>{selectedShip.name}</strong></span>
+            <button type="button" aria-label="Close ship orders" onClick={() => setMobileControlsOpen(false)}>×</button>
+          </div>
           {selectedShip.controller === "player" && selectedDraft && (
             <div className="command-confirmation">
-              <button className={`stage-button ${staged.has(selectedShip.id) ? "staged" : ""}`} type="button" disabled={controlsDisabled || !orderReady} aria-describedby={`stance-status-${selectedShip.id} plot-status-${selectedShip.id}`} onClick={() => setStaged((current) => new Set(current).add(selectedShip.id))}>
+              <button className={`stage-button ${staged.has(selectedShip.id) ? "staged" : ""}`} type="button" disabled={controlsDisabled || !orderReady} aria-describedby={`stance-status-${selectedShip.id} plot-status-${selectedShip.id}`} onClick={() => {
+                setStaged((current) => new Set(current).add(selectedShip.id));
+                setMobileControlsOpen(false);
+              }}>
                 <span>{!destinationValid ? "MOVE OUTSIDE RANGE" : selectedFlightMode === "focus-fire" && !selectedTarget ? "FOCUS TARGET REQUIRED" : staged.has(selectedShip.id) ? "ORDER CONFIRMED" : `CONFIRM ${selectedFlightRule.label.toUpperCase()} ORDER`}</span><b>{staged.has(selectedShip.id) ? "✓" : "→"}</b>
               </button>
             </div>
@@ -3818,6 +3940,20 @@ export function SpaceGame() {
             </div>
             <span className={`team-glyph ${selectedShip.team}`} aria-hidden="true" />
           </section>
+
+          {selectedControlToggleAllowed && (
+            <section className="control-mode-block" aria-label={`${selectedShip.name} control mode`}>
+              <div className="section-heading"><span>CONTROL MODE</span><strong>{selectedShip.controller === "ai" ? "AI ASSISTED" : "MANUAL"}</strong></div>
+              <div className="control-mode-options">
+                <button type="button" className={selectedShip.controller === "player" ? "active" : ""} disabled={phase !== "planning"} aria-pressed={selectedShip.controller === "player"} onClick={() => updateShipController("player")}>
+                  <strong>Manual control</strong><small>Plot movement, orientation, and weapons directly.</small>
+                </button>
+                <button type="button" className={selectedShip.controller === "ai" ? "active" : ""} disabled={phase !== "planning"} aria-pressed={selectedShip.controller === "ai"} onClick={() => updateShipController("ai")}>
+                  <strong>AI control</strong><small>Select a mission and let the captain execute it.</small>
+                </button>
+              </div>
+            </section>
+          )}
 
           {selectedShip.controller === "player" && selectedDraft ? (
             <>
@@ -3856,7 +3992,7 @@ export function SpaceGame() {
                 <SliderControl label="Up / down" axis="U" value={relativeMovement.up} min={-movementLimit} max={movementLimit} suffix=" km" step={0.25} decimals={2} lowLabel="DOWN" highLabel="UP" disabled={translationDisabled} onChange={(value) => updateRelativeMovement("up", value)} />
                 <div className="quick-actions">
                   <button type="button" disabled={translationDisabled} onClick={() => updateDraft({ destination: [...selectedShip.position] as Vec3 })}>Hold position</button>
-                  <button type="button" disabled={translationDisabled} onClick={() => updateDraft({ destination: destinationFromManeuver(selectedShip, movementLimit * 0.6, 0, 0, 0, selectedFlightMode) })}>Forward 60%</button>
+                  <button type="button" disabled={translationDisabled} onClick={() => updateDraft({ destination: destinationFromManeuver(selectedShip, movementLimit * 0.6, 0, 0, 0, selectedFlightMode, battlefieldBounds) })}>Forward 60%</button>
                 </div>
               </section>
 
@@ -3890,12 +4026,25 @@ export function SpaceGame() {
           ) : selectedShip.controller === "ai" && selectedShip.team !== "enemy" ? (
             <section className="npc-block doctrine-block">
               <span className="eyebrow">AI WINGMATE · AUTONOMOUS COMMAND</span>
-              <h2>{selectedIsCarrierFighter ? "Disposable strike doctrine" : "Set tactical doctrine"}</h2>
+              <h2>{selectedIsCarrierFighter ? "Disposable assault package" : "Set autonomous command"}</h2>
               <p>{selectedIsCarrierFighter
-                ? `${selectedShip.name} is carrier-launched strike craft and will press its attack regardless of damage.`
-                : `You set intent; ${selectedShip.name} weighs its hull role, shielding, weapon range, and incoming threats before choosing its order.`}</p>
+                ? `${selectedShip.name} remains highly aggressive regardless of damage. Assault keeps it with the carrier wing's shared target; another mission redirects its target priorities. Its one-use evasive manoeuvre avoids a collision but forfeits that turn's attack.`
+                : `Mission defines the job; doctrine defines acceptable risk. ${selectedShip.name} then weighs individual and fleet threats against its hull, fit, and unique traits.`}</p>
+              <fieldset className="doctrine-options mission-options">
+                <legend>Choose the wingmate&apos;s mission order</legend>
+                {AI_MISSION_ORDER.map((mission) => {
+                  const rule = AI_MISSION_RULES[mission];
+                  const inputId = `mission-${selectedShip.id}-${mission}`;
+                  return (
+                    <label className="doctrine-option mission-option" data-mission={mission} key={mission} htmlFor={inputId} aria-label={`${rule.label}: ${rule.description}`}>
+                      <input id={inputId} type="radio" name={`mission-${selectedShip.id}`} checked={selectedAiMission === mission} disabled={phase !== "planning" || selectedShip.hull <= 0} aria-label={rule.label} onChange={() => updateAiMission(mission)} />
+                      <span><strong>{rule.label}</strong><small>{rule.shortRule}</small></span>
+                    </label>
+                  );
+                })}
+              </fieldset>
               <fieldset className="doctrine-options">
-                <legend>Choose the wingmate&apos;s standing order</legend>
+                <legend>Choose the wingmate&apos;s risk doctrine</legend>
                 {AI_DOCTRINE_ORDER.map((doctrine) => {
                   const rule = AI_DOCTRINE_RULES[doctrine];
                   const inputId = `doctrine-${selectedShip.id}-${doctrine}`;
@@ -3908,9 +4057,13 @@ export function SpaceGame() {
                 })}
               </fieldset>
               <div className="doctrine-status" data-doctrine={selectedAiDoctrine} role="status" aria-live="polite">
-                <span><strong>{selectedAiRule.label} doctrine</strong><b>{Math.round(selectedAiCondition * 100)}% COMBAT CONDITION</b></span>
-                <p>{selectedAiRule.description}</p>
-                <small>{selectedIsCarrierFighter ? "DOCTRINE LOCKED · DISPOSABLE ATTACK RUN" : "AI READY · HULL-AWARE ORDER CALCULATED ON COMMIT"}</small>
+                <span><strong>{selectedAiMissionRule.label} · {selectedAiRule.label}</strong><b>{threatBandFor(selectedAiRisk.subjectRisk).toUpperCase()} PERSONAL RISK</b></span>
+                <p>{selectedAiMissionRule.description} {selectedAiRule.description}</p>
+                <small>{selectedIsCarrierFighter
+                  ? selectedShip.evasiveManeuverAvailable
+                    ? "EVASION READY · AUTO-DODGE FORFEITS ATTACK"
+                    : "EVASION SPENT · DISPOSABLE ATTACK RUN"
+                  : `AI READY · ${Math.round(selectedAiCondition * 100)}% CONDITION · ${threatBandFor(selectedAiRisk.fleetRisk).toUpperCase()} FLEET RISK`}</small>
               </div>
             </section>
           ) : (
@@ -3928,6 +4081,10 @@ export function SpaceGame() {
             </ol>
             {alliedNPCs.length > 0 && <div className="ally-status"><i /><span>AI WING · {alliedNPCs.length} AUTONOMOUS</span><strong>{Math.round((alliedNPCs.reduce((sum, ship) => sum + shipConditionScore(ship), 0) / alliedNPCs.length) * 100)}%</strong></div>}
           </section>
+          <div className="mobile-drawer-tools">
+            <button type="button" onClick={returnToMenu}>Main menu</button>
+            <button type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : "Restart battle"}</button>
+          </div>
         </aside>}
       </section>
     </main>

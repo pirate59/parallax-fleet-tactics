@@ -44,7 +44,7 @@ export type WeaponMount = {
   hardpointId: string;
 };
 
-export type ShipPassiveTrait = {
+export type AutonomousTurretTrait = {
   kind: "autonomous-turret";
   name: "Turrets";
   weaponKind: "cannon";
@@ -52,6 +52,22 @@ export type ShipPassiveTrait = {
   rangeMultiplier: number;
   damageMultiplier: number;
   targetPriority: "weakest";
+};
+
+export type EvasiveManeuverTrait = {
+  kind: "evasive-maneuver";
+  name: "Evasive manoeuvre";
+  uses: 1;
+  attackForfeit: true;
+};
+
+export type ShipPassiveTrait = AutonomousTurretTrait | EvasiveManeuverTrait;
+
+export const CARRIER_FIGHTER_EVASIVE_TRAIT: EvasiveManeuverTrait = {
+  kind: "evasive-maneuver",
+  name: "Evasive manoeuvre",
+  uses: 1,
+  attackForfeit: true,
 };
 
 const DEFAULT_HARDPOINTS: Record<WeaponKind, string> = {
@@ -130,7 +146,7 @@ export const SHIP_ARCHETYPES = {
     modelVariants: SHIP_MODEL_VARIANTS,
     sizeClass: "cruiser",
     baseModelScale: 1.08,
-    baseShieldCapacity: { fore: 184, aft: 28, port: 78, starboard: 78, dorsal: 64, ventral: 58 },
+    baseShieldCapacity: { fore: 184, aft: 28, port: 92, starboard: 92, dorsal: 76, ventral: 70 },
     baseHull: 120,
     maxMove: 5,
     maxTurn: 55,
@@ -139,7 +155,7 @@ export const SHIP_ARCHETYPES = {
     weaponRange: 17,
     weaponDamage: 34,
     weaponMounts: [createPrimaryWeaponMount("cannon")],
-    aiTactics: { role: "bow-tank", preferredRangeRatio: 0.62, facingPriority: "expected-threat", survivalHullRatio: 0.5 },
+    aiTactics: { role: "bow-tank", defaultMission: "assault", preferredRangeRatio: 0.62, facingPriority: "expected-threat", survivalHullRatio: 0.5 },
   },
   archer: {
     id: "archer",
@@ -160,7 +176,7 @@ export const SHIP_ARCHETYPES = {
     weaponRange: 16,
     weaponDamage: 30,
     weaponMounts: [createWeaponMount("railgun")],
-    aiTactics: { role: "standoff", preferredRangeRatio: 0.82, facingPriority: "weapon-target", survivalHullRatio: 0.52 },
+    aiTactics: { role: "standoff", defaultMission: "bombing", preferredRangeRatio: 0.82, facingPriority: "weapon-target", survivalHullRatio: 0.52 },
   },
   hulk: {
     id: "hulk",
@@ -181,7 +197,7 @@ export const SHIP_ARCHETYPES = {
     weaponRange: 16,
     weaponDamage: 30,
     weaponMounts: [createWeaponMount("flak")],
-    aiTactics: { role: "brawler", preferredRangeRatio: 0.68, facingPriority: "weapon-target", survivalHullRatio: 0.48 },
+    aiTactics: { role: "brawler", defaultMission: "defense", preferredRangeRatio: 0.68, facingPriority: "weapon-target", survivalHullRatio: 0.48 },
   },
   fighter: {
     id: "fighter",
@@ -202,7 +218,7 @@ export const SHIP_ARCHETYPES = {
     weaponRange: 26,
     weaponDamage: 22,
     weaponMounts: [createPrimaryWeaponMount("pulse")],
-    aiTactics: { role: "interceptor", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+    aiTactics: { role: "interceptor", defaultMission: "interception", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
   },
   behemoth: {
     id: "behemoth",
@@ -233,7 +249,7 @@ export const SHIP_ARCHETYPES = {
       damageMultiplier: 1,
       targetPriority: "weakest",
     }],
-    aiTactics: { role: "heavy-platform", preferredRangeRatio: 0.72, facingPriority: "expected-threat", survivalHullRatio: 0.55 },
+    aiTactics: { role: "heavy-platform", defaultMission: "assault", preferredRangeRatio: 0.72, facingPriority: "expected-threat", survivalHullRatio: 0.55 },
   },
   carrier: {
     id: "carrier",
@@ -255,7 +271,7 @@ export const SHIP_ARCHETYPES = {
     weaponRange: 16,
     weaponDamage: 0,
     weaponMounts: [],
-    aiTactics: { role: "carrier", preferredRangeRatio: 0.9, facingPriority: "expected-threat", survivalHullRatio: 0.62 },
+    aiTactics: { role: "carrier", defaultMission: "defense", preferredRangeRatio: 0.9, facingPriority: "expected-threat", survivalHullRatio: 0.62 },
     turnEndAbility: {
       kind: "launch-fighter",
       fighterArchetypeId: "fighter",

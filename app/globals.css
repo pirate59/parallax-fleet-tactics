@@ -1006,6 +1006,36 @@ input:focus-visible {
   color: #d8f5f3;
 }
 
+.animation-speed-control {
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: auto 82px 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.015);
+  color: #86a2b3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--type-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.animation-speed-control input {
+  width: 82px;
+  margin: 0;
+  accent-color: var(--mint);
+  cursor: pointer;
+}
+
+.animation-speed-control output {
+  color: #d8f5f3;
+  font-weight: 700;
+  text-align: right;
+}
+
 .battle-layout {
   min-height: 0;
   flex: 1;
@@ -1620,6 +1650,237 @@ kbd {
   font-weight: 600;
 }
 
+.fleet-comms {
+  position: absolute;
+  z-index: 7;
+  top: 210px;
+  left: 18px;
+  width: min(430px, calc(100% - 36px));
+  border: 1px solid rgba(104, 210, 226, 0.24);
+  background: linear-gradient(135deg, rgba(5, 18, 26, 0.94), rgba(7, 13, 21, 0.8));
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.28), inset 2px 0 rgba(74, 224, 210, 0.3);
+  backdrop-filter: blur(16px);
+  pointer-events: auto;
+  animation: comms-arrival 0.28s ease-out both;
+  transition: width 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-mode="fishtank"] .fleet-comms {
+  top: 70px;
+}
+
+.fleet-comms.collapsed {
+  width: min(370px, calc(100% - 36px));
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22), inset 2px 0 rgba(74, 224, 210, 0.3);
+}
+
+.fleet-comms > header {
+  display: grid;
+  grid-template-columns: 30px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(105, 223, 255, 0.16);
+  background: rgba(59, 174, 187, 0.06);
+}
+
+.fleet-comms.collapsed > header {
+  border-bottom: 0;
+}
+
+.fleet-comms > header > span {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 18px;
+}
+
+.fleet-comms > header > span i {
+  width: 3px;
+  height: 7px;
+  background: #64d8dd;
+  box-shadow: 0 0 8px rgba(100, 216, 221, 0.5);
+  animation: comms-signal 0.7s ease-in-out infinite alternate;
+}
+
+.fleet-comms > header > span i:nth-child(2) {
+  height: 13px;
+  animation-delay: -0.45s;
+}
+
+.fleet-comms > header > span i:nth-child(3) {
+  height: 18px;
+  animation-delay: -0.2s;
+}
+
+.fleet-comms > header div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.fleet-comms > header small,
+.fleet-comms > header strong,
+.fleet-comms > header b {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.13em;
+}
+
+.fleet-comms > header small {
+  color: #668e9c;
+  font-size: 9px;
+}
+
+.fleet-comms > header > button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid rgba(104, 210, 226, 0.18);
+  background: rgba(104, 210, 226, 0.04);
+  color: #759da8;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.fleet-comms > header > button:hover,
+.fleet-comms > header > button:focus-visible {
+  border-color: rgba(104, 210, 226, 0.45);
+  background: rgba(104, 210, 226, 0.1);
+  color: #d5fbff;
+  outline: 0;
+}
+
+.fleet-comms > header > button i {
+  display: inline-block;
+  color: #64d8dd;
+  font-size: 13px;
+  font-style: normal;
+  transition: transform 0.2s ease;
+}
+
+.fleet-comms.collapsed > header > button i {
+  transform: rotate(180deg);
+}
+
+.fleet-comms > header strong {
+  color: #d5fbff;
+  font-size: var(--type-label);
+}
+
+.fleet-comms > header b {
+  padding: 3px 6px;
+  border: 1px solid rgba(104, 210, 226, 0.2);
+  color: #67cfd5;
+  font-size: 9px;
+}
+
+.fleet-comms ol {
+  display: flex;
+  flex-direction: column;
+  max-height: 250px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+}
+
+.fleet-comms li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 10px;
+  padding: 9px 11px 10px 14px;
+  border-bottom: 1px solid rgba(104, 210, 226, 0.09);
+}
+
+.fleet-comms li:last-child {
+  border-bottom: 0;
+}
+
+.fleet-comms li::before {
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: 0;
+  width: 2px;
+  background: #4fd7c9;
+  content: "";
+}
+
+.fleet-comms li.enemy::before,
+.fleet-comms li.urgent::before {
+  background: #ff7c67;
+}
+
+.fleet-comms li > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.fleet-comms li strong {
+  overflow: hidden;
+  color: #bff5f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--type-label);
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fleet-comms li.enemy strong,
+.fleet-comms li.urgent strong {
+  color: #ffaea2;
+}
+
+.fleet-comms li small {
+  color: #6b8d99;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.fleet-comms li p {
+  align-self: center;
+  margin: 0;
+  color: #b0c9d2;
+  font-size: var(--type-small);
+  line-height: 1.35;
+}
+
+.fleet-comms li.comms-empty {
+  min-height: 58px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+}
+
+.fleet-comms li.comms-empty > i {
+  width: 8px;
+  height: 8px;
+  border: 1px solid #5da3ad;
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(100, 216, 221, 0.35);
+}
+
+.fleet-comms li.comms-empty p {
+  color: #75939e;
+}
+
+@keyframes comms-arrival {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes comms-signal {
+  from { opacity: 0.35; transform: scaleY(0.55); }
+  to { opacity: 1; transform: scaleY(1); }
+}
+
 .resolution-banner {
   position: absolute;
   z-index: 8;
@@ -2034,6 +2295,13 @@ kbd {
   box-shadow: -18px 0 60px rgba(0, 0, 0, 0.2);
   scrollbar-color: rgba(116, 172, 197, 0.22) transparent;
   scrollbar-width: thin;
+}
+
+.mobile-command-toggle,
+.mobile-drawer-header,
+.mobile-drawer-backdrop,
+.mobile-drawer-tools {
+  display: none;
 }
 
 .command-panel > section {
@@ -2874,6 +3142,52 @@ input[type="range"]::-moz-range-thumb {
   background: linear-gradient(145deg, rgba(97, 233, 189, 0.045), rgba(105, 223, 255, 0.018));
 }
 
+.control-mode-block {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(116, 171, 195, 0.13);
+  background: linear-gradient(145deg, rgba(105, 223, 255, 0.035), rgba(97, 233, 189, 0.018));
+}
+
+.control-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.control-mode-options button {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(116, 171, 195, 0.2);
+  background: rgba(255, 255, 255, 0.018);
+  color: #8ca9b8;
+  text-align: left;
+}
+
+.control-mode-options button.active {
+  border-color: rgba(97, 233, 189, 0.55);
+  background: rgba(97, 233, 189, 0.085);
+  color: #e9fff8;
+}
+
+.control-mode-options strong,
+.control-mode-options small {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.control-mode-options strong {
+  font-size: var(--type-control);
+  letter-spacing: 0.04em;
+}
+
+.control-mode-options small {
+  margin-top: 5px;
+  color: #6f8c9b;
+  font-size: var(--type-meta);
+  line-height: 1.35;
+}
+
 .doctrine-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2881,6 +3195,10 @@ input[type="range"]::-moz-range-thumb {
   margin: 15px 0 0;
   padding: 0;
   border: 0;
+}
+
+.mission-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .doctrine-options legend {
@@ -2961,6 +3279,11 @@ input[type="range"]::-moz-range-thumb {
 .doctrine-option[data-doctrine="defensive"] > input:checked + span {
   border-color: rgba(105, 223, 255, 0.5);
   background: rgba(105, 223, 255, 0.09);
+}
+
+.mission-option > input:checked + span {
+  border-color: rgba(174, 139, 255, 0.56);
+  background: rgba(174, 139, 255, 0.09);
 }
 
 .doctrine-option > input:checked + span strong {
@@ -3375,6 +3698,21 @@ input[type="range"]::-moz-range-thumb {
     font-size: 9px;
   }
 
+  .animation-speed-control {
+    grid-template-columns: 68px 30px;
+    gap: 4px;
+    padding: 0 7px;
+    font-size: 9px;
+  }
+
+  .animation-speed-control > span {
+    display: none;
+  }
+
+  .animation-speed-control input {
+    width: 68px;
+  }
+
   .battle-layout {
     display: block;
   }
@@ -3408,6 +3746,11 @@ input[type="range"]::-moz-range-thumb {
 
   .help-card {
     bottom: 96px;
+  }
+
+  .fleet-comms {
+    left: 8px;
+    width: min(410px, calc(100% - 16px));
   }
 
   .resolution-banner {
@@ -3618,6 +3961,16 @@ input[type="range"]::-moz-range-thumb {
     display: none;
   }
 
+  .animation-speed-control {
+    min-height: 36px;
+    grid-template-columns: 52px 28px;
+    padding: 0 5px;
+  }
+
+  .animation-speed-control input {
+    width: 52px;
+  }
+
   .viewport-panel,
   [data-mode="fishtank"] .viewport-panel {
     height: calc(100svh - var(--portrait-header-height));
@@ -3662,6 +4015,56 @@ input[type="range"]::-moz-range-thumb {
     padding: 7px 8px;
     overflow-y: auto;
     scroll-snap-align: start;
+  }
+
+  .fleet-comms {
+    top: 260px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+    max-height: 142px;
+    overflow: hidden;
+  }
+
+  .fleet-comms.collapsed {
+    width: auto;
+    max-height: 50px;
+  }
+
+  [data-mode="fishtank"] .fleet-comms {
+    top: 70px;
+    max-height: 196px;
+  }
+
+  .fleet-comms > header {
+    min-height: 38px;
+    padding: 5px 8px;
+  }
+
+  .fleet-comms > header > button span {
+    display: none;
+  }
+
+  .fleet-comms ol {
+    max-height: 104px;
+  }
+
+  [data-mode="fishtank"] .fleet-comms ol {
+    max-height: 158px;
+  }
+
+  .fleet-comms li {
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 7px;
+    padding: 7px 8px 8px 11px;
+  }
+
+  .fleet-comms li p {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 10px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   .tactical-telemetry .shield-grid {
@@ -3785,6 +4188,181 @@ input[type="range"]::-moz-range-thumb {
   }
 }
 
+@media (max-width: 820px) and (orientation: portrait) {
+  body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  .game-shell {
+    --portrait-header-height: calc(58px + env(safe-area-inset-top));
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .topbar {
+    position: relative;
+    z-index: 60;
+  }
+
+  .topbar-actions > .quiet-button:not(.mobile-command-toggle) {
+    display: none;
+  }
+
+  .mobile-command-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-color: rgba(105, 223, 255, 0.35);
+  }
+
+  .mobile-command-toggle.active {
+    border-color: rgba(97, 233, 189, 0.58);
+    background: rgba(97, 233, 189, 0.1);
+    color: #dffcf3;
+  }
+
+  .battle-layout {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .viewport-panel,
+  [data-mode="fishtank"] .viewport-panel {
+    height: auto;
+    min-height: 0;
+    max-height: none;
+  }
+
+  .mobile-drawer-backdrop {
+    position: fixed;
+    z-index: 44;
+    inset: var(--portrait-header-height, 58px) 0 0;
+    display: block;
+    border: 0;
+    background: rgba(0, 5, 10, 0.58);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+    backdrop-filter: blur(2px);
+  }
+
+  .mobile-drawer-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .command-panel {
+    position: fixed;
+    z-index: 50;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: min(76dvh, 720px);
+    max-height: calc(100dvh - var(--portrait-header-height, 58px));
+    display: block;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-top: 1px solid rgba(105, 223, 255, 0.34);
+    border-left: 0;
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -24px 70px rgba(0, 0, 0, 0.62);
+    transform: translateY(calc(100% + 12px));
+    transition: transform 220ms cubic-bezier(0.22, 0.8, 0.25, 1), visibility 0s linear 220ms;
+    overscroll-behavior: contain;
+    visibility: hidden;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .command-panel.mobile-open {
+    transform: translateY(0);
+    visibility: visible;
+    transition: transform 220ms cubic-bezier(0.22, 0.8, 0.25, 1), visibility 0s;
+  }
+
+  .mobile-drawer-header {
+    position: sticky;
+    z-index: 12;
+    top: 0;
+    min-height: 54px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px 8px 18px;
+    border-bottom: 1px solid rgba(105, 223, 255, 0.2);
+    background: rgba(5, 13, 22, 0.98);
+    backdrop-filter: blur(16px);
+  }
+
+  .mobile-drawer-header::before {
+    content: "";
+    position: absolute;
+    top: 5px;
+    left: 50%;
+    width: 34px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(126, 181, 204, 0.32);
+    transform: translateX(-50%);
+  }
+
+  .mobile-drawer-header span {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .mobile-drawer-header small,
+  .mobile-drawer-header strong {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0.1em;
+  }
+
+  .mobile-drawer-header small {
+    color: #64889a;
+    font-size: var(--type-meta);
+  }
+
+  .mobile-drawer-header strong {
+    color: #d8f3fa;
+    font-size: var(--type-control);
+  }
+
+  .mobile-drawer-header button {
+    width: 38px;
+    height: 38px;
+    border: 1px solid rgba(116, 171, 195, 0.24);
+    background: rgba(255, 255, 255, 0.025);
+    color: #a9c5d1;
+    font-size: 24px;
+  }
+
+  .command-panel .command-confirmation {
+    top: 54px;
+  }
+
+  .mobile-drawer-tools {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 12px 14px 16px;
+  }
+
+  .mobile-drawer-tools button {
+    min-height: 44px;
+    border: 1px solid rgba(116, 171, 195, 0.22);
+    background: rgba(255, 255, 255, 0.025);
+    color: #9bb7c4;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: var(--type-control);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+}
+
 @media (max-width: 420px) {
   .topbar {
     min-height: calc(58px + env(safe-area-inset-top));
@@ -3818,6 +4396,16 @@ input[type="range"]::-moz-range-thumb {
 
   .overlay-label-toggles label span {
     display: none;
+  }
+
+  .animation-speed-control {
+    grid-template-columns: 42px 27px;
+    gap: 2px;
+    padding: 0 4px;
+  }
+
+  .animation-speed-control input {
+    width: 42px;
   }
 }
 

@@ -10,6 +10,12 @@ import {
 } from "../app/fishtankMode.ts";
 import { FLEET_COLOR_PALETTES } from "../app/fleetPresentation.ts";
 import { createPrimaryWeaponMount } from "../app/shipCatalog.ts";
+import {
+  FLEET_BATTLEFIELD,
+  FLEET_START_SEPARATION,
+  FLEET_TEAM_START_X,
+  STORY_BATTLEFIELD,
+} from "../app/battlefieldConfig.ts";
 
 const template = (index: number) => ({
   archetypeId: `hull-${index}`,
@@ -43,6 +49,13 @@ test("Fishtank creates two complete five-ship AI fleets at full strength", () =>
   assert.equal(new Set(fleet.map((ship) => ship.id)).size, 10);
   assert.ok(allies.every((ship) => FLEET_COLOR_PALETTES.friendly.includes(ship.color as typeof FLEET_COLOR_PALETTES.friendly[number])));
   assert.ok(enemies.every((ship) => FLEET_COLOR_PALETTES.enemy.includes(ship.color as typeof FLEET_COLOR_PALETTES.enemy[number])));
+  assert.ok(allies.every((ship) => ship.position[0] === -FLEET_TEAM_START_X && ship.rotation[1] === 90));
+  assert.ok(enemies.every((ship) => ship.position[0] === FLEET_TEAM_START_X && ship.rotation[1] === -90));
+  assert.equal(enemies[0].position[0] - allies[0].position[0], FLEET_START_SEPARATION);
+  assert.deepEqual(
+    [FLEET_BATTLEFIELD.length, FLEET_BATTLEFIELD.height, FLEET_BATTLEFIELD.width],
+    [STORY_BATTLEFIELD.length * 3, STORY_BATTLEFIELD.height * 2, STORY_BATTLEFIELD.width * 2],
+  );
 });
 
 test("Fishtank pacing leaves room for cinematic movement and impacts", () => {

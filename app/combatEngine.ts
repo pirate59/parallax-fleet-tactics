@@ -98,6 +98,7 @@ export const SHIELD_REGEN_HIT = 5;
 export const SHIELD_REGEN_CLEAR = 10;
 
 const ZERO_DISTANCE_EPSILON = 1e-9;
+const MIN_TARGETABLE_EXPOSURE_RATIO = 0.18;
 const degrees = (value: number) => THREE.MathUtils.degToRad(value);
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
@@ -166,7 +167,9 @@ export function weaponProfilesFor(ship: CombatShip): WeaponProfile[] {
 }
 
 export function passiveWeaponProfilesFor(ship: CombatShip): WeaponProfile[] {
-  return (ship.passiveTraits ?? []).map((trait, index) => ({
+  return (ship.passiveTraits ?? [])
+    .filter((trait) => trait.kind === "autonomous-turret")
+    .map((trait, index) => ({
     kind: "passive-turret" as const,
     weaponKind: trait.weaponKind,
     mountId: `passive-${trait.kind}-${index + 1}`,
@@ -232,12 +235,42 @@ export function shieldFaceForOrigin(target: CombatShip, origin: THREE.Vector3 | 
   return incoming.z < 0 ? "fore" : "aft";
 }
 
+export function weakestExposedShieldFaceForOrigin(
+  target: CombatShip,
+  origin: THREE.Vector3 | Vec3,
+): ShieldFace {
+  const worldOrigin = Array.isArray(origin) ? new THREE.Vector3(...origin) : origin.clone();
+  const incoming = worldOrigin.sub(new THREE.Vector3(...target.position));
+  if (incoming.lengthSq() <= ZERO_DISTANCE_EPSILON * ZERO_DISTANCE_EPSILON) return "fore";
+
+  incoming
+    .normalize()
+    .applyQuaternion(shipQuaternionForRotation(target.rotation).invert());
+  const exposed = [
+    { face: incoming.x > 0 ? "starboard" : "port", exposure: Math.abs(incoming.x) },
+    { face: incoming.y > 0 ? "dorsal" : "ventral", exposure: Math.abs(incoming.y) },
+    { face: incoming.z < 0 ? "fore" : "aft", exposure: Math.abs(incoming.z) },
+  ] satisfies Array<{ face: ShieldFace; exposure: number }>;
+  const strongestExposure = Math.max(...exposed.map(({ exposure }) => exposure));
+
+  return exposed
+    .filter(({ exposure }) => exposure > ZERO_DISTANCE_EPSILON
+      && exposure >= strongestExposure * MIN_TARGETABLE_EXPOSURE_RATIO)
+    .sort((left, right) => {
+      const shieldDifference = target.shields[left.face] - target.shields[right.face];
+      if (Math.abs(shieldDifference) > ZERO_DISTANCE_EPSILON) return shieldDifference;
+      const exposureDifference = right.exposure - left.exposure;
+      if (Math.abs(exposureDifference) > ZERO_DISTANCE_EPSILON) return exposureDifference;
+      return SHIELD_FACES.indexOf(left.face) - SHIELD_FACES.indexOf(right.face);
+    })[0]?.face ?? "fore";
+}
+
 export function shieldFaceForHit(
   target: CombatShip,
   attacker: CombatShip,
   weapon: WeaponProfile = weaponProfilesFor(attacker)[0],
 ): ShieldFace {
-  return shieldFaceForOrigin(target, weaponOriginFor(attacker, weapon));
+  return weakestExposedShieldFaceForOrigin(target, weaponOriginFor(attacker, weapon));
 }
 
 export function resolveCombatTurn<T extends CombatShip>(
@@ -295,7 +328,7 @@ export function resolveCombatTurn<T extends CombatShip>(
       mountIndex,
       origin,
       solution,
-      face: solution.valid ? shieldFaceForOrigin(target, origin) : null,
+      face: solution.valid ? weakestExposedShieldFaceForOrigin(target, origin) : null,
     };
   };
 

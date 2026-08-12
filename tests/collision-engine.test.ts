@@ -111,17 +111,17 @@ test("wrecks remain fixed and undamaged while inflicting only minor contact dama
   assert.ok(resolvedShip.hull === ship.hull, "minor wreck contact should be absorbed by shields in this fixture");
 });
 
-test("collision-aware battlefield bounds keep the whole hull inside the grid", () => {
+test("collision-aware rectangular battlefield bounds keep the whole hull inside the grid", () => {
   const carrier = makeShip("carrier", {
     modelId: "carrier",
     modelScale: 1.85,
     sizeClass: "large",
     archetypeId: "carrier",
   });
-  const bounded = clampCollisionPosition(carrier, [20, 7, -20], 20, 7);
+  const bounded = clampCollisionPosition(carrier, [60, 14, -40], 60, 14, 40);
   const radius = collisionRadiusFor(carrier);
 
-  assert.ok(Math.abs(bounded[0]) <= 20 - radius + 1e-9);
-  assert.ok(Math.abs(bounded[2]) <= 20 - radius + 1e-9);
-  assert.ok(Math.abs(bounded[1]) < 7);
+  assert.ok(Math.abs(bounded[0]) <= 60 - radius + 1e-9);
+  assert.ok(Math.abs(bounded[2]) <= 40 - radius + 1e-9);
+  assert.ok(Math.abs(bounded[1]) < 14);
 });

@@ -298,6 +298,31 @@ test("shield facings are selected from the exact weapon origin", () => {
   assert.equal(turretShot.face, "dorsal");
 });
 
+test("weapons strike the weakest shield with meaningful direct exposure", () => {
+  const attacker = makeShip("attacker", { position: [-8, 0, -8], rotation: [0, 135, 0] });
+  const target = makeShip("target", {
+    team: "enemy",
+    shields: {
+      fore: 100,
+      aft: 1,
+      port: 20,
+      starboard: 2,
+      dorsal: 100,
+      ventral: 3,
+    },
+    maxShields: shieldsAt(100),
+  });
+
+  assert.equal(shieldFaceForHit(target, attacker), "port");
+  const result = resolveCombatTurn([attacker, target], ordersFor([[attacker.id, target.id]]));
+  const resolvedTarget = findShip(result.ships, target.id);
+
+  assert.equal(result.shots[0].face, "port");
+  assert.equal(resolvedTarget.shields.port, 20 - attacker.weaponDamage + 5);
+  assert.equal(resolvedTarget.shields.aft, 11);
+  assert.equal(resolvedTarget.shields.starboard, 12);
+});
+
 test("shield damage overflows to hull and struck versus clear faces regenerate once", () => {
   const shooter = makeShip("shooter", { weaponDamage: 25 });
   const target = makeShip("target", {

@@ -4,6 +4,7 @@ import * as THREE from "three";
 import {
   carrierWingTargetAssignments,
   chooseAiTarget,
+  generateAiCommandDecision,
   generateAiCommandOrder,
   shipConditionScore,
   type AiCommandShip,
@@ -103,6 +104,37 @@ test("carrier-launched fighters override defensive orders with disposable aggres
   assert.ok(order);
   assert.equal(order.mode, "focus-fire");
   assert.equal(order.fire, true);
+});
+
+test("carrier fighters retain aggressive risk tolerance while accepting a selected mission", () => {
+  const fighter = makeShip("carrier-fighter", {
+    modelId: "fighter",
+    sizeClass: "shuttle",
+    spawnedByShipId: "carrier",
+    aiDoctrine: "defensive",
+    aiMission: "bombing",
+    aiTactics: { role: "interceptor", defaultMission: "interception", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const enemyFighter = makeShip("enemy-fighter", {
+    team: "enemy",
+    modelId: "fighter",
+    sizeClass: "shuttle",
+    position: [0, 0, -6],
+  });
+  const enemyCarrier = makeShip("enemy-carrier", {
+    team: "enemy",
+    modelId: "carrier",
+    sizeClass: "large",
+    position: [0, 0, -8],
+    weaponMounts: [],
+    fighterReserveRemaining: 9,
+    turnEndAbility: { kind: "launch-fighter", fighterArchetypeId: "fighter", maxActive: 3, fighterReserve: 9, fighterDamageMultiplier: 1.6, fighterDurabilityMultiplier: 0.55, launchOffsets: [[0, 0, 1]] },
+    aiTactics: { role: "carrier", defaultMission: "defense", preferredRangeRatio: 0.9, facingPriority: "expected-threat", survivalHullRatio: 0.62 },
+  });
+
+  const order = generateAiCommandOrder(fighter, [fighter, enemyFighter, enemyCarrier], "defensive");
+  assert.equal(order?.targetId, enemyCarrier.id);
+  assert.equal(order?.mode, "focus-fire", "carrier craft should remain aggressive despite a defensive doctrine value");
 });
 
 test("damaged carrier fighters focus fire whenever their target is in solution", () => {
@@ -380,6 +412,7 @@ test("healthy Hammerhead AI deliberately uses its reinforced hull for a close ra
   const order = generateAiCommandOrder(hammerhead, [hammerhead, target], "standard");
   assert.ok(order);
   assert.equal(order.mode, "normal");
+  assert.equal(order.ramTargetId, target.id);
   assert.ok(new THREE.Vector3(...order.destination).distanceTo(new THREE.Vector3(...target.position)) < 0.1);
 });
 
@@ -442,6 +475,19 @@ test("standard AI orders stay inside movement, rotation, and battlefield limits"
   assert.ok(Math.abs(order.destination[2]) <= 20);
 });
 
+test("AI respects separate fleet-map length and width boundaries", () => {
+  const ally = makeShip("ally", { position: [58, 13, 38] });
+  const target = makeShip("target", { team: "enemy", position: [-58, -13, -38] });
+  const order = generateAiCommandOrder(ally, [ally, target], "standard", 60, 14, {
+    battlefieldWidthHalf: 40,
+  });
+
+  assert.ok(order);
+  assert.ok(Math.abs(order.destination[0]) <= 60);
+  assert.ok(Math.abs(order.destination[1]) <= 14);
+  assert.ok(Math.abs(order.destination[2]) <= 40);
+});
+
 test("AI never selects friendly, destroyed, or missing targets", () => {
   const ally = makeShip("ally");
   const friendly = makeShip("friendly", { position: [0, 0, -2] });
@@ -458,4 +504,147 @@ test("equal target scores use stable lexical IDs independent of input order", ()
 
   assert.equal(chooseAiTarget(ally, [ally, beta, alpha], "standard")?.id, alpha.id);
   assert.equal(chooseAiTarget(ally, [alpha, ally, beta], "standard")?.id, alpha.id);
+});
+
+test("role fits provide the expected default mission orders", async () => {
+  const { defaultAiMissionFor } = await import("../app/aiCommandEngine.ts");
+  const fitted = (id: string) => {
+    const archetype = SHIP_ARCHETYPES[id as keyof typeof SHIP_ARCHETYPES];
+    return makeShip(id, {
+      archetypeId: archetype.id,
+      modelId: archetype.modelId,
+      sizeClass: archetype.sizeClass,
+      aiTactics: archetype.aiTactics,
+    });
+  };
+
+  assert.equal(defaultAiMissionFor(fitted("fighter")), "interception");
+  assert.equal(defaultAiMissionFor(fitted("archer")), "bombing");
+  assert.equal(defaultAiMissionFor(fitted("carrier")), "defense");
+  assert.equal(defaultAiMissionFor(fitted("hammerhead")), "assault");
+});
+
+test("mission orders change target priorities independently from doctrine", () => {
+  const ally = makeShip("ally", { aiDoctrine: "standard" });
+  const fighter = makeShip("fighter", {
+    team: "enemy",
+    sizeClass: "shuttle",
+    modelId: "fighter",
+    position: [0, 0, -8],
+    spawnedByShipId: "carrier",
+  });
+  const carrier = makeShip("carrier", {
+    team: "enemy",
+    sizeClass: "large",
+    modelId: "carrier",
+    position: [0, 0, -10],
+    weaponMounts: [],
+    fighterReserveRemaining: 9,
+    turnEndAbility: { kind: "launch-fighter", fighterArchetypeId: "fighter", maxActive: 3, fighterReserve: 9, fighterDamageMultiplier: 1.6, fighterDurabilityMultiplier: 0.55, launchOffsets: [[0, 0, 1]] },
+    aiTactics: { role: "carrier", defaultMission: "defense", preferredRangeRatio: 0.9, facingPriority: "expected-threat", survivalHullRatio: 0.62 },
+  });
+  const fleet = [ally, fighter, carrier];
+
+  assert.equal(chooseAiTarget(ally, fleet, "standard", "interception")?.id, fighter.id);
+  assert.equal(chooseAiTarget(ally, fleet, "standard", "bombing")?.id, carrier.id);
+});
+
+test("critical shared risk overrides aggressive doctrine for a damaged non-fighter", () => {
+  const damaged = makeShip("damaged", {
+    hull: 32,
+    shields: shieldsAt(0),
+    aiDoctrine: "aggressive",
+    aiMission: "assault",
+    aiTactics: { role: "brawler", defaultMission: "defense", preferredRangeRatio: 0.62, facingPriority: "weapon-target", survivalHullRatio: 0.48 },
+  });
+  const enemies = [1, 2, 3].map((index) => makeShip(`enemy-${index}`, {
+    team: "enemy",
+    position: [index * 2, 0, -6],
+    weaponDamage: 38,
+    lastTargetId: damaged.id,
+  }));
+  const order = generateAiCommandOrder(damaged, [damaged, ...enemies], "aggressive");
+
+  assert.equal(order?.mode, "extra-move");
+  assert.equal(order?.fire, false);
+});
+
+test("AI decision comms preserve the selected target and movement stance", () => {
+  const ally = makeShip("ally", { callsign: "BLUE-02", aiMission: "assault" });
+  const target = makeShip("target", {
+    callsign: "RED-01",
+    team: "enemy",
+    position: [0, 0, -8],
+    hull: 8,
+    shields: shieldsAt(0),
+  });
+  const decision = generateAiCommandDecision(ally, [ally, target], "aggressive");
+
+  assert.ok(decision);
+  assert.equal(decision.comms.targetId, decision.order.targetId);
+  assert.equal(decision.comms.targetName, target.callsign);
+  assert.match(decision.comms.message, /RED-01/);
+  assert.match(decision.comms.message, /double salvo/i);
+});
+
+test("carrier fighter comms announce shared wing focus", () => {
+  const fighter = makeShip("fighter", {
+    callsign: "DART-03",
+    modelId: "fighter",
+    spawnedByShipId: "carrier",
+    aiMission: "assault",
+    aiTactics: { role: "interceptor", defaultMission: "interception", preferredRangeRatio: 0.5, facingPriority: "weapon-target", survivalHullRatio: 0 },
+  });
+  const target = makeShip("target", { callsign: "BULWARK", team: "enemy", position: [0, 0, -8] });
+  const decision = generateAiCommandDecision(fighter, [fighter, target], "defensive");
+
+  assert.ok(decision);
+  assert.equal(decision.comms.mission, "assault");
+  assert.match(decision.comms.message, /Wing focus on BULWARK/);
+});
+
+test("damaged non-fighter comms report survival breakaway", () => {
+  const damaged = makeShip("damaged", {
+    callsign: "WARDEN",
+    hull: 20,
+    shields: shieldsAt(0),
+    aiDoctrine: "defensive",
+    aiTactics: { role: "brawler", defaultMission: "defense", preferredRangeRatio: 0.62, facingPriority: "weapon-target", survivalHullRatio: 0.48 },
+  });
+  const target = makeShip("target", { callsign: "RAIDER", team: "enemy", position: [0, 0, -6] });
+  const decision = generateAiCommandDecision(damaged, [damaged, target]);
+
+  assert.ok(decision);
+  assert.equal(decision.order.mode, "extra-move");
+  assert.equal(decision.comms.tone, "urgent");
+  assert.match(decision.comms.message, /Hull breached.*RAIDER/i);
+});
+
+test("bow-tank comms expose the threat used for defensive orientation", () => {
+  const hammerhead = makeShip("hammerhead", {
+    callsign: "HAMMER",
+    aiMission: "assault",
+    aiTactics: { role: "bow-tank", defaultMission: "assault", preferredRangeRatio: 0.62, facingPriority: "expected-threat", survivalHullRatio: 0.5 },
+  });
+  const target = makeShip("vulnerable", {
+    callsign: "PREY",
+    team: "enemy",
+    position: [0, 0, -8],
+    hull: 10,
+    shields: shieldsAt(0),
+    weaponDamage: 5,
+  });
+  const threat = makeShip("threat", {
+    callsign: "GUNSHIP",
+    team: "enemy",
+    position: [8, 0, 0],
+    weaponDamage: 40,
+    lastTargetId: hammerhead.id,
+  });
+  const decision = generateAiCommandDecision(hammerhead, [hammerhead, target, threat], "standard");
+
+  assert.ok(decision);
+  assert.equal(decision.order.targetId, target.id);
+  assert.match(decision.comms.message, /Engaging PREY/);
+  assert.match(decision.comms.message, /Reinforced bow toward GUNSHIP/);
 });
