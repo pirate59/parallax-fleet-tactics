@@ -2941,6 +2941,7 @@ export function SpaceGame() {
   const [combatFocus, setCombatFocus] = useState<CombatFocus | null>(null);
   const [cameraCommand, setCameraCommand] = useState<CameraCommand>({ kind: "reset", nonce: 0 });
   const [helpOpen, setHelpOpen] = useState(true);
+  const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
   const [fishtankMatch, setFishtankMatch] = useState(0);
   const storyActionLockRef = useRef(false);
   const fishtankMatchRef = useRef(0);
@@ -3226,6 +3227,7 @@ export function SpaceGame() {
       ...(fishtankCommit ? { activationTeamOrder: fishtankActivationOrder(turn) } : {}),
     });
     setPhase("executing");
+    setMobileControlsOpen(false);
     setLog((current) => [
       activeMode === "fishtank"
         ? `Turn ${turn}: both AI fleets released their vectors.`
@@ -3495,6 +3497,10 @@ export function SpaceGame() {
     const handleShortcuts = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, select, textarea, button")) return;
+      if (event.key === "Escape" && mobileControlsOpen) {
+        setMobileControlsOpen(false);
+        return;
+      }
       if (phase !== "executing" && event.key.toLowerCase() === "f") {
         setCameraCommand({ kind: "focus", shipId: selectedShipId, nonce: Date.now() });
       }
@@ -3510,7 +3516,7 @@ export function SpaceGame() {
     };
     window.addEventListener("keydown", handleShortcuts);
     return () => window.removeEventListener("keydown", handleShortcuts);
-  }, [selectedShipId, selectedShip, ships, phase, screen, battlefieldBounds]);
+  }, [selectedShipId, selectedShip, ships, phase, screen, battlefieldBounds, mobileControlsOpen]);
 
   if (screen === "menu") {
     return (
@@ -3636,6 +3642,11 @@ export function SpaceGame() {
             />
             <output>{animationSpeed}×</output>
           </label>
+          {activeMode !== "fishtank" && (
+            <button className={`quiet-button mobile-command-toggle ${mobileControlsOpen ? "active" : ""}`} type="button" disabled={phase !== "planning"} aria-controls="mobile-command-panel" aria-expanded={mobileControlsOpen} onClick={() => setMobileControlsOpen((open) => !open)}>
+              {mobileControlsOpen ? "Close" : "Orders"}
+            </button>
+          )}
           <button className="quiet-button" type="button" onClick={returnToMenu}>Main menu</button>
           <button className="quiet-button" type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : activeMode === "fishtank" ? "New match" : "Restart"}</button>
         </div>
@@ -3843,7 +3854,11 @@ export function SpaceGame() {
                   type="button"
                   key={ship.id}
                   className={`${selectedShipId === ship.id ? "selected" : ""} ${ship.hull <= 0 ? "destroyed" : ""} ${cinematicShipIds.has(ship.id) ? "cinematic-active" : ""}`}
-                  onClick={() => ship.hull > 0 && setSelectedShipId(ship.id)}
+                  onClick={() => {
+                    if (ship.hull <= 0) return;
+                    setSelectedShipId(ship.id);
+                    setMobileControlsOpen(true);
+                  }}
                 >
                   <span className="ship-index">0{index + 1}</span>
                   <span><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "DESTROYED" : `${SHIP_SIZE_PROFILES[ship.sizeClass].label.toUpperCase()} · ${ship.controller === "ai" ? `AI ${AI_MISSION_RULES[defaultAiMissionFor(ship)].label.toUpperCase()} · ${AI_DOCTRINE_RULES[ship.aiDoctrine ?? "standard"].label.toUpperCase()}` : staged.has(ship.id) ? "ORDER READY" : "DRAFT VECTOR"}`}</small></span>
@@ -3858,10 +3873,21 @@ export function SpaceGame() {
           </div>}
         </div>
 
-        {activeMode !== "fishtank" && <aside className="command-panel">
+        {activeMode !== "fishtank" && (
+          <button className={`mobile-drawer-backdrop ${mobileControlsOpen ? "visible" : ""}`} type="button" aria-label="Close ship orders" tabIndex={mobileControlsOpen ? 0 : -1} onClick={() => setMobileControlsOpen(false)} />
+        )}
+
+        {activeMode !== "fishtank" && <aside id="mobile-command-panel" className={`command-panel ${mobileControlsOpen ? "mobile-open" : ""}`}>
+          <div className="mobile-drawer-header">
+            <span><small>SHIP ORDERS</small><strong>{selectedShip.name}</strong></span>
+            <button type="button" aria-label="Close ship orders" onClick={() => setMobileControlsOpen(false)}>×</button>
+          </div>
           {selectedShip.controller === "player" && selectedDraft && (
             <div className="command-confirmation">
-              <button className={`stage-button ${staged.has(selectedShip.id) ? "staged" : ""}`} type="button" disabled={controlsDisabled || !orderReady} aria-describedby={`stance-status-${selectedShip.id} plot-status-${selectedShip.id}`} onClick={() => setStaged((current) => new Set(current).add(selectedShip.id))}>
+              <button className={`stage-button ${staged.has(selectedShip.id) ? "staged" : ""}`} type="button" disabled={controlsDisabled || !orderReady} aria-describedby={`stance-status-${selectedShip.id} plot-status-${selectedShip.id}`} onClick={() => {
+                setStaged((current) => new Set(current).add(selectedShip.id));
+                setMobileControlsOpen(false);
+              }}>
                 <span>{!destinationValid ? "MOVE OUTSIDE RANGE" : selectedFlightMode === "focus-fire" && !selectedTarget ? "FOCUS TARGET REQUIRED" : staged.has(selectedShip.id) ? "ORDER CONFIRMED" : `CONFIRM ${selectedFlightRule.label.toUpperCase()} ORDER`}</span><b>{staged.has(selectedShip.id) ? "✓" : "→"}</b>
               </button>
             </div>
@@ -4016,6 +4042,10 @@ export function SpaceGame() {
             </ol>
             {alliedNPCs.length > 0 && <div className="ally-status"><i /><span>AI WING · {alliedNPCs.length} AUTONOMOUS</span><strong>{Math.round((alliedNPCs.reduce((sum, ship) => sum + shipConditionScore(ship), 0) / alliedNPCs.length) * 100)}%</strong></div>}
           </section>
+          <div className="mobile-drawer-tools">
+            <button type="button" onClick={returnToMenu}>Main menu</button>
+            <button type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : "Restart battle"}</button>
+          </div>
         </aside>}
       </section>
     </main>
