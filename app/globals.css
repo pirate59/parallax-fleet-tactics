@@ -3489,11 +3489,15 @@ input[type="range"]::-moz-range-thumb {
 
 .multiplayer-lobby {
   position: relative;
+  height: 100dvh;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
   background:
     radial-gradient(circle at 18% 45%, rgba(39, 198, 211, 0.12), transparent 29%),
     radial-gradient(circle at 82% 44%, rgba(255, 91, 105, 0.1), transparent 29%),
