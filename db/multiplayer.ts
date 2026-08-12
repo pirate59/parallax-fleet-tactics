@@ -1,10 +1,14 @@
 import { env } from "cloudflare:workers";
 import {
+  applyMultiplayerControls,
   createMultiplayerMatchState,
+  multiplayerControlsForSide,
   resolutionForMultiplayerPerspective,
   resolveMultiplayerTurn,
   stateForMultiplayerPerspective,
+  validateMultiplayerControls,
   validateMultiplayerOrders,
+  type MultiplayerControlSettings,
   type MultiplayerMatchStatus,
   type MultiplayerSession,
   type MultiplayerSide,
@@ -28,6 +32,11 @@ type MatchRow = {
   winner: MultiplayerWinner;
   created_at: number;
   updated_at: number;
+};
+
+type StoredOrderEnvelope = {
+  orders: TurnOrders;
+  controls: MultiplayerControlSettings;
 };
 
 const MATCH_TABLE_SQL = `CREATE TABLE IF NOT EXISTS multiplayer_matches (
@@ -211,17 +220,31 @@ async function resolveClaimedTurn(row: MatchRow) {
     WHERE match_code = ? AND turn = ? ORDER BY side`)
     .bind(row.code, row.turn)
     .all<{ side: MultiplayerSide; orders_json: string }>();
-  const bySide = new Map(orderRows.results.map((entry) => [entry.side, JSON.parse(entry.orders_json) as TurnOrders]));
-  const hostOrders = bySide.get("host");
-  const guestOrders = bySide.get("guest");
-  if (!hostOrders || !guestOrders) {
+  const currentState = parseState(row);
+  const bySide = new Map(orderRows.results.map((entry) => {
+    const parsed = JSON.parse(entry.orders_json) as TurnOrders | StoredOrderEnvelope;
+    const envelope: StoredOrderEnvelope = "orders" in parsed && "controls" in parsed
+      ? parsed
+      : {
+          orders: parsed as TurnOrders,
+          controls: multiplayerControlsForSide(currentState, entry.side),
+        };
+    return [entry.side, envelope];
+  }));
+  const hostEnvelope = bySide.get("host");
+  const guestEnvelope = bySide.get("guest");
+  if (!hostEnvelope || !guestEnvelope) {
     await db.prepare("UPDATE multiplayer_matches SET status = 'planning', updated_at = ? WHERE code = ? AND turn = ?")
       .bind(Date.now(), row.code, row.turn)
       .run();
     return;
   }
 
-  const resolved = resolveMultiplayerTurn(parseState(row), hostOrders, guestOrders);
+  const controlledState = applyMultiplayerControls(currentState, {
+    ...hostEnvelope.controls,
+    ...guestEnvelope.controls,
+  });
+  const resolved = resolveMultiplayerTurn(controlledState, hostEnvelope.orders, guestEnvelope.orders);
   const nextStatus: MultiplayerMatchStatus = resolved.winner ? "complete" : "planning";
   await db.prepare(`UPDATE multiplayer_matches SET
     status = ?, turn = ?, state_json = ?, resolution_json = ?, winner = ?,
@@ -245,6 +268,7 @@ export async function submitMultiplayerOrders(
   token: string,
   turn: unknown,
   submitted: unknown,
+  submittedControls?: unknown,
 ): Promise<MultiplayerView> {
   await ensureMultiplayerSchema();
   const code = normalizeMatchCode(codeInput);
@@ -254,14 +278,16 @@ export async function submitMultiplayerOrders(
   if (row.status === "waiting") throw new Error("The second commander has not joined yet.");
   if (row.status === "complete") return viewFromRow(row, side);
   if (row.status !== "planning" || turn !== row.turn) throw new Error("The match has already advanced beyond those orders.");
-  const orders = validateMultiplayerOrders(parseState(row), side, submitted);
+  const state = parseState(row);
+  const orders = validateMultiplayerOrders(state, side, submitted);
+  const controls = validateMultiplayerControls(state, side, submittedControls);
   const submittedColumn = side === "host" ? "host_submitted_turn" : "guest_submitted_turn";
   const now = Date.now();
   await database().batch([
     database().prepare(`INSERT INTO multiplayer_orders (match_code, turn, side, orders_json, created_at)
       VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(match_code, turn, side) DO UPDATE SET orders_json = excluded.orders_json, created_at = excluded.created_at`)
-      .bind(code, row.turn, side, JSON.stringify(orders), now),
+      .bind(code, row.turn, side, JSON.stringify({ orders, controls } satisfies StoredOrderEnvelope), now),
     database().prepare(`UPDATE multiplayer_matches SET ${submittedColumn} = ?, updated_at = ?
       WHERE code = ? AND turn = ? AND status = 'planning'`)
       .bind(row.turn, now, code, row.turn),

@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyMultiplayerControls,
   canonicalTeamForSide,
   createMultiplayerMatchState,
+  multiplayerControlsForSide,
   multiplayerFleetPointTotal,
   resolveMultiplayerTurn,
   stateForMultiplayerPerspective,
+  validateMultiplayerControls,
   validateMultiplayerOrders,
 } from "../app/multiplayerMode.ts";
 import type { GameShip, TurnOrder, TurnOrders } from "../app/gameTypes.ts";
@@ -56,6 +59,26 @@ test("guest perspective makes the guest fleet friendly without changing stable I
   assert.deepEqual(viewedGuest.position, canonicalGuest.position);
 });
 
+test("a commander sees their persisted AI controls while rival control modes stay hidden", () => {
+  const state = createMultiplayerMatchState("ABC234");
+  const guest = state.ships.find((ship) => ship.id === "multiplayer-guest-archer")!;
+  guest.controller = "ai";
+  guest.aiDoctrine = "defensive";
+  guest.aiMission = "bombing";
+
+  const guestView = stateForMultiplayerPerspective(state, "guest");
+  const hostView = stateForMultiplayerPerspective(state, "host");
+  const guestOwnArcher = guestView.ships.find((ship) => ship.id === guest.id)!;
+  const hostRivalArcher = hostView.ships.find((ship) => ship.id === guest.id)!;
+
+  assert.equal(guestOwnArcher.team, "player");
+  assert.equal(guestOwnArcher.controller, "ai");
+  assert.equal(guestOwnArcher.aiDoctrine, "defensive");
+  assert.equal(guestOwnArcher.aiMission, "bombing");
+  assert.equal(hostRivalArcher.team, "enemy");
+  assert.equal(hostRivalArcher.controller, "ai");
+});
+
 test("server accepts only a complete order envelope for the authenticated side", () => {
   const state = createMultiplayerMatchState("ABC234");
   const hostOrders = completeOrders(state, "host");
@@ -63,6 +86,25 @@ test("server accepts only a complete order envelope for the authenticated side",
   assert.deepEqual(validateMultiplayerOrders(state, "host", hostOrders), hostOrders);
   assert.throws(() => validateMultiplayerOrders(state, "host", {}), /Missing orders/);
   assert.throws(() => validateMultiplayerOrders(state, "guest", hostOrders), /outside this fleet/);
+});
+
+test("server accepts and applies only the authenticated fleet's control settings", () => {
+  const state = createMultiplayerMatchState("ABC234");
+  const controls = multiplayerControlsForSide(state, "host");
+  controls["multiplayer-host-archer"] = {
+    controller: "ai",
+    aiDoctrine: "defensive",
+    aiMission: "bombing",
+  };
+
+  const validated = validateMultiplayerControls(state, "host", controls);
+  const controlled = applyMultiplayerControls(state, validated);
+  const archer = controlled.ships.find((ship) => ship.id === "multiplayer-host-archer")!;
+
+  assert.equal(archer.controller, "ai");
+  assert.equal(archer.aiDoctrine, "defensive");
+  assert.equal(archer.aiMission, "bombing");
+  assert.throws(() => validateMultiplayerControls(state, "guest", controls), /outside this fleet/);
 });
 
 test("server resolves both hidden submissions together and alternates activation priority", () => {
@@ -80,6 +122,29 @@ test("server resolves both hidden submissions together and alternates activation
   assert.equal(JSON.stringify(JSON.parse(JSON.stringify(result))), JSON.stringify(result));
   assert.ok(result.resolution.orders["multiplayer-host-hammerhead"]);
   assert.ok(result.resolution.orders["multiplayer-guest-hammerhead"]);
+});
+
+test("AI control choices survive multiplayer turn resolution", () => {
+  const state = createMultiplayerMatchState("ABC234");
+  const hostControls = multiplayerControlsForSide(state, "host");
+  const guestControls = multiplayerControlsForSide(state, "guest");
+  hostControls["multiplayer-host-hulk"] = {
+    controller: "ai",
+    aiDoctrine: "aggressive",
+    aiMission: "assault",
+  };
+  const controlled = applyMultiplayerControls(state, { ...hostControls, ...guestControls });
+
+  const result = resolveMultiplayerTurn(
+    controlled,
+    completeOrders(controlled, "host"),
+    completeOrders(controlled, "guest"),
+  );
+  const hulk = result.nextState.ships.find((ship) => ship.id === "multiplayer-host-hulk")!;
+
+  assert.equal(hulk.controller, "ai");
+  assert.equal(hulk.aiDoctrine, "aggressive");
+  assert.equal(hulk.aiMission, "assault");
 });
 
 test("mutual fleet destruction is reported as a draw", () => {

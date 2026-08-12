@@ -1,5 +1,8 @@
 import { FLEET_BATTLEFIELD, FLEET_TEAM_START_X } from "./battlefieldConfig.ts";
+import { AI_DOCTRINE_ORDER, defaultAiMissionFor, type AiDoctrine } from "./aiCommandEngine.ts";
+import { AI_MISSION_ORDER, type AiMissionOrder } from "./aiTactics.ts";
 import type { Team, Vec3 } from "./combatEngine.ts";
+import type { ShipController } from "./fleetControl.ts";
 import { resolveAndFinalizeTurn } from "./gameEngine.ts";
 import {
   GAME_RULES_VERSION,
@@ -24,6 +27,14 @@ export const MULTIPLAYER_FLEET_POINTS = 10;
 export type MultiplayerSide = "host" | "guest";
 export type MultiplayerMatchStatus = "waiting" | "planning" | "resolving" | "complete";
 export type MultiplayerWinner = MultiplayerSide | "draw" | null;
+
+export type MultiplayerShipControl = {
+  controller: ShipController;
+  aiDoctrine: AiDoctrine;
+  aiMission: AiMissionOrder;
+};
+
+export type MultiplayerControlSettings = Record<string, MultiplayerShipControl>;
 
 export type MultiplayerView = {
   code: string;
@@ -114,10 +125,11 @@ const perspectiveTeam = (team: Team, side: MultiplayerSide): Team => {
 export function shipsForMultiplayerPerspective(ships: readonly GameShip[], side: MultiplayerSide): GameShip[] {
   return cloneGameShips(ships).map((ship) => {
     const team = perspectiveTeam(ship.team, side);
+    const shipSide = sideForCanonicalTeam(ship.team);
     return {
       ...ship,
       team,
-      controller: team === "enemy" ? "ai" : "player",
+      controller: shipSide === side ? ship.controller : "ai",
     };
   });
 }
@@ -150,6 +162,77 @@ const isFiniteVec3 = (value: unknown): value is Vec3 =>
   Array.isArray(value) && value.length === 3 && value.every((entry) => typeof entry === "number" && Number.isFinite(entry));
 
 const VALID_MODES = new Set<FlightMode>(["normal", "focus-fire", "extra-move"]);
+const VALID_DOCTRINES = new Set<AiDoctrine>(AI_DOCTRINE_ORDER);
+const VALID_MISSIONS = new Set<AiMissionOrder>(AI_MISSION_ORDER);
+
+export function multiplayerControlsForSide(state: MatchState, side: MultiplayerSide): MultiplayerControlSettings {
+  const ownTeam = canonicalTeamForSide(side);
+  return Object.fromEntries(
+    state.ships
+      .filter((ship) => ship.team === ownTeam && ship.hull > 0)
+      .map((ship) => [ship.id, {
+        controller: ship.controller,
+        aiDoctrine: ship.aiDoctrine ?? "standard",
+        aiMission: defaultAiMissionFor(ship),
+      }]),
+  );
+}
+
+/** Accepts control choices only for living ships owned by the authenticated commander. */
+export function validateMultiplayerControls(
+  state: MatchState,
+  side: MultiplayerSide,
+  submitted: unknown,
+): MultiplayerControlSettings {
+  if (submitted === undefined) return multiplayerControlsForSide(state, side);
+  if (!submitted || typeof submitted !== "object" || Array.isArray(submitted)) {
+    throw new Error("Ship control settings must be keyed by ship ID.");
+  }
+  const source = submitted as Record<string, unknown>;
+  const ownTeam = canonicalTeamForSide(side);
+  const livingOwnShips = state.ships.filter((ship) => ship.team === ownTeam && ship.hull > 0);
+  const ownIds = new Set(livingOwnShips.map((ship) => ship.id));
+  if (Object.keys(source).some((shipId) => !ownIds.has(shipId))) {
+    throw new Error("The control settings contain a ship outside this fleet.");
+  }
+
+  const controls: MultiplayerControlSettings = {};
+  for (const ship of livingOwnShips) {
+    const raw = source[ship.id];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error(`Missing control settings for ${ship.callsign}.`);
+    }
+    const control = raw as Partial<MultiplayerShipControl>;
+    if (control.controller !== "player" && control.controller !== "ai") {
+      throw new Error(`Invalid control mode for ${ship.callsign}.`);
+    }
+    if (!control.aiDoctrine || !VALID_DOCTRINES.has(control.aiDoctrine)) {
+      throw new Error(`Invalid AI doctrine for ${ship.callsign}.`);
+    }
+    if (!control.aiMission || !VALID_MISSIONS.has(control.aiMission)) {
+      throw new Error(`Invalid AI mission for ${ship.callsign}.`);
+    }
+    controls[ship.id] = {
+      controller: control.controller,
+      aiDoctrine: control.aiDoctrine,
+      aiMission: control.aiMission,
+    };
+  }
+  return controls;
+}
+
+export function applyMultiplayerControls(
+  state: MatchState,
+  settings: MultiplayerControlSettings,
+): MatchState {
+  return {
+    ...state,
+    ships: cloneGameShips(state.ships).map((ship) => {
+      const control = settings[ship.id];
+      return control ? { ...ship, ...control } : ship;
+    }),
+  };
+}
 
 /** Validates one side's complete hidden order envelope before it reaches D1. */
 export function validateMultiplayerOrders(

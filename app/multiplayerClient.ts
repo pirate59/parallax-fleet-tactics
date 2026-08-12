@@ -1,5 +1,5 @@
 import type { TurnOrders } from "./gameTypes.ts";
-import type { MultiplayerSession, MultiplayerView } from "./multiplayerMode.ts";
+import type { MultiplayerControlSettings, MultiplayerSession, MultiplayerView } from "./multiplayerMode.ts";
 
 const SESSION_KEY = "parallax.multiplayer.session.v1";
 
@@ -37,11 +37,16 @@ export async function readRemoteMatch(session: MultiplayerSession) {
   });
 }
 
-export async function submitRemoteOrders(session: MultiplayerSession, turn: number, orders: TurnOrders) {
+export async function submitRemoteOrders(
+  session: MultiplayerSession,
+  turn: number,
+  orders: TurnOrders,
+  controls: MultiplayerControlSettings,
+) {
   return jsonRequest<MultiplayerView>(`/api/multiplayer/matches/${encodeURIComponent(session.code)}/orders`, {
     method: "POST",
     headers: { Authorization: `Bearer ${session.token}` },
-    body: JSON.stringify({ turn, orders }),
+    body: JSON.stringify({ turn, orders, controls }),
   });
 }
 

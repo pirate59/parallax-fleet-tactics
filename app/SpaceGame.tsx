@@ -107,6 +107,7 @@ import {
 import {
   MULTIPLAYER_FLEET_POINTS,
   MULTIPLAYER_POLL_MS,
+  type MultiplayerControlSettings,
   type MultiplayerSession,
   type MultiplayerView,
 } from "./multiplayerMode";
@@ -3240,7 +3241,7 @@ export function SpaceGame() {
   }, [selectedShip, phase]);
 
   const updateShipController = useCallback((controller: "player" | "ai") => {
-    if (!selectedShip || phase !== "planning" || activeMode === "fishtank" || activeMode === "multiplayer") return;
+    if (!selectedShip || phase !== "planning" || activeMode === "fishtank") return;
     const lockedFlagshipId = activeMode === "story" ? STORY_STARTER_ARCHETYPE.id : undefined;
     if (!canToggleFriendlyControl(selectedShip, lockedFlagshipId) || selectedShip.controller === controller) return;
 
@@ -3319,13 +3320,13 @@ export function SpaceGame() {
     });
   }, [selectedShip, selectedDraft, ships, updateDraft]);
 
-  const generateNpcOrders = useCallback((currentShips: Ship[]) => {
+  const generateNpcOrders = useCallback((currentShips: Ship[], scope: "all" | "friendly" = "all") => {
     const bounds = battlefieldForMode(activeMode);
     const orders: Record<string, Order> = {};
     const comms: AiCommandComms[] = [];
     const wingTargets = carrierWingTargetAssignments(currentShips);
     currentShips
-      .filter((ship) => ship.controller === "ai" && ship.hull > 0)
+      .filter((ship) => ship.controller === "ai" && ship.hull > 0 && (scope === "all" || ship.team !== "enemy"))
       .forEach((ship) => {
         const reservedDestinations = Object.fromEntries(
           Object.entries(orders).map(([id, order]) => [id, order.destination]),
@@ -3374,9 +3375,21 @@ export function SpaceGame() {
       setPhase("waiting");
       setMobileControlsOpen(false);
       setMultiplayerError("");
+      const aiPlan = generateNpcOrders(ships, "friendly");
+      const multiplayerOrders: Record<string, Order> = { ...drafts, ...aiPlan.orders };
+      const multiplayerControls = Object.fromEntries(
+        ships
+          .filter((ship) => ship.team !== "enemy" && ship.hull > 0)
+          .map((ship) => [ship.id, {
+            controller: ship.controller,
+            aiDoctrine: ship.aiDoctrine ?? "standard",
+            aiMission: defaultAiMissionFor(ship),
+          }]),
+      ) as MultiplayerControlSettings;
+      setAiComms(aiPlan.comms);
       setLog((current) => [`Turn ${turn}: your encrypted order envelope is locked.`, ...current].slice(0, 12));
       try {
-        const view = await submitRemoteOrders(multiplayerSession, turn, drafts);
+        const view = await submitRemoteOrders(multiplayerSession, turn, multiplayerOrders, multiplayerControls);
         setMultiplayerView(view);
         if (view.lastResolution?.turn === turn && view.state.turn > turn) {
           multiplayerPlaybackTurnRef.current = turn;
@@ -3898,7 +3911,7 @@ export function SpaceGame() {
   const selectedAiCondition = shipConditionScore(selectedShip);
   const selectedAiRisk = assessFleetRisk(selectedShip, ships);
   const selectedIsCarrierFighter = Boolean(selectedShip.spawnedByShipId);
-  const selectedControlToggleAllowed = activeMode !== "fishtank" && activeMode !== "multiplayer" && canToggleFriendlyControl(
+  const selectedControlToggleAllowed = activeMode !== "fishtank" && canToggleFriendlyControl(
     selectedShip,
     activeMode === "story" ? STORY_STARTER_ARCHETYPE.id : undefined,
   );
