@@ -2941,6 +2941,7 @@ export function SpaceGame() {
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [combatFocus, setCombatFocus] = useState<CombatFocus | null>(null);
   const [aiComms, setAiComms] = useState<AiCommandComms[]>([]);
+  const [commsCollapsed, setCommsCollapsed] = useState(false);
   const [cameraCommand, setCameraCommand] = useState<CameraCommand>({ kind: "reset", nonce: 0 });
   const [helpOpen, setHelpOpen] = useState(true);
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
@@ -3254,7 +3255,6 @@ export function SpaceGame() {
     const results = finalized.ships;
     setShips(results);
     setResolution(null);
-    setAiComms([]);
     setLog((current) => [...finalized.outcomes, ...current].slice(0, 12));
 
     const enemyAlive = results.some((ship) => ship.team === "enemy" && ship.hull > 0);
@@ -3804,23 +3804,31 @@ export function SpaceGame() {
             </div>
           )}
 
-          {phase === "executing" && !combatFocus && aiComms.length > 0 && (
-            <section className={`fleet-comms ${activeMode === "fishtank" ? "dual-fleet" : "friendly-only"}`} aria-label="AI fleet communications" aria-live="polite">
+          <section className={`fleet-comms ${activeMode === "fishtank" ? "dual-fleet" : "friendly-only"} ${commsCollapsed ? "collapsed" : "expanded"}`} aria-label="AI fleet communications" aria-live="polite">
               <header>
                 <span aria-hidden="true"><i /><i /><i /></span>
-                <div><small>FLEET COMMS</small><strong>ORDERS RELEASED</strong></div>
-                <b>{aiComms.length} TX</b>
+                <div>
+                  <small>FLEET COMMS</small>
+                  <strong>{phase === "executing" ? "ORDERS RELEASED" : aiComms.length ? "LAST TRANSMISSIONS" : "CHANNEL READY"}</strong>
+                </div>
+                <b>{aiComms.length ? `${aiComms.length} TX` : "STANDBY"}</b>
+                <button type="button" aria-expanded={!commsCollapsed} aria-label={`${commsCollapsed ? "Expand" : "Collapse"} fleet communications`} onClick={() => setCommsCollapsed((collapsed) => !collapsed)}>
+                  <span>{commsCollapsed ? "EXPAND" : "COLLAPSE"}</span><i aria-hidden="true">⌃</i>
+                </button>
               </header>
-              <ol>
-                {aiComms.slice(0, activeMode === "fishtank" ? 6 : 4).map((transmission) => (
-                  <li key={`${turn}-${transmission.shipId}`} className={`${transmission.team} ${transmission.tone}`}>
-                    <div><strong>{transmission.callsign}</strong><small>{AI_MISSION_RULES[transmission.mission].label.toUpperCase()}</small></div>
-                    <p>{transmission.message}</p>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          )}
+              {!commsCollapsed && (
+                <ol>
+                  {aiComms.length ? aiComms.slice(0, activeMode === "fishtank" ? 6 : 4).map((transmission) => (
+                    <li key={`${turn}-${transmission.shipId}`} className={`${transmission.team} ${transmission.tone}`}>
+                      <div><strong>{transmission.callsign}</strong><small>{AI_MISSION_RULES[transmission.mission].label.toUpperCase()}</small></div>
+                      <p>{transmission.message}</p>
+                    </li>
+                  )) : (
+                    <li className="comms-empty"><i aria-hidden="true" /><p>Awaiting friendly AI orders. New transmissions appear when fleet vectors are released.</p></li>
+                  )}
+                </ol>
+              )}
+          </section>
 
           {phase === "executing" && combatFocus && (
             <div className={`cinematic-participant-cards ${combatFocus.kind}`} aria-live="polite">

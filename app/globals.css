@@ -1660,23 +1660,33 @@ kbd {
   background: linear-gradient(135deg, rgba(5, 18, 26, 0.94), rgba(7, 13, 21, 0.8));
   box-shadow: 0 18px 54px rgba(0, 0, 0, 0.28), inset 2px 0 rgba(74, 224, 210, 0.3);
   backdrop-filter: blur(16px);
-  pointer-events: none;
+  pointer-events: auto;
   animation: comms-arrival 0.28s ease-out both;
+  transition: width 0.2s ease, box-shadow 0.2s ease;
 }
 
 [data-mode="fishtank"] .fleet-comms {
   top: 70px;
 }
 
+.fleet-comms.collapsed {
+  width: min(370px, calc(100% - 36px));
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22), inset 2px 0 rgba(74, 224, 210, 0.3);
+}
+
 .fleet-comms > header {
   display: grid;
-  grid-template-columns: 30px 1fr auto;
+  grid-template-columns: 30px 1fr auto auto;
   align-items: center;
   gap: 10px;
   min-height: 42px;
   padding: 7px 10px;
   border-bottom: 1px solid rgba(105, 223, 255, 0.16);
   background: rgba(59, 174, 187, 0.06);
+}
+
+.fleet-comms.collapsed > header {
+  border-bottom: 0;
 }
 
 .fleet-comms > header > span {
@@ -1720,6 +1730,41 @@ kbd {
 .fleet-comms > header small {
   color: #668e9c;
   font-size: 9px;
+}
+
+.fleet-comms > header > button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid rgba(104, 210, 226, 0.18);
+  background: rgba(104, 210, 226, 0.04);
+  color: #759da8;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.fleet-comms > header > button:hover,
+.fleet-comms > header > button:focus-visible {
+  border-color: rgba(104, 210, 226, 0.45);
+  background: rgba(104, 210, 226, 0.1);
+  color: #d5fbff;
+  outline: 0;
+}
+
+.fleet-comms > header > button i {
+  display: inline-block;
+  color: #64d8dd;
+  font-size: 13px;
+  font-style: normal;
+  transition: transform 0.2s ease;
+}
+
+.fleet-comms.collapsed > header > button i {
+  transform: rotate(180deg);
 }
 
 .fleet-comms > header strong {
@@ -1806,6 +1851,24 @@ kbd {
   color: #b0c9d2;
   font-size: var(--type-small);
   line-height: 1.35;
+}
+
+.fleet-comms li.comms-empty {
+  min-height: 58px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+}
+
+.fleet-comms li.comms-empty > i {
+  width: 8px;
+  height: 8px;
+  border: 1px solid #5da3ad;
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(100, 216, 221, 0.35);
+}
+
+.fleet-comms li.comms-empty p {
+  color: #75939e;
 }
 
 @keyframes comms-arrival {
@@ -3963,6 +4026,11 @@ input[type="range"]::-moz-range-thumb {
     overflow: hidden;
   }
 
+  .fleet-comms.collapsed {
+    width: auto;
+    max-height: 50px;
+  }
+
   [data-mode="fishtank"] .fleet-comms {
     top: 70px;
     max-height: 196px;
@@ -3971,6 +4039,10 @@ input[type="range"]::-moz-range-thumb {
   .fleet-comms > header {
     min-height: 38px;
     padding: 5px 8px;
+  }
+
+  .fleet-comms > header > button span {
+    display: none;
   }
 
   .fleet-comms ol {
