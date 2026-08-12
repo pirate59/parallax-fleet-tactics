@@ -6,6 +6,11 @@ import {
   createMultiplayerMatchState,
   multiplayerControlsForSide,
   multiplayerFleetPointTotal,
+  multiplayerTimeoutOrders,
+  multiplayerTurnDuration,
+  multiplayerWinnerAfterConcession,
+  MULTIPLAYER_TIMEOUT_TURN_MS,
+  MULTIPLAYER_TURN_MS,
   resolveMultiplayerTurn,
   stateForMultiplayerPerspective,
   validateMultiplayerControls,
@@ -105,6 +110,26 @@ test("server accepts and applies only the authenticated fleet's control settings
   assert.equal(archer.aiDoctrine, "defensive");
   assert.equal(archer.aiMission, "bombing");
   assert.throws(() => validateMultiplayerControls(state, "guest", controls), /outside this fleet/);
+});
+
+test("turn deadlines escalate after a timeout and concessions award the rival", () => {
+  assert.equal(multiplayerTurnDuration(false), MULTIPLAYER_TURN_MS);
+  assert.equal(multiplayerTurnDuration(true), MULTIPLAYER_TIMEOUT_TURN_MS);
+  assert.equal(MULTIPLAYER_TURN_MS, 120_000);
+  assert.equal(MULTIPLAYER_TIMEOUT_TURN_MS, 30_000);
+  assert.equal(multiplayerWinnerAfterConcession("host"), "guest");
+  assert.equal(multiplayerWinnerAfterConcession("guest"), "host");
+});
+
+test("an expired commander receives a complete legal AI order envelope", () => {
+  const state = createMultiplayerMatchState("ABC234");
+  const hostOrders = multiplayerTimeoutOrders(state, "host");
+  const guestOrders = multiplayerTimeoutOrders(state, "guest");
+
+  assert.equal(Object.keys(hostOrders).length, 4);
+  assert.equal(Object.keys(guestOrders).length, 4);
+  assert.doesNotThrow(() => validateMultiplayerOrders(state, "host", hostOrders));
+  assert.doesNotThrow(() => validateMultiplayerOrders(state, "guest", guestOrders));
 });
 
 test("server resolves both hidden submissions together and alternates activation priority", () => {

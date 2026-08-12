@@ -97,6 +97,7 @@ import { preferredTargetId } from "./targetMemory";
 import { spectatorOverviewFor } from "./spectatorCamera";
 import {
   clearMultiplayerSession,
+  concedeRemoteMatch,
   createRemoteMatch,
   joinRemoteMatch,
   loadMultiplayerSession,
@@ -3079,6 +3080,7 @@ export function SpaceGame() {
   const [multiplayerView, setMultiplayerView] = useState<MultiplayerView | null>(null);
   const [multiplayerBusy, setMultiplayerBusy] = useState(false);
   const [multiplayerError, setMultiplayerError] = useState("");
+  const [multiplayerNow, setMultiplayerNow] = useState(() => Date.now());
   const [pendingMultiplayerState, setPendingMultiplayerState] = useState<MatchState | null>(null);
   const storyActionLockRef = useRef(false);
   const fishtankMatchRef = useRef(0);
@@ -3155,6 +3157,12 @@ export function SpaceGame() {
   useEffect(() => {
     storyActionLockRef.current = false;
   }, [storyRun?.stage]);
+
+  useEffect(() => {
+    if (screen !== "battle" || activeMode !== "multiplayer") return;
+    const timer = window.setInterval(() => setMultiplayerNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [activeMode, screen]);
 
   const battlefieldBounds = battlefieldForMode(activeMode);
   const showFleetStations = activeMode !== "story";
@@ -3557,6 +3565,27 @@ export function SpaceGame() {
     multiplayerPlaybackTurnRef.current = 0;
   }, []);
 
+  const concedeMultiplayer = useCallback(async () => {
+    if (!multiplayerSession || !multiplayerView || multiplayerView.status === "complete" || phase === "executing") return;
+    if (!window.confirm("Concede this match? The rival commander will immediately win.")) return;
+    setMultiplayerBusy(true);
+    setMultiplayerError("");
+    try {
+      const view = await concedeRemoteMatch(multiplayerSession);
+      setMultiplayerView(view);
+      setShips(copyShips(view.state.ships));
+      setTurn(view.state.turn);
+      setPhase(view.state.phase);
+      setResolution(null);
+      setPendingMultiplayerState(null);
+      setLog((current) => ["Concession transmitted. The match is complete.", ...current].slice(0, 12));
+    } catch (error) {
+      setMultiplayerError(error instanceof Error ? error.message : "The concession could not be transmitted.");
+    } finally {
+      setMultiplayerBusy(false);
+    }
+  }, [multiplayerSession, multiplayerView, phase]);
+
   useEffect(() => {
     if (screen !== "multiplayer" || !multiplayerSession) return;
     let cancelled = false;
@@ -3930,6 +3959,13 @@ export function SpaceGame() {
   const fishtankEnemies = ships.filter((ship) => ship.team === "enemy");
   const livingFishtankAllies = fishtankAllies.filter((ship) => ship.hull > 0);
   const livingFishtankEnemies = fishtankEnemies.filter((ship) => ship.hull > 0);
+  const multiplayerRemainingSeconds = multiplayerView?.deadlineAt
+    ? Math.max(0, Math.ceil((multiplayerView.deadlineAt - multiplayerNow) / 1000))
+    : null;
+  const multiplayerClock = multiplayerRemainingSeconds === null
+    ? "--:--"
+    : `${String(Math.floor(multiplayerRemainingSeconds / 60)).padStart(2, "0")}:${String(multiplayerRemainingSeconds % 60).padStart(2, "0")}`;
+  const multiplayerClockUrgent = multiplayerRemainingSeconds !== null && multiplayerRemainingSeconds <= 30;
 
   return (
     <main className="game-shell" data-mode={activeMode} data-story-phase={activeMode === "story" ? "combat" : undefined} data-gate={activeMode === "story" ? storyRun?.gate : undefined} data-total-gates={activeMode === "story" ? STORY_GATE_COUNT : undefined}>
@@ -4001,7 +4037,11 @@ export function SpaceGame() {
             </button>
           )}
           <button className="quiet-button" type="button" onClick={returnToMenu}>Main menu</button>
-          <button className="quiet-button" type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : activeMode === "fishtank" ? "New match" : activeMode === "multiplayer" ? "Match link" : "Restart"}</button>
+          {activeMode === "multiplayer" ? (
+            <button className="quiet-button concede-button" type="button" disabled={phase === "executing" || multiplayerBusy || multiplayerView?.status === "complete"} onClick={concedeMultiplayer}>Concede</button>
+          ) : (
+            <button className="quiet-button" type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : activeMode === "fishtank" ? "New match" : "Restart"}</button>
+          )}
         </div>
       </header>
 
@@ -4102,6 +4142,10 @@ export function SpaceGame() {
           {activeMode === "multiplayer" && multiplayerView && (
             <section className="multiplayer-battle-link" aria-label="Multiplayer command link" aria-live="polite">
               <div><small>MATCH CODE</small><strong>{multiplayerView.code}</strong></div>
+              <div className={`multiplayer-turn-timer ${multiplayerClockUrgent ? "urgent" : ""}`}>
+                <small>{multiplayerView.lastTurnTimedOut ? "30 SEC DEADLINE" : "TURN TIMER"}</small>
+                <strong>{multiplayerView.status === "complete" ? "COMPLETE" : multiplayerClock}</strong>
+              </div>
               <span className={multiplayerView.ownSubmitted ? "locked" : "plotting"}><i />YOU · {multiplayerView.ownSubmitted ? "LOCKED" : "PLOTTING"}</span>
               <span className={multiplayerView.opponentSubmitted ? "locked" : "plotting"}><i />RIVAL · {multiplayerView.opponentSubmitted ? "LOCKED" : "PLOTTING"}</span>
             </section>
@@ -4219,8 +4263,12 @@ export function SpaceGame() {
           {(phase === "victory" || phase === "defeat" || phase === "draw") && activeMode === "multiplayer" && multiplayerView && (
             <div className={`end-state multiplayer-end ${phase}`}>
               <small>MATCH {multiplayerView.code} COMPLETE</small>
-              <h2>{phase === "victory" ? "Rival formation broken" : phase === "draw" ? "Mutual destruction" : "Your command wing is lost"}</h2>
-              <p>{phase === "victory" ? "The server confirms your fleet as the surviving force." : phase === "draw" ? "Neither formation survived the final exchange." : "The rival command envelope carried the engagement."}</p>
+              <h2>{multiplayerView.completionReason === "concession"
+                ? multiplayerView.concededBy === multiplayerView.side ? "Match conceded" : "Rival commander conceded"
+                : phase === "victory" ? "Rival formation broken" : phase === "draw" ? "Mutual destruction" : "Your command wing is lost"}</h2>
+              <p>{multiplayerView.completionReason === "concession"
+                ? multiplayerView.concededBy === multiplayerView.side ? "Your concession was confirmed and the rival receives the victory." : "The command link confirms your fleet as the winner."
+                : phase === "victory" ? "The server confirms your fleet as the surviving force." : phase === "draw" ? "Neither formation survived the final exchange." : "The rival command envelope carried the engagement."}</p>
               <button type="button" onClick={() => { abandonMultiplayer(); setScreen("multiplayer"); }}>Create or join another match</button>
               <button type="button" className="end-state-secondary" onClick={returnToMenu}>Return to main menu</button>
             </div>
@@ -4445,7 +4493,11 @@ export function SpaceGame() {
           </section>
           <div className="mobile-drawer-tools">
             <button type="button" onClick={returnToMenu}>Main menu</button>
-            <button type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : "Restart battle"}</button>
+            {activeMode === "multiplayer" ? (
+              <button className="concede-button" type="button" disabled={phase === "executing" || multiplayerBusy || multiplayerView?.status === "complete"} onClick={concedeMultiplayer}>Concede match</button>
+            ) : (
+              <button type="button" onClick={restartActiveMode}>{activeMode === "story" ? "Restart run" : "Restart battle"}</button>
+            )}
           </div>
         </aside>}
       </section>

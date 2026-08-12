@@ -13,6 +13,10 @@ export const multiplayerMatches = sqliteTable("multiplayer_matches", {
   hostSubmittedTurn: integer("host_submitted_turn"),
   guestSubmittedTurn: integer("guest_submitted_turn"),
   winner: text("winner"),
+  deadlineAt: integer("deadline_at"),
+  lastTurnTimedOut: integer("last_turn_timed_out").notNull().default(0),
+  completionReason: text("completion_reason"),
+  concededBy: text("conceded_by"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 }, (table) => [index("idx_multiplayer_matches_status_updated").on(table.status, table.updatedAt)]);

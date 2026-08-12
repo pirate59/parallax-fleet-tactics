@@ -3779,6 +3779,9 @@ input[type="range"]::-moz-range-thumb {
 .multiplayer-battle-link > div { flex-direction: column; align-items: flex-start; justify-content: center; }
 .multiplayer-battle-link small { color: #648293; font: var(--type-micro) ui-monospace, monospace; letter-spacing: 0.12em; }
 .multiplayer-battle-link strong { color: var(--cyan-strong); font: 500 var(--type-control) ui-monospace, monospace; letter-spacing: 0.16em; }
+.multiplayer-battle-link .multiplayer-turn-timer { min-width: 96px; align-items: center; }
+.multiplayer-battle-link .multiplayer-turn-timer strong { color: #dff7fc; font-size: var(--type-small); letter-spacing: 0.12em; }
+.multiplayer-battle-link .multiplayer-turn-timer.urgent strong { color: var(--amber); text-shadow: 0 0 12px rgba(255, 184, 90, 0.4); animation: pulse 0.8s infinite alternate; }
 .multiplayer-battle-link > span { gap: 6px; color: #7e98a6; font: var(--type-meta) ui-monospace, monospace; letter-spacing: 0.08em; }
 .multiplayer-battle-link > span i { width: 6px; height: 6px; border-radius: 50%; background: #526f7e; }
 .multiplayer-battle-link > span.locked { color: #a9e8d6; }
@@ -3807,6 +3810,21 @@ input[type="range"]::-moz-range-thumb {
   background: transparent;
   color: #819eac;
 }
+
+.quiet-button.concede-button,
+.mobile-drawer-tools .concede-button {
+  border-color: rgba(255, 109, 121, 0.34);
+  color: #ff9ba4;
+}
+
+.quiet-button.concede-button:hover:not(:disabled),
+.mobile-drawer-tools .concede-button:hover:not(:disabled) {
+  border-color: rgba(255, 109, 121, 0.64);
+  background: rgba(255, 109, 121, 0.1);
+  color: #ffd4d8;
+}
+
+.concede-button:disabled { cursor: not-allowed; opacity: 0.38; }
 
 @media (max-width: 1260px) {
   .menu-content {
@@ -4761,7 +4779,7 @@ input[type="range"]::-moz-range-thumb {
     justify-content: flex-end;
   }
 
-  .multiplayer-battle-link > div { margin-right: auto; }
+  .multiplayer-battle-link > div:first-child { margin-right: auto; }
   .multiplayer-battle-link > * { min-height: 36px; padding: 0 7px; }
   .multiplayer-battle-link > span { font-size: var(--type-micro); }
   .multiplayer-battle-error { top: 82px; right: 8px; left: 8px; max-width: none; }
@@ -4816,7 +4834,7 @@ input[type="range"]::-moz-range-thumb {
   }
 
   .multiplayer-header .brand-lockup > div { display: none; }
-  .multiplayer-battle-link > div { display: none; }
+  .multiplayer-battle-link > div:first-child { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

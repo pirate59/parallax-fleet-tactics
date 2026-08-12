@@ -2,13 +2,18 @@ import { env } from "cloudflare:workers";
 import {
   applyMultiplayerControls,
   createMultiplayerMatchState,
+  MULTIPLAYER_TURN_MS,
   multiplayerControlsForSide,
+  multiplayerTimeoutOrders,
+  multiplayerTurnDuration,
+  multiplayerWinnerAfterConcession,
   resolutionForMultiplayerPerspective,
   resolveMultiplayerTurn,
   stateForMultiplayerPerspective,
   validateMultiplayerControls,
   validateMultiplayerOrders,
   type MultiplayerControlSettings,
+  type MultiplayerCompletionReason,
   type MultiplayerMatchStatus,
   type MultiplayerSession,
   type MultiplayerSide,
@@ -30,6 +35,10 @@ type MatchRow = {
   host_submitted_turn: number | null;
   guest_submitted_turn: number | null;
   winner: MultiplayerWinner;
+  deadline_at: number | null;
+  last_turn_timed_out: number;
+  completion_reason: MultiplayerCompletionReason;
+  conceded_by: MultiplayerSide | null;
   created_at: number;
   updated_at: number;
 };
@@ -52,6 +61,10 @@ const MATCH_TABLE_SQL = `CREATE TABLE IF NOT EXISTS multiplayer_matches (
   host_submitted_turn INTEGER,
   guest_submitted_turn INTEGER,
   winner TEXT,
+  deadline_at INTEGER,
+  last_turn_timed_out INTEGER NOT NULL DEFAULT 0,
+  completion_reason TEXT,
+  conceded_by TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 )`;
@@ -77,13 +90,37 @@ function database() {
   return env.DB;
 }
 
+let multiplayerSchemaReady: Promise<void> | null = null;
+
 export async function ensureMultiplayerSchema() {
-  const db = database();
-  await db.batch([
-    db.prepare(MATCH_TABLE_SQL),
-    db.prepare(ORDER_TABLE_SQL),
-    db.prepare(UPDATED_INDEX_SQL),
-  ]);
+  if (!multiplayerSchemaReady) {
+    multiplayerSchemaReady = (async () => {
+      const db = database();
+      await db.batch([
+        db.prepare(MATCH_TABLE_SQL),
+        db.prepare(ORDER_TABLE_SQL),
+        db.prepare(UPDATED_INDEX_SQL),
+      ]);
+      const tableInfo = await db.prepare("PRAGMA table_info(multiplayer_matches)").all<{ name: string }>();
+      const columns = new Set(tableInfo.results.map((column) => column.name));
+      const additions = [
+        ["deadline_at", "ALTER TABLE multiplayer_matches ADD COLUMN deadline_at INTEGER"],
+        ["last_turn_timed_out", "ALTER TABLE multiplayer_matches ADD COLUMN last_turn_timed_out INTEGER NOT NULL DEFAULT 0"],
+        ["completion_reason", "ALTER TABLE multiplayer_matches ADD COLUMN completion_reason TEXT"],
+        ["conceded_by", "ALTER TABLE multiplayer_matches ADD COLUMN conceded_by TEXT"],
+      ] as const;
+      const missing = additions
+        .filter(([name]) => !columns.has(name))
+        .map(([, sql]) => db.prepare(sql));
+      if (missing.length) await db.batch(missing);
+    })();
+  }
+  try {
+    await multiplayerSchemaReady;
+  } catch (error) {
+    multiplayerSchemaReady = null;
+    throw error;
+  }
 }
 
 function randomCode() {
@@ -152,6 +189,10 @@ function viewFromRow(row: MatchRow, side: MultiplayerSide): MultiplayerView {
     ownSubmitted,
     opponentSubmitted,
     winner: row.winner,
+    deadlineAt: row.deadline_at,
+    lastTurnTimedOut: Boolean(row.last_turn_timed_out),
+    completionReason: row.completion_reason,
+    concededBy: row.conceded_by,
     state,
     lastResolution: resolutionForMultiplayerPerspective(parseResolution(row), side),
   };
@@ -190,10 +231,12 @@ export async function joinMultiplayerMatch(codeInput: string, name: unknown): Pr
   const token = randomToken();
   const hash = await tokenHash(token);
   const guestName = normalizePlayerName(name, "Crimson Commander");
+  const now = Date.now();
   const result = await database().prepare(`UPDATE multiplayer_matches
-    SET guest_token_hash = ?, guest_name = ?, status = 'planning', updated_at = ?
+    SET guest_token_hash = ?, guest_name = ?, status = 'planning', deadline_at = ?,
+      last_turn_timed_out = 0, completion_reason = NULL, conceded_by = NULL, updated_at = ?
     WHERE code = ? AND status = 'waiting' AND guest_token_hash IS NULL`)
-    .bind(hash, guestName, Date.now(), code)
+    .bind(hash, guestName, now + MULTIPLAYER_TURN_MS, now, code)
     .run();
   if ((result.meta.changes ?? 0) === 0) {
     const existing = await matchRow(code);
@@ -208,31 +251,47 @@ export async function joinMultiplayerMatch(codeInput: string, name: unknown): Pr
 export async function readMultiplayerMatch(codeInput: string, token: string): Promise<MultiplayerView> {
   await ensureMultiplayerSchema();
   const code = normalizeMatchCode(codeInput);
-  const row = await matchRow(code);
+  let row = await matchRow(code);
   if (!row) throw new Error("That multiplayer match no longer exists.");
   const side = await authenticate(row, token);
+  row = await advanceExpiredMatch(row);
   return viewFromRow(row, side);
 }
 
-async function resolveClaimedTurn(row: MatchRow) {
+function storedEnvelope(value: string, state: MatchState, side: MultiplayerSide): StoredOrderEnvelope {
+  const parsed = JSON.parse(value) as TurnOrders | StoredOrderEnvelope;
+  return "orders" in parsed && "controls" in parsed
+    ? parsed
+    : {
+        orders: parsed as TurnOrders,
+        controls: multiplayerControlsForSide(state, side),
+      };
+}
+
+async function resolveClaimedTurn(row: MatchRow, timedOut = false) {
   const db = database();
   const orderRows = await db.prepare(`SELECT side, orders_json FROM multiplayer_orders
     WHERE match_code = ? AND turn = ? ORDER BY side`)
     .bind(row.code, row.turn)
     .all<{ side: MultiplayerSide; orders_json: string }>();
   const currentState = parseState(row);
-  const bySide = new Map(orderRows.results.map((entry) => {
-    const parsed = JSON.parse(entry.orders_json) as TurnOrders | StoredOrderEnvelope;
-    const envelope: StoredOrderEnvelope = "orders" in parsed && "controls" in parsed
-      ? parsed
-      : {
-          orders: parsed as TurnOrders,
-          controls: multiplayerControlsForSide(currentState, entry.side),
-        };
-    return [entry.side, envelope];
-  }));
-  const hostEnvelope = bySide.get("host");
-  const guestEnvelope = bySide.get("guest");
+  const bySide = new Map(orderRows.results.map((entry) => [
+    entry.side,
+    storedEnvelope(entry.orders_json, currentState, entry.side),
+  ]));
+  const submittedThisTurn = (side: MultiplayerSide) => side === "host"
+    ? row.host_submitted_turn === row.turn
+    : row.guest_submitted_turn === row.turn;
+  const envelopeFor = (side: MultiplayerSide) => submittedThisTurn(side)
+    ? bySide.get(side)
+    : timedOut
+      ? {
+          orders: multiplayerTimeoutOrders(currentState, side),
+          controls: multiplayerControlsForSide(currentState, side),
+        }
+      : undefined;
+  const hostEnvelope = envelopeFor("host");
+  const guestEnvelope = envelopeFor("guest");
   if (!hostEnvelope || !guestEnvelope) {
     await db.prepare("UPDATE multiplayer_matches SET status = 'planning', updated_at = ? WHERE code = ? AND turn = ?")
       .bind(Date.now(), row.code, row.turn)
@@ -246,9 +305,14 @@ async function resolveClaimedTurn(row: MatchRow) {
   });
   const resolved = resolveMultiplayerTurn(controlledState, hostEnvelope.orders, guestEnvelope.orders);
   const nextStatus: MultiplayerMatchStatus = resolved.winner ? "complete" : "planning";
+  const now = Date.now();
+  const nextDeadline = resolved.winner
+    ? null
+    : now + multiplayerTurnDuration(timedOut);
   await db.prepare(`UPDATE multiplayer_matches SET
     status = ?, turn = ?, state_json = ?, resolution_json = ?, winner = ?,
-    host_submitted_turn = NULL, guest_submitted_turn = NULL, updated_at = ?
+    host_submitted_turn = NULL, guest_submitted_turn = NULL, deadline_at = ?,
+    last_turn_timed_out = ?, completion_reason = ?, conceded_by = NULL, updated_at = ?
     WHERE code = ? AND turn = ? AND status = 'resolving'`)
     .bind(
       nextStatus,
@@ -256,11 +320,35 @@ async function resolveClaimedTurn(row: MatchRow) {
       JSON.stringify(resolved.nextState),
       JSON.stringify(resolved.resolution),
       resolved.winner,
-      Date.now(),
+      nextDeadline,
+      timedOut ? 1 : 0,
+      resolved.winner ? "combat" : null,
+      now,
       row.code,
       row.turn,
     )
     .run();
+}
+
+async function advanceExpiredMatch(source: MatchRow): Promise<MatchRow> {
+  let row = source;
+  if (row.status === "planning" && row.deadline_at === null) {
+    const deadline = Date.now() + MULTIPLAYER_TURN_MS;
+    await database().prepare(`UPDATE multiplayer_matches SET deadline_at = ?, updated_at = ?
+      WHERE code = ? AND turn = ? AND status = 'planning' AND deadline_at IS NULL`)
+      .bind(deadline, Date.now(), row.code, row.turn)
+      .run();
+    row = await matchRow(row.code) ?? row;
+  }
+  if (row.status !== "planning" || row.deadline_at === null || row.deadline_at > Date.now()) return row;
+  const claim = await database().prepare(`UPDATE multiplayer_matches SET status = 'resolving', updated_at = ?
+    WHERE code = ? AND turn = ? AND status = 'planning' AND deadline_at <= ?`)
+    .bind(Date.now(), row.code, row.turn, Date.now())
+    .run();
+  if ((claim.meta.changes ?? 0) > 0) {
+    await resolveClaimedTurn({ ...row, status: "resolving" }, true);
+  }
+  return await matchRow(row.code) ?? row;
 }
 
 export async function submitMultiplayerOrders(
@@ -272,9 +360,10 @@ export async function submitMultiplayerOrders(
 ): Promise<MultiplayerView> {
   await ensureMultiplayerSchema();
   const code = normalizeMatchCode(codeInput);
-  const row = await matchRow(code);
+  let row = await matchRow(code);
   if (!row) throw new Error("That multiplayer match no longer exists.");
   const side = await authenticate(row, token);
+  row = await advanceExpiredMatch(row);
   if (row.status === "waiting") throw new Error("The second commander has not joined yet.");
   if (row.status === "complete") return viewFromRow(row, side);
   if (row.status !== "planning" || turn !== row.turn) throw new Error("The match has already advanced beyond those orders.");
@@ -283,15 +372,20 @@ export async function submitMultiplayerOrders(
   const controls = validateMultiplayerControls(state, side, submittedControls);
   const submittedColumn = side === "host" ? "host_submitted_turn" : "guest_submitted_turn";
   const now = Date.now();
-  await database().batch([
+  const batchResults = await database().batch([
     database().prepare(`INSERT INTO multiplayer_orders (match_code, turn, side, orders_json, created_at)
       VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(match_code, turn, side) DO UPDATE SET orders_json = excluded.orders_json, created_at = excluded.created_at`)
       .bind(code, row.turn, side, JSON.stringify({ orders, controls } satisfies StoredOrderEnvelope), now),
     database().prepare(`UPDATE multiplayer_matches SET ${submittedColumn} = ?, updated_at = ?
-      WHERE code = ? AND turn = ? AND status = 'planning'`)
-      .bind(row.turn, now, code, row.turn),
+      WHERE code = ? AND turn = ? AND status = 'planning' AND (deadline_at IS NULL OR deadline_at > ?)`)
+      .bind(row.turn, now, code, row.turn, now),
   ]);
+  if ((batchResults[1]?.meta.changes ?? 0) === 0) {
+    const advanced = await matchRow(code);
+    if (advanced) await advanceExpiredMatch(advanced);
+    throw new Error("The turn deadline passed before those orders arrived.");
+  }
 
   const ready = await matchRow(code);
   if (!ready) throw new Error("The match became unavailable.");
@@ -305,6 +399,26 @@ export async function submitMultiplayerOrders(
     }
   }
 
+  const updated = await matchRow(code);
+  if (!updated) throw new Error("The match became unavailable.");
+  return viewFromRow(updated, side);
+}
+
+export async function concedeMultiplayerMatch(codeInput: string, token: string): Promise<MultiplayerView> {
+  await ensureMultiplayerSchema();
+  const code = normalizeMatchCode(codeInput);
+  const row = await matchRow(code);
+  if (!row) throw new Error("That multiplayer match no longer exists.");
+  const side = await authenticate(row, token);
+  if (row.status === "waiting") throw new Error("The match has not started yet.");
+  if (row.status !== "complete") {
+    const winner = multiplayerWinnerAfterConcession(side);
+    await database().prepare(`UPDATE multiplayer_matches SET status = 'complete', winner = ?,
+      deadline_at = NULL, completion_reason = 'concession', conceded_by = ?, updated_at = ?
+      WHERE code = ? AND status != 'complete'`)
+      .bind(winner, side, Date.now(), code)
+      .run();
+  }
   const updated = await matchRow(code);
   if (!updated) throw new Error("The match became unavailable.");
   return viewFromRow(updated, side);

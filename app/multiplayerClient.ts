@@ -50,6 +50,14 @@ export async function submitRemoteOrders(
   });
 }
 
+export async function concedeRemoteMatch(session: MultiplayerSession) {
+  return jsonRequest<MultiplayerView>(`/api/multiplayer/matches/${encodeURIComponent(session.code)}/concede`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${session.token}` },
+    body: JSON.stringify({}),
+  });
+}
+
 export function saveMultiplayerSession(session: MultiplayerSession) {
   window.localStorage.setItem(SESSION_KEY, JSON.stringify(session));
 }

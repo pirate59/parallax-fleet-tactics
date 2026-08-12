@@ -1,5 +1,11 @@
 import { FLEET_BATTLEFIELD, FLEET_TEAM_START_X } from "./battlefieldConfig.ts";
-import { AI_DOCTRINE_ORDER, defaultAiMissionFor, type AiDoctrine } from "./aiCommandEngine.ts";
+import {
+  AI_DOCTRINE_ORDER,
+  carrierWingTargetAssignments,
+  defaultAiMissionFor,
+  generateAiCommandDecision,
+  type AiDoctrine,
+} from "./aiCommandEngine.ts";
 import { AI_MISSION_ORDER, type AiMissionOrder } from "./aiTactics.ts";
 import type { Team, Vec3 } from "./combatEngine.ts";
 import type { ShipController } from "./fleetControl.ts";
@@ -23,10 +29,13 @@ import { createShipFromArchetype } from "./shipFactory.ts";
 export const MULTIPLAYER_CODE_LENGTH = 6;
 export const MULTIPLAYER_POLL_MS = 1200;
 export const MULTIPLAYER_FLEET_POINTS = 10;
+export const MULTIPLAYER_TURN_MS = 120_000;
+export const MULTIPLAYER_TIMEOUT_TURN_MS = 30_000;
 
 export type MultiplayerSide = "host" | "guest";
 export type MultiplayerMatchStatus = "waiting" | "planning" | "resolving" | "complete";
 export type MultiplayerWinner = MultiplayerSide | "draw" | null;
+export type MultiplayerCompletionReason = "combat" | "concession" | null;
 
 export type MultiplayerShipControl = {
   controller: ShipController;
@@ -47,6 +56,10 @@ export type MultiplayerView = {
   ownSubmitted: boolean;
   opponentSubmitted: boolean;
   winner: MultiplayerWinner;
+  deadlineAt: number | null;
+  lastTurnTimedOut: boolean;
+  completionReason: MultiplayerCompletionReason;
+  concededBy: MultiplayerSide | null;
   state: MatchState;
   lastResolution: TurnResolution | null;
 };
@@ -109,6 +122,14 @@ export function multiplayerFleetPointTotal() {
 
 export function canonicalTeamForSide(side: MultiplayerSide): "player" | "enemy" {
   return side === "host" ? "player" : "enemy";
+}
+
+export function multiplayerTurnDuration(previousTurnTimedOut: boolean) {
+  return previousTurnTimedOut ? MULTIPLAYER_TIMEOUT_TURN_MS : MULTIPLAYER_TURN_MS;
+}
+
+export function multiplayerWinnerAfterConcession(side: MultiplayerSide): MultiplayerSide {
+  return side === "host" ? "guest" : "host";
 }
 
 export function sideForCanonicalTeam(team: Team): MultiplayerSide | null {
@@ -232,6 +253,36 @@ export function applyMultiplayerControls(
       return control ? { ...ship, ...control } : ship;
     }),
   };
+}
+
+/** Generates deterministic AI orders when a commander's turn deadline expires. */
+export function multiplayerTimeoutOrders(state: MatchState, side: MultiplayerSide): TurnOrders {
+  const ownTeam = canonicalTeamForSide(side);
+  const orders: TurnOrders = {};
+  const wingTargets = carrierWingTargetAssignments(state.ships);
+  state.ships
+    .filter((ship) => ship.team === ownTeam && ship.hull > 0)
+    .forEach((ship) => {
+      const reservedDestinations = Object.fromEntries(
+        Object.entries(orders).map(([id, order]) => [id, order.destination]),
+      );
+      const decision = generateAiCommandDecision(
+        ship,
+        state.ships,
+        ship.aiDoctrine ?? "standard",
+        FLEET_BATTLEFIELD.halfLength,
+        FLEET_BATTLEFIELD.halfHeight,
+        {
+          forcedTargetId: ship.spawnedByShipId && defaultAiMissionFor(ship) === "assault"
+            ? wingTargets[ship.id]
+            : undefined,
+          reservedDestinations,
+          battlefieldWidthHalf: FLEET_BATTLEFIELD.halfWidth,
+        },
+      );
+      if (decision) orders[ship.id] = decision.order;
+    });
+  return orders;
 }
 
 /** Validates one side's complete hidden order envelope before it reaches D1. */
