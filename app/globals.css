@@ -3824,8 +3824,8 @@ input[type="range"]::-moz-range-thumb {
   z-index: 7;
   top: 50px;
   right: 18px;
-  display: flex;
-  align-items: stretch;
+  width: min(880px, calc(100% - 36px));
+  display: grid;
   border: 1px solid rgba(105, 223, 255, 0.2);
   background: rgba(4, 12, 20, 0.88);
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
@@ -3833,24 +3833,96 @@ input[type="range"]::-moz-range-thumb {
   pointer-events: none;
 }
 
-.multiplayer-battle-link > * { min-height: 38px; display: flex; align-items: center; padding: 0 10px; }
-.multiplayer-battle-link > * + * { border-left: 1px solid rgba(105, 223, 255, 0.13); }
-.multiplayer-battle-link > div { flex-direction: column; align-items: flex-start; justify-content: center; }
+.multiplayer-battle-link[data-state="waiting"],
+.multiplayer-battle-link[data-state="rival-ready"] { border-color: rgba(97, 233, 189, 0.36); }
+.multiplayer-battle-link[data-state="disconnected"],
+.multiplayer-battle-link[data-state="link-lost"] { border-color: rgba(255, 109, 121, 0.48); }
+.multiplayer-battle-link[data-state="resolving"] { border-color: rgba(255, 184, 90, 0.45); }
 .multiplayer-battle-link small { color: #648293; font: var(--type-micro) ui-monospace, monospace; letter-spacing: 0.12em; }
 .multiplayer-battle-link strong { color: var(--cyan-strong); font: 500 var(--type-control) ui-monospace, monospace; letter-spacing: 0.16em; }
-.multiplayer-battle-link .multiplayer-turn-timer { min-width: 96px; align-items: center; }
-.multiplayer-battle-link .multiplayer-turn-timer strong { color: #dff7fc; font-size: var(--type-small); letter-spacing: 0.12em; }
-.multiplayer-battle-link .multiplayer-turn-timer.urgent strong { color: var(--amber); text-shadow: 0 0 12px rgba(255, 184, 90, 0.4); animation: pulse 0.8s infinite alternate; }
-.multiplayer-battle-link > span { gap: 6px; color: #7e98a6; font: var(--type-meta) ui-monospace, monospace; letter-spacing: 0.08em; }
-.multiplayer-battle-link > span i { width: 6px; height: 6px; border-radius: 50%; background: #526f7e; }
-.multiplayer-battle-link > span.locked { color: #a9e8d6; }
-.multiplayer-battle-link > span.locked i { background: var(--mint); box-shadow: 0 0 9px rgba(97, 233, 189, 0.55); }
-.multiplayer-battle-link > span.plotting i { animation: pulse 1.3s infinite alternate; }
+
+.multiplayer-command-summary {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 12px;
+}
+
+.multiplayer-command-summary > span { display: flex; flex-direction: column; gap: 2px; }
+.multiplayer-command-summary > span strong { font-size: var(--type-small); }
+.multiplayer-link-meta { display: flex; align-items: stretch; align-self: stretch; }
+.multiplayer-link-meta > span {
+  min-width: 92px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border-left: 1px solid rgba(105, 223, 255, 0.13);
+  color: #7997a7;
+  font: var(--type-micro) ui-monospace, monospace;
+  letter-spacing: 0.08em;
+}
+.multiplayer-link-meta > span:first-child { flex-direction: column; gap: 0; }
+.multiplayer-link-meta b { color: #dff7fc; font: 500 var(--type-small) ui-monospace, monospace; letter-spacing: 0.12em; }
+.multiplayer-link-meta .multiplayer-presence { min-width: 128px; }
+.multiplayer-presence i { width: 6px; height: 6px; border-radius: 50%; background: #688493; }
+.multiplayer-presence.connected { color: #a9e8d6; }
+.multiplayer-presence.connected i { background: var(--mint); box-shadow: 0 0 9px rgba(97, 233, 189, 0.55); }
+.multiplayer-presence.disconnected { color: #ff9ca5; }
+.multiplayer-presence.disconnected i { background: #ff6d79; box-shadow: 0 0 9px rgba(255, 109, 121, 0.5); }
+.multiplayer-presence.checking i { animation: pulse 1.3s infinite alternate; }
+.multiplayer-link-meta .multiplayer-turn-timer { min-width: 106px; flex-direction: column; gap: 0; }
+.multiplayer-turn-timer.urgent b { color: var(--amber); text-shadow: 0 0 12px rgba(255, 184, 90, 0.4); animation: pulse 0.8s infinite alternate; }
+
+.multiplayer-readiness-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid rgba(105, 223, 255, 0.13);
+}
+
+.multiplayer-readiness-fleet {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+}
+.multiplayer-readiness-fleet + .multiplayer-readiness-fleet { border-left: 1px solid rgba(105, 223, 255, 0.13); }
+.multiplayer-readiness-fleet > span { color: #6f8c9b; font: var(--type-micro) ui-monospace, monospace; letter-spacing: 0.1em; white-space: nowrap; }
+.multiplayer-readiness-fleet ol { min-width: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 0; list-style: none; }
+.multiplayer-readiness-fleet li {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 5px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 4px;
+  padding: 3px 4px;
+  border: 1px solid rgba(107, 148, 166, 0.16);
+  background: rgba(7, 20, 29, 0.68);
+  font-family: ui-monospace, monospace;
+}
+.multiplayer-readiness-fleet li i { grid-row: 1 / 3; width: 5px; height: 5px; border-radius: 50%; background: #607987; }
+.multiplayer-readiness-fleet li b { min-width: 0; overflow: hidden; color: #b9cfda; font-size: 9px; font-weight: 500; letter-spacing: 0.05em; text-overflow: ellipsis; }
+.multiplayer-readiness-fleet li small { min-width: 0; overflow: hidden; color: #647f8e; font-size: 7px; letter-spacing: 0.04em; text-overflow: ellipsis; white-space: nowrap; }
+.multiplayer-readiness-fleet li.ready,
+.multiplayer-readiness-fleet li.ai-ready,
+.multiplayer-readiness-fleet li.locked { border-color: rgba(97, 233, 189, 0.28); }
+.multiplayer-readiness-fleet li.ready i,
+.multiplayer-readiness-fleet li.ai-ready i,
+.multiplayer-readiness-fleet li.locked i { background: var(--mint); box-shadow: 0 0 7px rgba(97, 233, 189, 0.45); }
+.multiplayer-readiness-fleet li.lost { opacity: 0.46; }
+.multiplayer-readiness-fleet li.lost i { background: #ff6d79; }
+.multiplayer-readiness-fleet.rival li.hidden small { color: #485f6c; }
 
 .multiplayer-battle-error {
   position: absolute;
   z-index: 9;
-  top: 98px;
+  top: 148px;
   right: 18px;
   max-width: 390px;
   margin: 0;
@@ -3861,7 +3933,7 @@ input[type="range"]::-moz-range-thumb {
   font: var(--type-meta) ui-monospace, monospace;
 }
 
-.game-shell[data-mode="multiplayer"] .tactical-telemetry { top: 98px; }
+.game-shell[data-mode="multiplayer"] .tactical-telemetry { top: 148px; }
 
 .multiplayer-end .end-state-secondary {
   margin-top: 8px;
@@ -4840,16 +4912,22 @@ input[type="range"]::-moz-range-thumb {
     top: 42px;
     right: 8px;
     left: 8px;
-    justify-content: flex-end;
+    width: auto;
   }
 
-  .multiplayer-battle-link > div:first-child { margin-right: auto; }
-  .multiplayer-battle-link > * { min-height: 36px; padding: 0 7px; }
-  .multiplayer-battle-link > span { font-size: var(--type-micro); }
-  .multiplayer-battle-error { top: 82px; right: 8px; left: 8px; max-width: none; }
+  .multiplayer-command-summary { min-height: 38px; gap: 6px; padding: 4px 7px; }
+  .multiplayer-command-summary > span strong { font-size: var(--type-meta); letter-spacing: 0.09em; }
+  .multiplayer-link-meta > span { min-width: 0; padding: 0 6px; }
+  .multiplayer-link-meta > span:first-child { display: none; }
+  .multiplayer-link-meta .multiplayer-presence { min-width: 96px; font-size: 8px; }
+  .multiplayer-link-meta .multiplayer-turn-timer { min-width: 72px; }
+  .multiplayer-readiness-grid { grid-template-columns: 1fr; }
+  .multiplayer-readiness-fleet { min-height: 34px; padding: 4px 7px; }
+  .multiplayer-readiness-fleet + .multiplayer-readiness-fleet { border-top: 1px solid rgba(105, 223, 255, 0.13); border-left: 0; }
+  .multiplayer-battle-error { top: 160px; right: 8px; left: 8px; max-width: none; }
 
   .game-shell[data-mode="multiplayer"] .tactical-telemetry,
-  .game-shell[data-mode="multiplayer"][data-story-phase="combat"] .tactical-telemetry { top: 86px; }
+  .game-shell[data-mode="multiplayer"][data-story-phase="combat"] .tactical-telemetry { top: 164px; }
 }
 
 @media (max-width: 420px) {
@@ -4898,7 +4976,9 @@ input[type="range"]::-moz-range-thumb {
   }
 
   .multiplayer-header .brand-lockup > div { display: none; }
-  .multiplayer-battle-link > div:first-child { display: none; }
+  .multiplayer-readiness-fleet li small { display: none; }
+  .multiplayer-readiness-fleet li { grid-template-rows: auto; padding-block: 5px; }
+  .multiplayer-readiness-fleet li i { grid-row: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

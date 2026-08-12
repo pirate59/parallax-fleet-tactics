@@ -12,6 +12,8 @@ export const multiplayerMatches = sqliteTable("multiplayer_matches", {
   guestName: text("guest_name"),
   hostSubmittedTurn: integer("host_submitted_turn"),
   guestSubmittedTurn: integer("guest_submitted_turn"),
+  hostLastSeenAt: integer("host_last_seen_at"),
+  guestLastSeenAt: integer("guest_last_seen_at"),
   winner: text("winner"),
   deadlineAt: integer("deadline_at"),
   lastTurnTimedOut: integer("last_turn_timed_out").notNull().default(0),

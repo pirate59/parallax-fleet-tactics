@@ -111,6 +111,7 @@ import {
   MULTIPLAYER_FLEET_SIZE,
   MULTIPLAYER_LARGE_HULLS,
   MULTIPLAYER_POLL_MS,
+  multiplayerOpponentPresence,
   type MultiplayerControlSettings,
   type MultiplayerCruiserHull,
   type MultiplayerFleetSelection,
@@ -2533,6 +2534,53 @@ function FishtankFleetBars({ ships, highlightedIds }: { ships: Ship[]; highlight
   );
 }
 
+function MultiplayerFleetReadiness({
+  label,
+  ships,
+  ownFleet,
+  submitted,
+  staged,
+}: {
+  label: string;
+  ships: Ship[];
+  ownFleet: boolean;
+  submitted: boolean;
+  staged: ReadonlySet<string>;
+}) {
+  return (
+    <div className={`multiplayer-readiness-fleet ${ownFleet ? "own" : "rival"}`}>
+      <span>{label}</span>
+      <ol>
+        {ships.map((ship) => {
+          const state = ship.hull <= 0
+            ? "lost"
+            : submitted
+              ? "locked"
+              : ownFleet
+                ? ship.controller === "ai"
+                  ? "ai-ready"
+                  : staged.has(ship.id)
+                    ? "ready"
+                    : "plotting"
+                : "hidden";
+          const stateLabel = state === "ai-ready"
+            ? "AI ready"
+            : state === "hidden"
+              ? "orders private"
+              : state;
+          return (
+            <li key={ship.id} className={state} title={`${ship.name}: ${stateLabel}`}>
+              <i aria-hidden="true" />
+              <b>{ship.callsign}</b>
+              <small>{stateLabel}</small>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
 function SliderControl({
   label,
   value,
@@ -4030,6 +4078,30 @@ export function SpaceGame() {
     ? "--:--"
     : `${String(Math.floor(multiplayerRemainingSeconds / 60)).padStart(2, "0")}:${String(multiplayerRemainingSeconds % 60).padStart(2, "0")}`;
   const multiplayerClockUrgent = multiplayerRemainingSeconds !== null && multiplayerRemainingSeconds <= 30;
+  const multiplayerPresence = multiplayerView
+    ? multiplayerOpponentPresence(multiplayerView.opponentJoined, multiplayerView.opponentLastSeenAt, multiplayerNow)
+    : "checking";
+  const multiplayerOwnShips = ships.filter((ship) => ship.team !== "enemy" && !ship.spawnedByShipId);
+  const multiplayerRivalShips = ships.filter((ship) => ship.team === "enemy" && !ship.spawnedByShipId);
+  const multiplayerCommandState = (() => {
+    if (!multiplayerView) return { key: "checking", eyebrow: "COMMAND LINK", title: "CHECKING MATCH STATE" };
+    if (multiplayerView.status === "complete") {
+      const title = multiplayerView.state.phase === "victory" ? "BATTLE WON" : multiplayerView.state.phase === "defeat" ? "BATTLE LOST" : "BATTLE DRAWN";
+      return { key: "complete", eyebrow: "MATCH COMPLETE", title };
+    }
+    if (phase === "executing" || multiplayerView.status === "resolving") {
+      return { key: "resolving", eyebrow: "ORDERS RELEASED", title: "RESOLVING TURN" };
+    }
+    if (multiplayerError) return { key: "link-lost", eyebrow: "COMMAND LINK INTERRUPTED", title: "RECONNECTING TO BATTLE" };
+    if (multiplayerPresence === "disconnected") return { key: "disconnected", eyebrow: "RIVAL SIGNAL LOST", title: "OPPONENT DISCONNECTED" };
+    if (multiplayerView.ownSubmitted && !multiplayerView.opponentSubmitted) {
+      return { key: "waiting", eyebrow: "YOUR ORDERS SUBMITTED", title: "WAITING FOR OPPONENT" };
+    }
+    if (!multiplayerView.ownSubmitted && multiplayerView.opponentSubmitted) {
+      return { key: "rival-ready", eyebrow: "RIVAL ORDERS SUBMITTED", title: "COMPLETE YOUR ORDERS" };
+    }
+    return { key: "planning", eyebrow: "PLANNING PHASE", title: "ISSUE FLEET ORDERS" };
+  })();
 
   return (
     <main className="game-shell" data-mode={activeMode} data-story-phase={activeMode === "story" ? "combat" : undefined} data-gate={activeMode === "story" ? storyRun?.gate : undefined} data-total-gates={activeMode === "story" ? STORY_GATE_COUNT : undefined}>
@@ -4054,7 +4126,7 @@ export function SpaceGame() {
           ) : activeMode === "fishtank" ? (
             <><small>AUTONOMOUS TEST CHAMBER · MATCH {String(fishtankMatch).padStart(2, "0")}</small><span>AZURE AI {livingFishtankAllies.length} · {livingFishtankEnemies.length} CRIMSON AI</span></>
           ) : activeMode === "multiplayer" && multiplayerView ? (
-            <><small>CODE-LINKED DUEL · MATCH {multiplayerView.code}</small><span>{multiplayerView.side === "host" ? multiplayerView.hostName : multiplayerView.guestName} · {multiplayerView.opponentSubmitted ? "RIVAL ORDERS LOCKED" : "RIVAL PLOTTING"}</span></>
+            <><small>CODE-LINKED DUEL · MATCH {multiplayerView.code}</small><span>{multiplayerView.side === "host" ? multiplayerView.hostName : multiplayerView.guestName} · {multiplayerCommandState.title}</span></>
           ) : (
             <><small>{activeModeInfo.category.toUpperCase()} · KESTREL REACH</small><span>{activeModeInfo.label} · Prototype encounter</span></>
           )}
@@ -4204,14 +4276,22 @@ export function SpaceGame() {
           </div>
 
           {activeMode === "multiplayer" && multiplayerView && (
-            <section className="multiplayer-battle-link" aria-label="Multiplayer command link" aria-live="polite">
-              <div><small>MATCH CODE</small><strong>{multiplayerView.code}</strong></div>
-              <div className={`multiplayer-turn-timer ${multiplayerClockUrgent ? "urgent" : ""}`}>
-                <small>{multiplayerView.lastTurnTimedOut ? "30 SEC DEADLINE" : "TURN TIMER"}</small>
-                <strong>{multiplayerView.status === "complete" ? "COMPLETE" : multiplayerClock}</strong>
+            <section className="multiplayer-battle-link" data-state={multiplayerCommandState.key} aria-label="Multiplayer command status" aria-live="polite">
+              <div className="multiplayer-command-summary">
+                <span><small>{multiplayerCommandState.eyebrow}</small><strong>{multiplayerCommandState.title}</strong></span>
+                <div className="multiplayer-link-meta">
+                  <span><small>MATCH</small><b>{multiplayerView.code}</b></span>
+                  <span className={`multiplayer-presence ${multiplayerPresence}`}><i />{multiplayerPresence === "connected" ? "RIVAL ONLINE" : multiplayerPresence === "disconnected" ? "RIVAL SIGNAL LOST" : "CHECKING SIGNAL"}</span>
+                  <span className={`multiplayer-turn-timer ${multiplayerClockUrgent ? "urgent" : ""}`}>
+                    <small>{multiplayerView.lastTurnTimedOut ? "30 SEC DEADLINE" : "TURN TIMER"}</small>
+                    <b>{multiplayerView.status === "complete" ? "COMPLETE" : multiplayerClock}</b>
+                  </span>
+                </div>
               </div>
-              <span className={multiplayerView.ownSubmitted ? "locked" : "plotting"}><i />YOU · {multiplayerView.ownSubmitted ? "LOCKED" : "PLOTTING"}</span>
-              <span className={multiplayerView.opponentSubmitted ? "locked" : "plotting"}><i />RIVAL · {multiplayerView.opponentSubmitted ? "LOCKED" : "PLOTTING"}</span>
+              <div className="multiplayer-readiness-grid">
+                <MultiplayerFleetReadiness label="YOUR FLEET" ships={multiplayerOwnShips} ownFleet submitted={multiplayerView.ownSubmitted} staged={staged} />
+                <MultiplayerFleetReadiness label="RIVAL FLEET" ships={multiplayerRivalShips} ownFleet={false} submitted={multiplayerView.opponentSubmitted} staged={staged} />
+              </div>
             </section>
           )}
 

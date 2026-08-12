@@ -36,6 +36,8 @@ type MatchRow = {
   guest_name: string | null;
   host_submitted_turn: number | null;
   guest_submitted_turn: number | null;
+  host_last_seen_at: number | null;
+  guest_last_seen_at: number | null;
   winner: MultiplayerWinner;
   deadline_at: number | null;
   last_turn_timed_out: number;
@@ -62,6 +64,8 @@ const MATCH_TABLE_SQL = `CREATE TABLE IF NOT EXISTS multiplayer_matches (
   guest_name TEXT,
   host_submitted_turn INTEGER,
   guest_submitted_turn INTEGER,
+  host_last_seen_at INTEGER,
+  guest_last_seen_at INTEGER,
   winner TEXT,
   deadline_at INTEGER,
   last_turn_timed_out INTEGER NOT NULL DEFAULT 0,
@@ -110,6 +114,8 @@ export async function ensureMultiplayerSchema() {
         ["last_turn_timed_out", "ALTER TABLE multiplayer_matches ADD COLUMN last_turn_timed_out INTEGER NOT NULL DEFAULT 0"],
         ["completion_reason", "ALTER TABLE multiplayer_matches ADD COLUMN completion_reason TEXT"],
         ["conceded_by", "ALTER TABLE multiplayer_matches ADD COLUMN conceded_by TEXT"],
+        ["host_last_seen_at", "ALTER TABLE multiplayer_matches ADD COLUMN host_last_seen_at INTEGER"],
+        ["guest_last_seen_at", "ALTER TABLE multiplayer_matches ADD COLUMN guest_last_seen_at INTEGER"],
       ] as const;
       const missing = additions
         .filter(([name]) => !columns.has(name))
@@ -172,6 +178,10 @@ async function authenticate(row: MatchRow, token: string): Promise<MultiplayerSi
   throw new Error("This device is not authorized for the match.");
 }
 
+function lastSeenColumnFor(side: MultiplayerSide) {
+  return side === "host" ? "host_last_seen_at" : "guest_last_seen_at";
+}
+
 function viewFromRow(row: MatchRow, side: MultiplayerSide): MultiplayerView {
   const ownSubmitted = side === "host" ? row.host_submitted_turn === row.turn : row.guest_submitted_turn === row.turn;
   const opponentSubmitted = side === "host" ? row.guest_submitted_turn === row.turn : row.host_submitted_turn === row.turn;
@@ -188,6 +198,7 @@ function viewFromRow(row: MatchRow, side: MultiplayerSide): MultiplayerView {
     hostName: row.host_name,
     guestName: row.guest_name,
     opponentJoined: Boolean(row.guest_token_hash),
+    opponentLastSeenAt: side === "host" ? row.guest_last_seen_at : row.host_last_seen_at,
     ownSubmitted,
     opponentSubmitted,
     winner: row.winner,
@@ -214,9 +225,10 @@ export async function createMultiplayerMatch(name: unknown, fleetInput: unknown)
     const state = createMultiplayerMatchState(code, hostFleet);
     const result = await db.prepare(`INSERT OR IGNORE INTO multiplayer_matches (
       code, status, turn, state_json, resolution_json, host_token_hash, guest_token_hash,
-      host_name, guest_name, host_submitted_turn, guest_submitted_turn, winner, created_at, updated_at
-    ) VALUES (?, 'waiting', 1, ?, NULL, ?, NULL, ?, NULL, NULL, NULL, NULL, ?, ?)`)
-      .bind(code, JSON.stringify(state), hash, hostName, now, now)
+      host_name, guest_name, host_submitted_turn, guest_submitted_turn, host_last_seen_at,
+      guest_last_seen_at, winner, created_at, updated_at
+    ) VALUES (?, 'waiting', 1, ?, NULL, ?, NULL, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?)`)
+      .bind(code, JSON.stringify(state), hash, hostName, now, now, now)
       .run();
     if ((result.meta.changes ?? 0) > 0) {
       const row = await matchRow(code);
@@ -240,10 +252,10 @@ export async function joinMultiplayerMatch(codeInput: string, name: unknown, fle
   if (!existing) throw new Error("No match was found for that code.");
   const nextState = replaceMultiplayerSideFleet(parseState(existing), "guest", guestFleet);
   const result = await database().prepare(`UPDATE multiplayer_matches
-    SET guest_token_hash = ?, guest_name = ?, state_json = ?, status = 'planning', deadline_at = ?,
+    SET guest_token_hash = ?, guest_name = ?, state_json = ?, status = 'planning', deadline_at = ?, guest_last_seen_at = ?,
       last_turn_timed_out = 0, completion_reason = NULL, conceded_by = NULL, updated_at = ?
     WHERE code = ? AND status = 'waiting' AND guest_token_hash IS NULL`)
-    .bind(hash, guestName, JSON.stringify(nextState), now + MULTIPLAYER_TURN_MS, now, code)
+    .bind(hash, guestName, JSON.stringify(nextState), now + MULTIPLAYER_TURN_MS, now, now, code)
     .run();
   if ((result.meta.changes ?? 0) === 0) {
     throw new Error("That match already has two commanders or is no longer joinable.");
@@ -259,6 +271,10 @@ export async function readMultiplayerMatch(codeInput: string, token: string): Pr
   let row = await matchRow(code);
   if (!row) throw new Error("That multiplayer match no longer exists.");
   const side = await authenticate(row, token);
+  await database().prepare(`UPDATE multiplayer_matches SET ${lastSeenColumnFor(side)} = ? WHERE code = ?`)
+    .bind(Date.now(), code)
+    .run();
+  row = await matchRow(code) ?? row;
   row = await advanceExpiredMatch(row);
   return viewFromRow(row, side);
 }
@@ -376,15 +392,16 @@ export async function submitMultiplayerOrders(
   const orders = validateMultiplayerOrders(state, side, submitted);
   const controls = validateMultiplayerControls(state, side, submittedControls);
   const submittedColumn = side === "host" ? "host_submitted_turn" : "guest_submitted_turn";
+  const lastSeenColumn = lastSeenColumnFor(side);
   const now = Date.now();
   const batchResults = await database().batch([
     database().prepare(`INSERT INTO multiplayer_orders (match_code, turn, side, orders_json, created_at)
       VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(match_code, turn, side) DO UPDATE SET orders_json = excluded.orders_json, created_at = excluded.created_at`)
       .bind(code, row.turn, side, JSON.stringify({ orders, controls } satisfies StoredOrderEnvelope), now),
-    database().prepare(`UPDATE multiplayer_matches SET ${submittedColumn} = ?, updated_at = ?
+    database().prepare(`UPDATE multiplayer_matches SET ${submittedColumn} = ?, ${lastSeenColumn} = ?, updated_at = ?
       WHERE code = ? AND turn = ? AND status = 'planning' AND (deadline_at IS NULL OR deadline_at > ?)`)
-      .bind(row.turn, now, code, row.turn, now),
+      .bind(row.turn, now, now, code, row.turn, now),
   ]);
   if ((batchResults[1]?.meta.changes ?? 0) === 0) {
     const advanced = await matchRow(code);
@@ -419,9 +436,9 @@ export async function concedeMultiplayerMatch(codeInput: string, token: string):
   if (row.status !== "complete") {
     const winner = multiplayerWinnerAfterConcession(side);
     await database().prepare(`UPDATE multiplayer_matches SET status = 'complete', winner = ?,
-      deadline_at = NULL, completion_reason = 'concession', conceded_by = ?, updated_at = ?
+      deadline_at = NULL, completion_reason = 'concession', conceded_by = ?, ${lastSeenColumnFor(side)} = ?, updated_at = ?
       WHERE code = ? AND status != 'complete'`)
-      .bind(winner, side, Date.now(), code)
+      .bind(winner, side, Date.now(), Date.now(), code)
       .run();
   }
   const updated = await matchRow(code);

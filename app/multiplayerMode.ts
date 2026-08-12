@@ -31,11 +31,13 @@ export const MULTIPLAYER_POLL_MS = 1200;
 export const MULTIPLAYER_FLEET_SIZE = 5;
 export const MULTIPLAYER_TURN_MS = 120_000;
 export const MULTIPLAYER_TIMEOUT_TURN_MS = 30_000;
+export const MULTIPLAYER_PRESENCE_GRACE_MS = 30_000;
 
 export type MultiplayerSide = "host" | "guest";
 export type MultiplayerMatchStatus = "waiting" | "planning" | "resolving" | "complete";
 export type MultiplayerWinner = MultiplayerSide | "draw" | null;
 export type MultiplayerCompletionReason = "combat" | "concession" | null;
+export type MultiplayerPresenceState = "connected" | "checking" | "disconnected";
 export type MultiplayerLargeHull = "behemoth" | "carrier";
 export type MultiplayerCruiserHull = "hammerhead" | "archer" | "hulk";
 export type MultiplayerFleetSelection = {
@@ -68,6 +70,7 @@ export type MultiplayerView = {
   hostName: string;
   guestName: string | null;
   opponentJoined: boolean;
+  opponentLastSeenAt: number | null;
   ownSubmitted: boolean;
   opponentSubmitted: boolean;
   winner: MultiplayerWinner;
@@ -184,6 +187,15 @@ export function canonicalTeamForSide(side: MultiplayerSide): "player" | "enemy" 
 
 export function multiplayerTurnDuration(previousTurnTimedOut: boolean) {
   return previousTurnTimedOut ? MULTIPLAYER_TIMEOUT_TURN_MS : MULTIPLAYER_TURN_MS;
+}
+
+export function multiplayerOpponentPresence(
+  opponentJoined: boolean,
+  opponentLastSeenAt: number | null,
+  now: number,
+): MultiplayerPresenceState {
+  if (!opponentJoined || opponentLastSeenAt === null) return "checking";
+  return now - opponentLastSeenAt <= MULTIPLAYER_PRESENCE_GRACE_MS ? "connected" : "disconnected";
 }
 
 export function multiplayerWinnerAfterConcession(side: MultiplayerSide): MultiplayerSide {

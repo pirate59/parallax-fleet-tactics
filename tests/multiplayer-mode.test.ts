@@ -6,7 +6,9 @@ import {
   createMultiplayerMatchState,
   DEFAULT_MULTIPLAYER_FLEET,
   multiplayerControlsForSide,
+  multiplayerOpponentPresence,
   MULTIPLAYER_FLEET_SIZE,
+  MULTIPLAYER_PRESENCE_GRACE_MS,
   multiplayerTimeoutOrders,
   multiplayerTurnDuration,
   multiplayerWinnerAfterConcession,
@@ -141,6 +143,14 @@ test("turn deadlines escalate after a timeout and concessions award the rival", 
   assert.equal(MULTIPLAYER_TIMEOUT_TURN_MS, 30_000);
   assert.equal(multiplayerWinnerAfterConcession("host"), "guest");
   assert.equal(multiplayerWinnerAfterConcession("guest"), "host");
+});
+
+test("multiplayer presence distinguishes a fresh heartbeat from a lost signal", () => {
+  const now = 1_000_000;
+  assert.equal(multiplayerOpponentPresence(false, null, now), "checking");
+  assert.equal(multiplayerOpponentPresence(true, null, now), "checking");
+  assert.equal(multiplayerOpponentPresence(true, now - MULTIPLAYER_PRESENCE_GRACE_MS, now), "connected");
+  assert.equal(multiplayerOpponentPresence(true, now - MULTIPLAYER_PRESENCE_GRACE_MS - 1, now), "disconnected");
 });
 
 test("an expired commander receives a complete legal AI order envelope", () => {

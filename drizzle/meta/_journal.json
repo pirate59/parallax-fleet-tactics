@@ -15,6 +15,13 @@
       "when": 1786511750201,
       "tag": "0001_familiar_toad_men",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786513280210,
+      "tag": "0002_mysterious_james_howlett",
+      "breakpoints": true
     }
   ]
 }
