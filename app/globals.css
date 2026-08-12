@@ -2913,6 +2913,10 @@ input[type="range"]::-moz-range-thumb {
   border: 0;
 }
 
+.mission-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .doctrine-options legend {
   width: 100%;
   margin: 0 0 8px;
@@ -2991,6 +2995,11 @@ input[type="range"]::-moz-range-thumb {
 .doctrine-option[data-doctrine="defensive"] > input:checked + span {
   border-color: rgba(105, 223, 255, 0.5);
   background: rgba(105, 223, 255, 0.09);
+}
+
+.mission-option > input:checked + span {
+  border-color: rgba(174, 139, 255, 0.56);
+  background: rgba(174, 139, 255, 0.09);
 }
 
 .doctrine-option > input:checked + span strong {

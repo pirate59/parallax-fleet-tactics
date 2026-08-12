@@ -1,5 +1,5 @@
 import type { AiDoctrine } from "./aiCommandEngine.ts";
-import type { AiTacticalProfile } from "./aiTactics.ts";
+import type { AiMissionOrder, AiTacticalProfile } from "./aiTactics.ts";
 import type { CombatShotEvent, Shields, Team, Vec3 } from "./combatEngine.ts";
 import type { MovementCollisionEvent } from "./collisionEngine.ts";
 import type { ShipController } from "./fleetControl.ts";
@@ -8,8 +8,8 @@ import type { ShipModelId, ShipModelVariant } from "./shipModels.ts";
 import type { ShipPassiveTrait, ShipTurnEndAbility, WeaponMount } from "./shipCatalog.ts";
 import type { ShipSizeClass } from "./shipSize.ts";
 
-export const GAME_STATE_SCHEMA_VERSION = 1;
-export const GAME_RULES_VERSION = 1;
+export const GAME_STATE_SCHEMA_VERSION = 2;
+export const GAME_RULES_VERSION = 2;
 
 export type GameMode = "story" | "skirmish" | "endless" | "hardcore" | "fishtank";
 export type GamePhase = "planning" | "executing" | "victory" | "defeat";
@@ -23,6 +23,7 @@ export type GameShip = {
   team: Team;
   controller: ShipController;
   aiDoctrine?: AiDoctrine;
+  aiMission?: AiMissionOrder;
   color: string;
   position: Vec3;
   rotation: Vec3;
@@ -94,6 +95,7 @@ export function cloneGameShips(ships: readonly GameShip[]): GameShip[] {
   return ships.map((ship) => {
     const {
       aiDoctrine,
+      aiMission,
       passiveTraits,
       turnEndAbility,
       fighterReserveRemaining,
@@ -112,6 +114,7 @@ export function cloneGameShips(ships: readonly GameShip[]): GameShip[] {
       position: [...ship.position] as Vec3,
       rotation: [...ship.rotation] as Vec3,
       ...(aiDoctrine !== undefined ? { aiDoctrine } : {}),
+      ...(aiMission !== undefined ? { aiMission } : {}),
       ...(passiveTraits !== undefined
         ? { passiveTraits: passiveTraits.map((trait) => ({ ...trait })) }
         : {}),

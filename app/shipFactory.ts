@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { AiDoctrine } from "./aiCommandEngine.ts";
+import type { AiMissionOrder } from "./aiTactics.ts";
 import type { BattlefieldBounds } from "./battlefieldConfig.ts";
 import { FLEET_BATTLEFIELD } from "./battlefieldConfig.ts";
 import { applyCarrierFighterCombatProfile } from "./carrierEngine.ts";
@@ -26,6 +27,7 @@ export type ShipDeployment = {
   team: Team;
   controller: ShipController;
   aiDoctrine?: AiDoctrine;
+  aiMission?: AiMissionOrder;
   position: Vec3;
   rotation: Vec3;
 };
@@ -48,6 +50,7 @@ export function createShipFromArchetype(archetype: ShipArchetype, deployment: Sh
     team: deployment.team,
     controller: deployment.controller,
     ...(deployment.aiDoctrine !== undefined ? { aiDoctrine: deployment.aiDoctrine } : {}),
+    aiMission: deployment.aiMission ?? archetype.aiTactics.defaultMission,
     position: [...deployment.position] as Vec3,
     rotation: [...deployment.rotation] as Vec3,
     maxMove: archetype.maxMove,
@@ -119,6 +122,7 @@ export function createLaunchedFighter(
     ...profiledFighter,
     position: safeLaunchPosition,
     spawnedByShipId: carrier.id,
+    aiMission: "assault",
     passiveTraits: [
       ...(fighter.passiveTraits ?? []),
       { ...CARRIER_FIGHTER_EVASIVE_TRAIT },

@@ -63,10 +63,13 @@ import {
   AI_DOCTRINE_ORDER,
   AI_DOCTRINE_RULES,
   carrierWingTargetAssignments,
+  defaultAiMissionFor,
   generateAiCommandOrder,
   shipConditionScore,
   type AiDoctrine,
 } from "./aiCommandEngine";
+import { AI_MISSION_ORDER, AI_MISSION_RULES, type AiMissionOrder } from "./aiTactics";
+import { assessFleetRisk, threatBandFor } from "./aiThreatEngine";
 import {
   AI_RECRUIT_CONTROL,
   isDirectCommandShip,
@@ -3085,6 +3088,11 @@ export function SpaceGame() {
     setShips((current) => current.map((ship) => ship.id === selectedShip.id ? { ...ship, aiDoctrine: doctrine } : ship));
   }, [selectedShip, phase]);
 
+  const updateAiMission = useCallback((mission: AiMissionOrder) => {
+    if (!selectedShip || selectedShip.controller !== "ai" || selectedShip.team === "enemy" || selectedShip.spawnedByShipId || phase !== "planning") return;
+    setShips((current) => current.map((ship) => ship.id === selectedShip.id ? { ...ship, aiMission: mission } : ship));
+  }, [selectedShip, phase]);
+
   const updateRelativeMovement = useCallback((axis: keyof ShipRelativeMovement, value: number) => {
     if (!selectedShip || !selectedDraft) return;
     const bounds = battlefieldForMode(activeMode);
@@ -3490,7 +3498,10 @@ export function SpaceGame() {
   const selectedFlightRule = FLIGHT_MODE_RULES[selectedFlightMode];
   const selectedAiDoctrine = selectedShip.aiDoctrine ?? "standard";
   const selectedAiRule = AI_DOCTRINE_RULES[selectedAiDoctrine];
+  const selectedAiMission = defaultAiMissionFor(selectedShip);
+  const selectedAiMissionRule = AI_MISSION_RULES[selectedAiMission];
   const selectedAiCondition = shipConditionScore(selectedShip);
+  const selectedAiRisk = assessFleetRisk(selectedShip, ships);
   const selectedIsCarrierFighter = Boolean(selectedShip.spawnedByShipId);
   const translationDisabled = controlsDisabled || selectedFlightMode === "focus-fire";
   const weaponControlDisabled = controlsDisabled || selectedFlightMode !== "normal";
@@ -3619,7 +3630,7 @@ export function SpaceGame() {
                 {selectedShip.controller === "player" ? (
                   <span className="stance-chip" data-stance={selectedFlightMode}>{selectedFlightRule.label} · {selectedFlightRule.shortRule}</span>
                 ) : selectedShip.team !== "enemy" ? (
-                  <span className="stance-chip ai" data-doctrine={selectedAiDoctrine}>AI {selectedAiRule.label} · {selectedAiRule.shortRule}</span>
+                  <span className="stance-chip ai" data-doctrine={selectedAiDoctrine}>AI {selectedAiMissionRule.label} · {selectedAiRule.label}</span>
                 ) : (
                   <span className="stance-chip hostile">HOSTILE AI · DOCTRINE HIDDEN</span>
                 )}
@@ -3656,7 +3667,7 @@ export function SpaceGame() {
                   </div>
                 </>
               ) : selectedShip.team !== "enemy" ? (
-                <div className="target-empty"><strong>AUTONOMOUS TARGETING · {selectedAiRule.label.toUpperCase()}</strong><span>Target, vector, facing, and weapon stance are calculated when the turn is committed.</span></div>
+                <div className="target-empty"><strong>{selectedAiMissionRule.label.toUpperCase()} MISSION · {selectedAiRule.label.toUpperCase()}</strong><span>Threat rank, target, vector, facing, and weapon stance are calculated when the turn is committed.</span></div>
               ) : (
                 <div className="target-empty"><strong>HOSTILE ORDERS HIDDEN</strong><span>Predict its maneuver from range, facing, and exposed shielding.</span></div>
               )}
@@ -3780,7 +3791,7 @@ export function SpaceGame() {
                   onClick={() => ship.hull > 0 && setSelectedShipId(ship.id)}
                 >
                   <span className="ship-index">0{index + 1}</span>
-                  <span><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "DESTROYED" : `${SHIP_SIZE_PROFILES[ship.sizeClass].label.toUpperCase()} · ${ship.controller === "ai" ? `AI ${AI_DOCTRINE_RULES[ship.aiDoctrine ?? "standard"].label.toUpperCase()}` : staged.has(ship.id) ? "ORDER READY" : "DRAFT VECTOR"}`}</small></span>
+                  <span><strong>{ship.name}</strong><small>{ship.hull <= 0 ? "DESTROYED" : `${SHIP_SIZE_PROFILES[ship.sizeClass].label.toUpperCase()} · ${ship.controller === "ai" ? `AI ${AI_MISSION_RULES[defaultAiMissionFor(ship)].label.toUpperCase()} · ${AI_DOCTRINE_RULES[ship.aiDoctrine ?? "standard"].label.toUpperCase()}` : staged.has(ship.id) ? "ORDER READY" : "DRAFT VECTOR"}`}</small></span>
                   <i className={ship.hull > 0 && (ship.controller === "ai" || staged.has(ship.id)) ? "ready" : ""} />
                 </button>
               ))}
@@ -3881,12 +3892,25 @@ export function SpaceGame() {
           ) : selectedShip.controller === "ai" && selectedShip.team !== "enemy" ? (
             <section className="npc-block doctrine-block">
               <span className="eyebrow">AI WINGMATE · AUTONOMOUS COMMAND</span>
-              <h2>{selectedIsCarrierFighter ? "Disposable strike doctrine" : "Set tactical doctrine"}</h2>
+              <h2>{selectedIsCarrierFighter ? "Disposable assault package" : "Set autonomous command"}</h2>
               <p>{selectedIsCarrierFighter
                 ? `${selectedShip.name} is carrier-launched strike craft and will press its attack regardless of damage. Its one-use evasive manoeuvre diverts a collision course but forfeits that turn's attack.`
-                : `You set intent; ${selectedShip.name} weighs its hull role, shielding, weapon range, and incoming threats before choosing its order.`}</p>
+                : `Mission defines the job; doctrine defines acceptable risk. ${selectedShip.name} then weighs individual and fleet threats against its hull, fit, and unique traits.`}</p>
+              <fieldset className="doctrine-options mission-options">
+                <legend>Choose the wingmate&apos;s mission order</legend>
+                {AI_MISSION_ORDER.map((mission) => {
+                  const rule = AI_MISSION_RULES[mission];
+                  const inputId = `mission-${selectedShip.id}-${mission}`;
+                  return (
+                    <label className="doctrine-option mission-option" data-mission={mission} key={mission} htmlFor={inputId} aria-label={`${rule.label}: ${rule.description}`}>
+                      <input id={inputId} type="radio" name={`mission-${selectedShip.id}`} checked={selectedAiMission === mission} disabled={selectedIsCarrierFighter || phase !== "planning" || selectedShip.hull <= 0} aria-label={rule.label} onChange={() => updateAiMission(mission)} />
+                      <span><strong>{rule.label}</strong><small>{rule.shortRule}</small></span>
+                    </label>
+                  );
+                })}
+              </fieldset>
               <fieldset className="doctrine-options">
-                <legend>Choose the wingmate&apos;s standing order</legend>
+                <legend>Choose the wingmate&apos;s risk doctrine</legend>
                 {AI_DOCTRINE_ORDER.map((doctrine) => {
                   const rule = AI_DOCTRINE_RULES[doctrine];
                   const inputId = `doctrine-${selectedShip.id}-${doctrine}`;
@@ -3899,13 +3923,13 @@ export function SpaceGame() {
                 })}
               </fieldset>
               <div className="doctrine-status" data-doctrine={selectedAiDoctrine} role="status" aria-live="polite">
-                <span><strong>{selectedAiRule.label} doctrine</strong><b>{Math.round(selectedAiCondition * 100)}% COMBAT CONDITION</b></span>
-                <p>{selectedAiRule.description}</p>
+                <span><strong>{selectedAiMissionRule.label} · {selectedAiRule.label}</strong><b>{threatBandFor(selectedAiRisk.subjectRisk).toUpperCase()} PERSONAL RISK</b></span>
+                <p>{selectedAiMissionRule.description} {selectedAiRule.description}</p>
                 <small>{selectedIsCarrierFighter
                   ? selectedShip.evasiveManeuverAvailable
                     ? "EVASION READY · AUTO-DODGE FORFEITS ATTACK"
                     : "EVASION SPENT · DISPOSABLE ATTACK RUN"
-                  : "AI READY · HULL-AWARE ORDER CALCULATED ON COMMIT"}</small>
+                  : `AI READY · ${Math.round(selectedAiCondition * 100)}% CONDITION · ${threatBandFor(selectedAiRisk.fleetRisk).toUpperCase()} FLEET RISK`}</small>
               </div>
             </section>
           ) : (

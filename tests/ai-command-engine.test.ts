@@ -473,3 +473,66 @@ test("equal target scores use stable lexical IDs independent of input order", ()
   assert.equal(chooseAiTarget(ally, [ally, beta, alpha], "standard")?.id, alpha.id);
   assert.equal(chooseAiTarget(ally, [alpha, ally, beta], "standard")?.id, alpha.id);
 });
+
+test("role fits provide the expected default mission orders", async () => {
+  const { defaultAiMissionFor } = await import("../app/aiCommandEngine.ts");
+  const fitted = (id: string) => {
+    const archetype = SHIP_ARCHETYPES[id as keyof typeof SHIP_ARCHETYPES];
+    return makeShip(id, {
+      archetypeId: archetype.id,
+      modelId: archetype.modelId,
+      sizeClass: archetype.sizeClass,
+      aiTactics: archetype.aiTactics,
+    });
+  };
+
+  assert.equal(defaultAiMissionFor(fitted("fighter")), "interception");
+  assert.equal(defaultAiMissionFor(fitted("archer")), "bombing");
+  assert.equal(defaultAiMissionFor(fitted("carrier")), "defense");
+  assert.equal(defaultAiMissionFor(fitted("hammerhead")), "assault");
+});
+
+test("mission orders change target priorities independently from doctrine", () => {
+  const ally = makeShip("ally", { aiDoctrine: "standard" });
+  const fighter = makeShip("fighter", {
+    team: "enemy",
+    sizeClass: "shuttle",
+    modelId: "fighter",
+    position: [0, 0, -8],
+    spawnedByShipId: "carrier",
+  });
+  const carrier = makeShip("carrier", {
+    team: "enemy",
+    sizeClass: "large",
+    modelId: "carrier",
+    position: [0, 0, -10],
+    weaponMounts: [],
+    fighterReserveRemaining: 9,
+    turnEndAbility: { kind: "launch-fighter", fighterArchetypeId: "fighter", maxActive: 3, fighterReserve: 9, fighterDamageMultiplier: 1.6, fighterDurabilityMultiplier: 0.55, launchOffsets: [[0, 0, 1]] },
+    aiTactics: { role: "carrier", defaultMission: "defense", preferredRangeRatio: 0.9, facingPriority: "expected-threat", survivalHullRatio: 0.62 },
+  });
+  const fleet = [ally, fighter, carrier];
+
+  assert.equal(chooseAiTarget(ally, fleet, "standard", "interception")?.id, fighter.id);
+  assert.equal(chooseAiTarget(ally, fleet, "standard", "bombing")?.id, carrier.id);
+});
+
+test("critical shared risk overrides aggressive doctrine for a damaged non-fighter", () => {
+  const damaged = makeShip("damaged", {
+    hull: 32,
+    shields: shieldsAt(0),
+    aiDoctrine: "aggressive",
+    aiMission: "assault",
+    aiTactics: { role: "brawler", defaultMission: "defense", preferredRangeRatio: 0.62, facingPriority: "weapon-target", survivalHullRatio: 0.48 },
+  });
+  const enemies = [1, 2, 3].map((index) => makeShip(`enemy-${index}`, {
+    team: "enemy",
+    position: [index * 2, 0, -6],
+    weaponDamage: 38,
+    lastTargetId: damaged.id,
+  }));
+  const order = generateAiCommandOrder(damaged, [damaged, ...enemies], "aggressive");
+
+  assert.equal(order?.mode, "extra-move");
+  assert.equal(order?.fire, false);
+});
