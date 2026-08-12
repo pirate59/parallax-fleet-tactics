@@ -57,6 +57,25 @@ test("continuous movement detects crossing flight paths even when endpoints do n
   assert.equal(result.collisions[0].damageToB, result.collisions[0].shieldDamageToB + result.collisions[0].hullDamageToB);
 });
 
+test("host collision rules can disable damage while preserving physical separation", () => {
+  const shipA = makeShip("a", { position: [-4, 0, 0] });
+  const shipB = makeShip("b", { team: "enemy", position: [4, 0, 0] });
+  const result = resolveMovementCollisions(
+    [shipA, shipB],
+    [at(shipA, [0, 0, 0]), at(shipB, [0, 0, 0])],
+    20,
+    7,
+    20,
+    { damageMultiplier: 0 },
+  );
+
+  assert.equal(result.collisions.length, 1);
+  assert.equal(result.collisions[0].damageToA, 0);
+  assert.equal(result.collisions[0].damageToB, 0);
+  assert.deepEqual(result.hitFaces, {});
+  assert.ok(new THREE.Vector3(...result.ships[0].position).distanceTo(new THREE.Vector3(...result.ships[1].position)) > 0);
+});
+
 test("ships ordered to one endpoint are separated and the lighter hull is displaced farther", () => {
   const large = makeShip("large", {
     modelId: "behemoth",
@@ -109,6 +128,22 @@ test("wrecks remain fixed and undamaged while inflicting only minor contact dama
   assert.equal(resolvedWreck.hull, 0);
   assert.ok(collision.damageToA >= 3 && collision.damageToA <= 10);
   assert.ok(resolvedShip.hull === ship.hull, "minor wreck contact should be absorbed by shields in this fixture");
+});
+
+test("cleared-wreck rules make destroyed hulls non-solid on later turns", () => {
+  const ship = makeShip("live", { position: [-4, 0, 0] });
+  const wreck = makeShip("wreck", { team: "enemy", hull: 0, shields: shieldsAt(0), position: [0, 0, 0] });
+  const result = resolveMovementCollisions(
+    [ship, wreck],
+    [at(ship, [4, 0, 0]), wreck],
+    20,
+    7,
+    20,
+    { wrecksPersist: false },
+  );
+
+  assert.equal(result.collisions.length, 0);
+  assert.equal(result.ships.find((candidate) => candidate.id === ship.id)?.hull, ship.hull);
 });
 
 test("collision-aware rectangular battlefield bounds keep the whole hull inside the grid", () => {

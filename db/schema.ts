@@ -5,6 +5,7 @@ export const multiplayerMatches = sqliteTable("multiplayer_matches", {
   status: text("status").notNull(),
   turn: integer("turn").notNull(),
   stateJson: text("state_json").notNull(),
+  settingsJson: text("settings_json"),
   resolutionJson: text("resolution_json"),
   hostTokenHash: text("host_token_hash").notNull(),
   guestTokenHash: text("guest_token_hash"),

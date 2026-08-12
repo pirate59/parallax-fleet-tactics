@@ -1,4 +1,9 @@
-import { FLEET_BATTLEFIELD, FLEET_TEAM_START_X } from "./battlefieldConfig.ts";
+import {
+  FLEET_BATTLEFIELD,
+  multiplayerBattlefieldFor,
+  type BattlefieldBounds,
+  type MultiplayerMapSize,
+} from "./battlefieldConfig.ts";
 import {
   AI_DOCTRINE_ORDER,
   carrierWingTargetAssignments,
@@ -38,6 +43,17 @@ export type MultiplayerMatchStatus = "waiting" | "planning" | "resolving" | "com
 export type MultiplayerWinner = MultiplayerSide | "draw" | null;
 export type MultiplayerCompletionReason = "combat" | "concession" | null;
 export type MultiplayerPresenceState = "connected" | "checking" | "disconnected";
+export type MultiplayerTurnTimer = 60 | 120 | 180;
+export type MultiplayerImpactRule = "off" | "standard" | "brutal";
+export type MultiplayerWreckRule = "clear" | "persistent";
+export type MultiplayerFleetRule = "custom" | "mirrored";
+export type MultiplayerMatchSettings = {
+  turnTimerSeconds: MultiplayerTurnTimer;
+  mapSize: MultiplayerMapSize;
+  impactRule: MultiplayerImpactRule;
+  wreckRule: MultiplayerWreckRule;
+  fleetRule: MultiplayerFleetRule;
+};
 export type MultiplayerLargeHull = "behemoth" | "carrier";
 export type MultiplayerCruiserHull = "hammerhead" | "archer" | "hulk";
 export type MultiplayerFleetSelection = {
@@ -52,6 +68,14 @@ export const DEFAULT_MULTIPLAYER_FLEET: MultiplayerFleetSelection = {
   large: "behemoth",
   cruisers: ["hammerhead", "archer", "hulk"],
   fighter: "fighter",
+};
+
+export const DEFAULT_MULTIPLAYER_SETTINGS: MultiplayerMatchSettings = {
+  turnTimerSeconds: 120,
+  mapSize: "standard",
+  impactRule: "standard",
+  wreckRule: "persistent",
+  fleetRule: "custom",
 };
 
 export type MultiplayerShipControl = {
@@ -71,6 +95,7 @@ export type MultiplayerView = {
   guestName: string | null;
   opponentJoined: boolean;
   opponentLastSeenAt: number | null;
+  settings: MultiplayerMatchSettings;
   ownSubmitted: boolean;
   opponentSubmitted: boolean;
   winner: MultiplayerWinner;
@@ -88,15 +113,35 @@ export type MultiplayerSession = {
   side: MultiplayerSide;
 };
 
-const LEFT_SLOTS: Vec3[] = [
-  [-FLEET_TEAM_START_X, 0, -11],
-  [-FLEET_TEAM_START_X + 2, -5, -3],
-  [-FLEET_TEAM_START_X - 2, 5, 5],
-  [-FLEET_TEAM_START_X + 1, 1, 12],
-  [-FLEET_TEAM_START_X + 4, -2, 18],
-];
+const sideSlots = (side: MultiplayerSide, bounds: BattlefieldBounds): Vec3[] => {
+  const startX = bounds.length / 6;
+  const left: Vec3[] = [
+    [-startX, 0, -11],
+    [-startX + 2, -5, -3],
+    [-startX - 2, 5, 5],
+    [-startX + 1, 1, 12],
+    [-startX + 4, -2, 18],
+  ];
+  return side === "host" ? left : left.map(([x, y, z]) => [-x, -y, -z]);
+};
 
-const RIGHT_SLOTS: Vec3[] = LEFT_SLOTS.map(([x, y, z]) => [-x, -y, -z]);
+export function validateMultiplayerMatchSettings(value: unknown): MultiplayerMatchSettings {
+  if (value === undefined) return { ...DEFAULT_MULTIPLAYER_SETTINGS };
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Choose valid host match rules.");
+  const source = value as Partial<MultiplayerMatchSettings>;
+  if (source.turnTimerSeconds !== 60 && source.turnTimerSeconds !== 120 && source.turnTimerSeconds !== 180) throw new Error("Choose a valid turn timer.");
+  if (source.mapSize !== "close" && source.mapSize !== "standard" && source.mapSize !== "wide") throw new Error("Choose a valid map size.");
+  if (source.impactRule !== "off" && source.impactRule !== "standard" && source.impactRule !== "brutal") throw new Error("Choose a valid collision rule.");
+  if (source.wreckRule !== "clear" && source.wreckRule !== "persistent") throw new Error("Choose a valid wreck rule.");
+  if (source.fleetRule !== "custom" && source.fleetRule !== "mirrored") throw new Error("Choose a valid fleet rule.");
+  return {
+    turnTimerSeconds: source.turnTimerSeconds,
+    mapSize: source.mapSize,
+    impactRule: source.impactRule,
+    wreckRule: source.wreckRule,
+    fleetRule: source.fleetRule,
+  };
+}
 
 export function validateMultiplayerFleetSelection(value: unknown): MultiplayerFleetSelection {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Choose a multiplayer fleet before continuing.");
@@ -119,9 +164,9 @@ const fleetBlueprint = (selection: MultiplayerFleetSelection) => [
   selection.fighter,
 ];
 
-function createMultiplayerSideFleet(side: MultiplayerSide, selection: MultiplayerFleetSelection): GameShip[] {
+function createMultiplayerSideFleet(side: MultiplayerSide, selection: MultiplayerFleetSelection, bounds: BattlefieldBounds): GameShip[] {
   const team = canonicalTeamForSide(side);
-  const slots = side === "host" ? LEFT_SLOTS : RIGHT_SLOTS;
+  const slots = sideSlots(side, bounds);
   const counts = new Map<string, number>();
   return fleetBlueprint(selection).map((archetypeId, index) => {
       const archetype = SHIP_ARCHETYPES[archetypeId];
@@ -145,10 +190,11 @@ function createMultiplayerSideFleet(side: MultiplayerSide, selection: Multiplaye
 export function createMultiplayerFleet(
   hostSelection: MultiplayerFleetSelection = DEFAULT_MULTIPLAYER_FLEET,
   guestSelection: MultiplayerFleetSelection = DEFAULT_MULTIPLAYER_FLEET,
+  bounds: BattlefieldBounds = FLEET_BATTLEFIELD,
 ): GameShip[] {
   return [
-    ...createMultiplayerSideFleet("host", validateMultiplayerFleetSelection(hostSelection)),
-    ...createMultiplayerSideFleet("guest", validateMultiplayerFleetSelection(guestSelection)),
+    ...createMultiplayerSideFleet("host", validateMultiplayerFleetSelection(hostSelection), bounds),
+    ...createMultiplayerSideFleet("guest", validateMultiplayerFleetSelection(guestSelection), bounds),
   ];
 }
 
@@ -156,13 +202,15 @@ export function createMultiplayerMatchState(
   code: string,
   hostSelection: MultiplayerFleetSelection = DEFAULT_MULTIPLAYER_FLEET,
   guestSelection: MultiplayerFleetSelection = DEFAULT_MULTIPLAYER_FLEET,
+  settings: MultiplayerMatchSettings = DEFAULT_MULTIPLAYER_SETTINGS,
 ): MatchState {
+  const validatedSettings = validateMultiplayerMatchSettings(settings);
   return createMatchState({
     matchId: code,
     mode: "multiplayer",
     turn: 1,
     phase: "planning",
-    ships: createMultiplayerFleet(hostSelection, guestSelection),
+    ships: createMultiplayerFleet(hostSelection, guestSelection, multiplayerBattlefieldFor(validatedSettings.mapSize)),
   });
 }
 
@@ -170,23 +218,34 @@ export function replaceMultiplayerSideFleet(
   state: MatchState,
   side: MultiplayerSide,
   selection: MultiplayerFleetSelection,
+  bounds: BattlefieldBounds = FLEET_BATTLEFIELD,
 ): MatchState {
   const team = canonicalTeamForSide(side);
   return {
     ...state,
     ships: [
       ...state.ships.filter((ship) => ship.team !== team),
-      ...createMultiplayerSideFleet(side, validateMultiplayerFleetSelection(selection)),
+      ...createMultiplayerSideFleet(side, validateMultiplayerFleetSelection(selection), bounds),
     ],
   };
+}
+
+export function multiplayerFleetSelectionForSide(state: MatchState, side: MultiplayerSide): MultiplayerFleetSelection {
+  const team = canonicalTeamForSide(side);
+  const fleet = state.ships.filter((ship) => ship.team === team && !ship.spawnedByShipId);
+  return validateMultiplayerFleetSelection({
+    large: fleet.find((ship) => ship.sizeClass === "large")?.archetypeId,
+    cruisers: fleet.filter((ship) => ship.sizeClass === "cruiser").map((ship) => ship.archetypeId),
+    fighter: fleet.find((ship) => ship.archetypeId === "fighter")?.archetypeId,
+  });
 }
 
 export function canonicalTeamForSide(side: MultiplayerSide): "player" | "enemy" {
   return side === "host" ? "player" : "enemy";
 }
 
-export function multiplayerTurnDuration(previousTurnTimedOut: boolean) {
-  return previousTurnTimedOut ? MULTIPLAYER_TIMEOUT_TURN_MS : MULTIPLAYER_TURN_MS;
+export function multiplayerTurnDuration(previousTurnTimedOut: boolean, baseTurnSeconds: MultiplayerTurnTimer = 120) {
+  return previousTurnTimedOut ? MULTIPLAYER_TIMEOUT_TURN_MS : baseTurnSeconds * 1000;
 }
 
 export function multiplayerOpponentPresence(
@@ -326,7 +385,12 @@ export function applyMultiplayerControls(
 }
 
 /** Generates deterministic AI orders when a commander's turn deadline expires. */
-export function multiplayerTimeoutOrders(state: MatchState, side: MultiplayerSide): TurnOrders {
+export function multiplayerTimeoutOrders(
+  state: MatchState,
+  side: MultiplayerSide,
+  settings: MultiplayerMatchSettings = DEFAULT_MULTIPLAYER_SETTINGS,
+): TurnOrders {
+  const bounds = multiplayerBattlefieldFor(settings.mapSize);
   const ownTeam = canonicalTeamForSide(side);
   const orders: TurnOrders = {};
   const wingTargets = carrierWingTargetAssignments(state.ships);
@@ -340,14 +404,14 @@ export function multiplayerTimeoutOrders(state: MatchState, side: MultiplayerSid
         ship,
         state.ships,
         ship.aiDoctrine ?? "standard",
-        FLEET_BATTLEFIELD.halfLength,
-        FLEET_BATTLEFIELD.halfHeight,
+        bounds.halfLength,
+        bounds.halfHeight,
         {
           forcedTargetId: ship.spawnedByShipId && defaultAiMissionFor(ship) === "assault"
             ? wingTargets[ship.id]
             : undefined,
           reservedDestinations,
-          battlefieldWidthHalf: FLEET_BATTLEFIELD.halfWidth,
+          battlefieldWidthHalf: bounds.halfWidth,
         },
       );
       if (decision) orders[ship.id] = decision.order;
@@ -409,7 +473,12 @@ export function validateMultiplayerOrders(
   return orders;
 }
 
-export function resolveMultiplayerTurn(state: MatchState, hostOrders: TurnOrders, guestOrders: TurnOrders) {
+export function resolveMultiplayerTurn(
+  state: MatchState,
+  hostOrders: TurnOrders,
+  guestOrders: TurnOrders,
+  settings: MultiplayerMatchSettings = DEFAULT_MULTIPLAYER_SETTINGS,
+) {
   if (state.schemaVersion !== GAME_STATE_SCHEMA_VERSION || state.rulesVersion !== GAME_RULES_VERSION) {
     throw new Error("This match uses an incompatible game rules version.");
   }
@@ -420,17 +489,22 @@ export function resolveMultiplayerTurn(state: MatchState, hostOrders: TurnOrders
     turn: state.turn,
     ships: state.ships,
     orders: { ...cloneTurnOrders(hostOrders), ...cloneTurnOrders(guestOrders) },
-    bounds: FLEET_BATTLEFIELD,
+    bounds: multiplayerBattlefieldFor(settings.mapSize),
     activationTeamOrder,
+    collisionDamageMultiplier: settings.impactRule === "off" ? 0 : settings.impactRule === "brutal" ? 1.5 : 1,
+    wrecksPersist: settings.wreckRule === "persistent",
   });
-  const hostAlive = result.next.ships.some((ship) => ship.team === "player" && ship.hull > 0);
-  const guestAlive = result.next.ships.some((ship) => ship.team === "enemy" && ship.hull > 0);
+  const nextShips = settings.wreckRule === "persistent"
+    ? result.next.ships
+    : result.next.ships.filter((ship) => ship.hull > 0);
+  const hostAlive = nextShips.some((ship) => ship.team === "player" && ship.hull > 0);
+  const guestAlive = nextShips.some((ship) => ship.team === "enemy" && ship.hull > 0);
   const winner: MultiplayerWinner = hostAlive && guestAlive ? null : hostAlive ? "host" : guestAlive ? "guest" : "draw";
   const nextState: MatchState = {
     ...state,
     turn: state.turn + 1,
     phase: winner === "draw" ? "draw" : winner ? (winner === "host" ? "victory" : "defeat") : "planning",
-    ships: cloneGameShips(result.next.ships),
+    ships: cloneGameShips(nextShips),
   };
   return { resolution: result.resolution, nextState, winner };
 }

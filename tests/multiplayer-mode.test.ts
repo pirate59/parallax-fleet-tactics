@@ -5,7 +5,9 @@ import {
   canonicalTeamForSide,
   createMultiplayerMatchState,
   DEFAULT_MULTIPLAYER_FLEET,
+  DEFAULT_MULTIPLAYER_SETTINGS,
   multiplayerControlsForSide,
+  multiplayerFleetSelectionForSide,
   multiplayerOpponentPresence,
   MULTIPLAYER_FLEET_SIZE,
   MULTIPLAYER_PRESENCE_GRACE_MS,
@@ -19,8 +21,10 @@ import {
   stateForMultiplayerPerspective,
   validateMultiplayerControls,
   validateMultiplayerFleetSelection,
+  validateMultiplayerMatchSettings,
   validateMultiplayerOrders,
 } from "../app/multiplayerMode.ts";
+import { multiplayerBattlefieldFor } from "../app/battlefieldConfig.ts";
 import type { GameShip, TurnOrder, TurnOrders } from "../app/gameTypes.ts";
 
 const holdOrder = (ship: GameShip, targetId: string): TurnOrder => ({
@@ -73,6 +77,57 @@ test("fleet selections allow repeated Cruisers and reject invalid compositions",
   assert.equal(new Set(guest.map((ship) => ship.id)).size, 5);
   assert.throws(() => validateMultiplayerFleetSelection({ ...DEFAULT_MULTIPLAYER_FLEET, cruisers: ["archer", "hulk"] }), /exactly three/);
   assert.throws(() => validateMultiplayerFleetSelection({ ...DEFAULT_MULTIPLAYER_FLEET, large: "hammerhead" }), /Large/);
+});
+
+test("host settings validate timers, maps, impacts, wrecks, and fleet rules", () => {
+  const settings = validateMultiplayerMatchSettings({
+    turnTimerSeconds: 60,
+    mapSize: "wide",
+    impactRule: "brutal",
+    wreckRule: "clear",
+    fleetRule: "mirrored",
+  });
+
+  assert.deepEqual(settings, {
+    turnTimerSeconds: 60,
+    mapSize: "wide",
+    impactRule: "brutal",
+    wreckRule: "clear",
+    fleetRule: "mirrored",
+  });
+  assert.deepEqual(validateMultiplayerMatchSettings(undefined), DEFAULT_MULTIPLAYER_SETTINGS);
+  assert.throws(() => validateMultiplayerMatchSettings({ ...DEFAULT_MULTIPLAYER_SETTINGS, turnTimerSeconds: 45 }), /turn timer/);
+  assert.throws(() => validateMultiplayerMatchSettings({ ...DEFAULT_MULTIPLAYER_SETTINGS, mapSize: "enormous" }), /map size/);
+});
+
+test("map size controls deployment separation and mirrored fleets copy the host selection", () => {
+  const hostFleet = validateMultiplayerFleetSelection({
+    large: "carrier",
+    cruisers: ["archer", "archer", "hulk"],
+    fighter: "fighter",
+  });
+  const closeState = createMultiplayerMatchState("CLOSE1", hostFleet, DEFAULT_MULTIPLAYER_FLEET, {
+    ...DEFAULT_MULTIPLAYER_SETTINGS,
+    mapSize: "close",
+  });
+  const wideState = createMultiplayerMatchState("WIDE01", hostFleet, DEFAULT_MULTIPLAYER_FLEET, {
+    ...DEFAULT_MULTIPLAYER_SETTINGS,
+    mapSize: "wide",
+  });
+  const closeHost = closeState.ships.find((ship) => ship.team === "player")!;
+  const wideHost = wideState.ships.find((ship) => ship.team === "player")!;
+  assert.ok(Math.abs(wideHost.position[0]) > Math.abs(closeHost.position[0]));
+
+  const mirrored = replaceMultiplayerSideFleet(
+    wideState,
+    "guest",
+    multiplayerFleetSelectionForSide(wideState, "host"),
+    multiplayerBattlefieldFor("wide"),
+  );
+  assert.deepEqual(
+    mirrored.ships.filter((ship) => ship.team === "enemy").map((ship) => ship.archetypeId),
+    mirrored.ships.filter((ship) => ship.team === "player").map((ship) => ship.archetypeId),
+  );
 });
 
 test("guest perspective makes the guest fleet friendly without changing stable IDs", () => {
@@ -141,8 +196,20 @@ test("turn deadlines escalate after a timeout and concessions award the rival", 
   assert.equal(multiplayerTurnDuration(true), MULTIPLAYER_TIMEOUT_TURN_MS);
   assert.equal(MULTIPLAYER_TURN_MS, 120_000);
   assert.equal(MULTIPLAYER_TIMEOUT_TURN_MS, 30_000);
+  assert.equal(multiplayerTurnDuration(false, 60), 60_000);
+  assert.equal(multiplayerTurnDuration(false, 180), 180_000);
   assert.equal(multiplayerWinnerAfterConcession("host"), "guest");
   assert.equal(multiplayerWinnerAfterConcession("guest"), "host");
+});
+
+test("clearing-wreck matches remove destroyed hulls from the next multiplayer state", () => {
+  const state = createMultiplayerMatchState("ABC234");
+  state.ships[0] = { ...state.ships[0], hull: 0 };
+  const persistent = resolveMultiplayerTurn(state, {}, {}, DEFAULT_MULTIPLAYER_SETTINGS);
+  const cleared = resolveMultiplayerTurn(state, {}, {}, { ...DEFAULT_MULTIPLAYER_SETTINGS, wreckRule: "clear" });
+
+  assert.ok(persistent.nextState.ships.some((ship) => ship.id === state.ships[0].id));
+  assert.ok(!cleared.nextState.ships.some((ship) => ship.id === state.ships[0].id));
 });
 
 test("multiplayer presence distinguishes a fresh heartbeat from a lost signal", () => {

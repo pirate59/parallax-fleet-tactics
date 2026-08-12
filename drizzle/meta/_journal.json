@@ -22,6 +22,13 @@
       "when": 1786513280210,
       "tag": "0002_mysterious_james_howlett",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1786514184416,
+      "tag": "0003_white_ogun",
+      "breakpoints": true
     }
   ]
 }

@@ -3734,6 +3734,32 @@ input[type="range"]::-moz-range-thumb {
 }
 .multiplayer-actions input::placeholder { color: #3e5968; }
 .multiplayer-actions .code-input { color: var(--cyan-strong); font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 0.24em; text-transform: uppercase; }
+
+.multiplayer-host-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin: 4px 0 18px;
+  padding: 13px;
+  border: 1px solid rgba(105, 223, 255, 0.16);
+  background: rgba(2, 9, 15, 0.5);
+}
+.multiplayer-host-settings legend { padding: 0 7px; color: var(--cyan); font: var(--type-meta) ui-monospace, monospace; letter-spacing: 0.12em; text-transform: uppercase; }
+.multiplayer-actions .multiplayer-host-settings label { gap: 4px; margin: 0; }
+.multiplayer-host-settings label:last-of-type { grid-column: 1 / -1; }
+.multiplayer-host-settings select {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 8px;
+  border: 1px solid rgba(116, 174, 198, 0.22);
+  border-radius: 0;
+  background: #07141f;
+  color: #d8edf3;
+  font-size: var(--type-control);
+}
+.multiplayer-host-settings > p { grid-column: 1 / -1; min-height: 0 !important; margin: 2px 0 0 !important; color: #587483 !important; font: var(--type-meta) ui-monospace, monospace; line-height: 1.5 !important; }
+.multiplayer-rules-summary { margin: 4px 0 10px !important; color: #9cc6d5 !important; font: var(--type-meta) ui-monospace, monospace; letter-spacing: 0.06em; text-transform: uppercase; }
+
 .multiplayer-actions article > button {
   min-height: 50px;
   display: flex;
@@ -3866,6 +3892,8 @@ input[type="range"]::-moz-range-thumb {
   letter-spacing: 0.08em;
 }
 .multiplayer-link-meta > span:first-child { flex-direction: column; gap: 0; }
+.multiplayer-link-meta .multiplayer-active-rules { min-width: 132px; flex-direction: column; gap: 0; }
+.multiplayer-link-meta .multiplayer-active-rules b { font-size: 9px; }
 .multiplayer-link-meta b { color: #dff7fc; font: 500 var(--type-small) ui-monospace, monospace; letter-spacing: 0.12em; }
 .multiplayer-link-meta .multiplayer-presence { min-width: 128px; }
 .multiplayer-presence i { width: 6px; height: 6px; border-radius: 50%; background: #688493; }
@@ -4882,6 +4910,9 @@ input[type="range"]::-moz-range-thumb {
   .fleet-builder-fighter { grid-column: 1 / -1; }
 
   .multiplayer-actions > article { min-height: 360px; }
+  .multiplayer-host-settings { grid-template-columns: 1fr; }
+  .multiplayer-host-settings label:last-of-type,
+  .multiplayer-host-settings > p { grid-column: auto; }
 
   .multiplayer-divider {
     flex-direction: row;
@@ -4919,6 +4950,7 @@ input[type="range"]::-moz-range-thumb {
   .multiplayer-command-summary > span strong { font-size: var(--type-meta); letter-spacing: 0.09em; }
   .multiplayer-link-meta > span { min-width: 0; padding: 0 6px; }
   .multiplayer-link-meta > span:first-child { display: none; }
+  .multiplayer-link-meta .multiplayer-active-rules { display: none; }
   .multiplayer-link-meta .multiplayer-presence { min-width: 96px; font-size: 8px; }
   .multiplayer-link-meta .multiplayer-turn-timer { min-width: 72px; }
   .multiplayer-readiness-grid { grid-template-columns: 1fr; }

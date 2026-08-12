@@ -32,6 +32,8 @@ export type ResolveTurnInput = {
   orders: TurnOrders;
   bounds?: BattlefieldBounds;
   activationTeamOrder?: Team[];
+  collisionDamageMultiplier?: number;
+  wrecksPersist?: boolean;
 };
 
 export type FinalizedTurn = {
@@ -108,6 +110,10 @@ export function resolveTurn(input: ResolveTurnInput): TurnResolution {
     bounds.halfLength,
     bounds.halfHeight,
     bounds.halfWidth,
+    {
+      damageMultiplier: input.collisionDamageMultiplier,
+      wrecksPersist: input.wrecksPersist,
+    },
   );
   const combat = resolveCombatTurn(collision.ships, avoidance.orders, {
     ...(input.activationTeamOrder ? { teamOrder: [...input.activationTeamOrder] } : {}),

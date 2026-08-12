@@ -2,8 +2,10 @@ import { env } from "cloudflare:workers";
 import {
   applyMultiplayerControls,
   createMultiplayerMatchState,
-  MULTIPLAYER_TURN_MS,
+  DEFAULT_MULTIPLAYER_FLEET,
+  DEFAULT_MULTIPLAYER_SETTINGS,
   multiplayerControlsForSide,
+  multiplayerFleetSelectionForSide,
   multiplayerTimeoutOrders,
   multiplayerTurnDuration,
   multiplayerWinnerAfterConcession,
@@ -13,15 +15,18 @@ import {
   stateForMultiplayerPerspective,
   validateMultiplayerControls,
   validateMultiplayerFleetSelection,
+  validateMultiplayerMatchSettings,
   validateMultiplayerOrders,
   type MultiplayerControlSettings,
   type MultiplayerCompletionReason,
   type MultiplayerMatchStatus,
+  type MultiplayerMatchSettings,
   type MultiplayerSession,
   type MultiplayerSide,
   type MultiplayerView,
   type MultiplayerWinner,
 } from "../app/multiplayerMode.ts";
+import { multiplayerBattlefieldFor } from "../app/battlefieldConfig.ts";
 import type { MatchState, TurnOrders, TurnResolution } from "../app/gameTypes.ts";
 
 type MatchRow = {
@@ -29,6 +34,7 @@ type MatchRow = {
   status: MultiplayerMatchStatus;
   turn: number;
   state_json: string;
+  settings_json: string | null;
   resolution_json: string | null;
   host_token_hash: string;
   guest_token_hash: string | null;
@@ -57,6 +63,7 @@ const MATCH_TABLE_SQL = `CREATE TABLE IF NOT EXISTS multiplayer_matches (
   status TEXT NOT NULL,
   turn INTEGER NOT NULL,
   state_json TEXT NOT NULL,
+  settings_json TEXT,
   resolution_json TEXT,
   host_token_hash TEXT NOT NULL,
   guest_token_hash TEXT,
@@ -116,6 +123,7 @@ export async function ensureMultiplayerSchema() {
         ["conceded_by", "ALTER TABLE multiplayer_matches ADD COLUMN conceded_by TEXT"],
         ["host_last_seen_at", "ALTER TABLE multiplayer_matches ADD COLUMN host_last_seen_at INTEGER"],
         ["guest_last_seen_at", "ALTER TABLE multiplayer_matches ADD COLUMN guest_last_seen_at INTEGER"],
+        ["settings_json", "ALTER TABLE multiplayer_matches ADD COLUMN settings_json TEXT"],
       ] as const;
       const missing = additions
         .filter(([name]) => !columns.has(name))
@@ -166,6 +174,15 @@ function parseState(row: MatchRow): MatchState {
   return JSON.parse(row.state_json) as MatchState;
 }
 
+function parseSettings(row: MatchRow): MultiplayerMatchSettings {
+  if (!row.settings_json) return { ...DEFAULT_MULTIPLAYER_SETTINGS };
+  try {
+    return validateMultiplayerMatchSettings(JSON.parse(row.settings_json));
+  } catch {
+    return { ...DEFAULT_MULTIPLAYER_SETTINGS };
+  }
+}
+
 function parseResolution(row: MatchRow): TurnResolution | null {
   return row.resolution_json ? JSON.parse(row.resolution_json) as TurnResolution : null;
 }
@@ -199,6 +216,7 @@ function viewFromRow(row: MatchRow, side: MultiplayerSide): MultiplayerView {
     guestName: row.guest_name,
     opponentJoined: Boolean(row.guest_token_hash),
     opponentLastSeenAt: side === "host" ? row.guest_last_seen_at : row.host_last_seen_at,
+    settings: parseSettings(row),
     ownSubmitted,
     opponentSubmitted,
     winner: row.winner,
@@ -211,24 +229,25 @@ function viewFromRow(row: MatchRow, side: MultiplayerSide): MultiplayerView {
   };
 }
 
-export async function createMultiplayerMatch(name: unknown, fleetInput: unknown): Promise<{ session: MultiplayerSession; view: MultiplayerView }> {
+export async function createMultiplayerMatch(name: unknown, fleetInput: unknown, settingsInput?: unknown): Promise<{ session: MultiplayerSession; view: MultiplayerView }> {
   await ensureMultiplayerSchema();
   const db = database();
   const token = randomToken();
   const hash = await tokenHash(token);
   const hostName = normalizePlayerName(name, "Azure Commander");
   const hostFleet = validateMultiplayerFleetSelection(fleetInput);
+  const settings = validateMultiplayerMatchSettings(settingsInput);
   const now = Date.now();
 
   for (let attempt = 0; attempt < CODE_ATTEMPTS; attempt += 1) {
     const code = randomCode();
-    const state = createMultiplayerMatchState(code, hostFleet);
+    const state = createMultiplayerMatchState(code, hostFleet, DEFAULT_MULTIPLAYER_FLEET, settings);
     const result = await db.prepare(`INSERT OR IGNORE INTO multiplayer_matches (
-      code, status, turn, state_json, resolution_json, host_token_hash, guest_token_hash,
+      code, status, turn, state_json, settings_json, resolution_json, host_token_hash, guest_token_hash,
       host_name, guest_name, host_submitted_turn, guest_submitted_turn, host_last_seen_at,
       guest_last_seen_at, winner, created_at, updated_at
-    ) VALUES (?, 'waiting', 1, ?, NULL, ?, NULL, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?)`)
-      .bind(code, JSON.stringify(state), hash, hostName, now, now, now)
+    ) VALUES (?, 'waiting', 1, ?, ?, NULL, ?, NULL, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?)`)
+      .bind(code, JSON.stringify(state), JSON.stringify(settings), hash, hostName, now, now, now)
       .run();
     if ((result.meta.changes ?? 0) > 0) {
       const row = await matchRow(code);
@@ -250,12 +269,22 @@ export async function joinMultiplayerMatch(codeInput: string, name: unknown, fle
   const now = Date.now();
   const existing = await matchRow(code);
   if (!existing) throw new Error("No match was found for that code.");
-  const nextState = replaceMultiplayerSideFleet(parseState(existing), "guest", guestFleet);
+  const settings = parseSettings(existing);
+  const existingState = parseState(existing);
+  const effectiveGuestFleet = settings.fleetRule === "mirrored"
+    ? multiplayerFleetSelectionForSide(existingState, "host")
+    : guestFleet;
+  const nextState = replaceMultiplayerSideFleet(
+    existingState,
+    "guest",
+    effectiveGuestFleet,
+    multiplayerBattlefieldFor(settings.mapSize),
+  );
   const result = await database().prepare(`UPDATE multiplayer_matches
     SET guest_token_hash = ?, guest_name = ?, state_json = ?, status = 'planning', deadline_at = ?, guest_last_seen_at = ?,
       last_turn_timed_out = 0, completion_reason = NULL, conceded_by = NULL, updated_at = ?
     WHERE code = ? AND status = 'waiting' AND guest_token_hash IS NULL`)
-    .bind(hash, guestName, JSON.stringify(nextState), now + MULTIPLAYER_TURN_MS, now, now, code)
+    .bind(hash, guestName, JSON.stringify(nextState), now + multiplayerTurnDuration(false, settings.turnTimerSeconds), now, now, code)
     .run();
   if ((result.meta.changes ?? 0) === 0) {
     throw new Error("That match already has two commanders or is no longer joinable.");
@@ -296,6 +325,7 @@ async function resolveClaimedTurn(row: MatchRow, timedOut = false) {
     .bind(row.code, row.turn)
     .all<{ side: MultiplayerSide; orders_json: string }>();
   const currentState = parseState(row);
+  const settings = parseSettings(row);
   const bySide = new Map(orderRows.results.map((entry) => [
     entry.side,
     storedEnvelope(entry.orders_json, currentState, entry.side),
@@ -307,7 +337,7 @@ async function resolveClaimedTurn(row: MatchRow, timedOut = false) {
     ? bySide.get(side)
     : timedOut
       ? {
-          orders: multiplayerTimeoutOrders(currentState, side),
+          orders: multiplayerTimeoutOrders(currentState, side, settings),
           controls: multiplayerControlsForSide(currentState, side),
         }
       : undefined;
@@ -324,12 +354,12 @@ async function resolveClaimedTurn(row: MatchRow, timedOut = false) {
     ...hostEnvelope.controls,
     ...guestEnvelope.controls,
   });
-  const resolved = resolveMultiplayerTurn(controlledState, hostEnvelope.orders, guestEnvelope.orders);
+  const resolved = resolveMultiplayerTurn(controlledState, hostEnvelope.orders, guestEnvelope.orders, settings);
   const nextStatus: MultiplayerMatchStatus = resolved.winner ? "complete" : "planning";
   const now = Date.now();
   const nextDeadline = resolved.winner
     ? null
-    : now + multiplayerTurnDuration(timedOut);
+    : now + multiplayerTurnDuration(timedOut, settings.turnTimerSeconds);
   await db.prepare(`UPDATE multiplayer_matches SET
     status = ?, turn = ?, state_json = ?, resolution_json = ?, winner = ?,
     host_submitted_turn = NULL, guest_submitted_turn = NULL, deadline_at = ?,
@@ -354,7 +384,7 @@ async function resolveClaimedTurn(row: MatchRow, timedOut = false) {
 async function advanceExpiredMatch(source: MatchRow): Promise<MatchRow> {
   let row = source;
   if (row.status === "planning" && row.deadline_at === null) {
-    const deadline = Date.now() + MULTIPLAYER_TURN_MS;
+    const deadline = Date.now() + multiplayerTurnDuration(false, parseSettings(row).turnTimerSeconds);
     await database().prepare(`UPDATE multiplayer_matches SET deadline_at = ?, updated_at = ?
       WHERE code = ? AND turn = ? AND status = 'planning' AND deadline_at IS NULL`)
       .bind(deadline, Date.now(), row.code, row.turn)

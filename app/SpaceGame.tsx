@@ -107,6 +107,7 @@ import {
 } from "./multiplayerClient";
 import {
   DEFAULT_MULTIPLAYER_FLEET,
+  DEFAULT_MULTIPLAYER_SETTINGS,
   MULTIPLAYER_CRUISER_HULLS,
   MULTIPLAYER_FLEET_SIZE,
   MULTIPLAYER_LARGE_HULLS,
@@ -116,6 +117,7 @@ import {
   type MultiplayerCruiserHull,
   type MultiplayerFleetSelection,
   type MultiplayerLargeHull,
+  type MultiplayerMatchSettings,
   type MultiplayerSession,
   type MultiplayerView,
 } from "./multiplayerMode";
@@ -124,9 +126,9 @@ import {
 } from "./collisionEngine";
 import {
   FLEET_BATTLEFIELD,
-  FLEET_STATION_X,
   FLEET_TEAM_START_X,
   STORY_BATTLEFIELD,
+  multiplayerBattlefieldFor,
   type BattlefieldBounds,
 } from "./battlefieldConfig";
 import {
@@ -1634,12 +1636,13 @@ function restoreCombatVisibility(
   });
 }
 
-function overviewSubjects(ships: Ship[], includeStations: boolean) {
+function overviewSubjects(ships: Ship[], includeStations: boolean, bounds: BattlefieldBounds) {
   if (!includeStations) return ships;
+  const stationX = bounds.halfLength - 9;
   return [
     ...ships,
-    { position: [-FLEET_STATION_X, 0, 0] as Vec3, hull: 1, modelScale: 4.5 },
-    { position: [FLEET_STATION_X, 0, 0] as Vec3, hull: 1, modelScale: 4.5 },
+    { position: [-stationX, 0, 0] as Vec3, hull: 1, modelScale: 4.5 },
+    { position: [stationX, 0, 0] as Vec3, hull: 1, modelScale: 4.5 },
   ];
 }
 
@@ -1748,10 +1751,11 @@ function TacticalScene({
     scene.add(volume);
 
     if (showFleetStations) {
+      const stationX = battlefieldBounds.halfLength - 9;
       const alliedStation = createFleetStation("ally");
-      alliedStation.position.set(-FLEET_STATION_X, 0, 0);
+      alliedStation.position.set(-stationX, 0, 0);
       const enemyStation = createFleetStation("enemy");
-      enemyStation.position.set(FLEET_STATION_X, 0, 0);
+      enemyStation.position.set(stationX, 0, 0);
       scene.add(alliedStation, enemyStation);
     }
 
@@ -2110,7 +2114,7 @@ function TacticalScene({
     if (cameraCommand.kind === "reset") {
       if (presentation === "spectator" || showFleetStations) {
         const overview = spectatorOverviewFor(
-          overviewSubjects(ships, showFleetStations),
+          overviewSubjects(ships, showFleetStations, battlefieldBounds),
           context.camera.aspect,
           overviewViewRef.current,
         );
@@ -2132,14 +2136,14 @@ function TacticalScene({
       }
     }
     context.controls.update();
-  }, [cameraCommand, presentation, ships, showFleetStations]);
+  }, [battlefieldBounds, cameraCommand, presentation, ships, showFleetStations]);
 
   useEffect(() => {
     const context = contextRef.current;
     if (!context || presentation !== "spectator" || resolution) return;
     context.controls.maxDistance = showFleetStations ? 170 : 75;
     const overview = spectatorOverviewFor(
-      overviewSubjects(ships, showFleetStations),
+      overviewSubjects(ships, showFleetStations, battlefieldBounds),
       context.camera.aspect,
       overviewViewRef.current,
     );
@@ -2148,7 +2152,7 @@ function TacticalScene({
     context.camera.fov = overview.fov;
     context.camera.updateProjectionMatrix();
     context.controls.update();
-  }, [presentation, resolution, ships, showFleetStations]);
+  }, [battlefieldBounds, presentation, resolution, ships, showFleetStations]);
 
   useEffect(() => {
     const context = contextRef.current;
@@ -2159,7 +2163,7 @@ function TacticalScene({
     if (hasCinematicEvent) overviewViewRef.current += 1;
     const returnOverview = presentation === "spectator" || hasCinematicEvent
       ? spectatorOverviewFor(
-        overviewSubjects(resolution.endShips, false),
+        overviewSubjects(resolution.endShips, false, battlefieldBounds),
         context.camera.aspect,
         overviewViewRef.current,
         1.03,
@@ -2476,7 +2480,7 @@ function TacticalScene({
       context.camera.updateProjectionMatrix();
       context.controls.update();
     };
-  }, [presentation, resolution, ships, showFleetStations]);
+  }, [battlefieldBounds, presentation, resolution, ships, showFleetStations]);
 
   return <div className="three-mount" ref={mountRef} />;
 }
@@ -2851,8 +2855,63 @@ function MultiplayerFleetBuilder({
           <p>{SHIP_ARCHETYPES.fighter.className}</p>
         </div>
       </div>
-      <p className="fleet-builder-note">Cruiser hulls may be repeated. The rival fleet remains concealed until both commanders connect.</p>
+      <p className="fleet-builder-note">Cruiser hulls may be repeated. Fleets stay concealed until connection; mirrored matches copy the host roster.</p>
     </section>
+  );
+}
+
+function MultiplayerHostSettings({
+  settings,
+  disabled,
+  onChange,
+}: {
+  settings: MultiplayerMatchSettings;
+  disabled: boolean;
+  onChange: (settings: MultiplayerMatchSettings) => void;
+}) {
+  return (
+    <fieldset className="multiplayer-host-settings">
+      <legend>Host battle rules</legend>
+      <label>
+        <span>TURN TIMER</span>
+        <select disabled={disabled} value={settings.turnTimerSeconds} onChange={(event) => onChange({ ...settings, turnTimerSeconds: Number(event.target.value) as MultiplayerMatchSettings["turnTimerSeconds"] })}>
+          <option value="60">1 minute</option>
+          <option value="120">2 minutes</option>
+          <option value="180">3 minutes</option>
+        </select>
+      </label>
+      <label>
+        <span>MAP SIZE</span>
+        <select disabled={disabled} value={settings.mapSize} onChange={(event) => onChange({ ...settings, mapSize: event.target.value as MultiplayerMatchSettings["mapSize"] })}>
+          <option value="close">Close engagement</option>
+          <option value="standard">Standard theatre</option>
+          <option value="wide">Wide theatre</option>
+        </select>
+      </label>
+      <label>
+        <span>COLLISION DAMAGE</span>
+        <select disabled={disabled} value={settings.impactRule} onChange={(event) => onChange({ ...settings, impactRule: event.target.value as MultiplayerMatchSettings["impactRule"] })}>
+          <option value="off">Off · displacement only</option>
+          <option value="standard">Standard</option>
+          <option value="brutal">Brutal · 150%</option>
+        </select>
+      </label>
+      <label>
+        <span>WRECKS</span>
+        <select disabled={disabled} value={settings.wreckRule} onChange={(event) => onChange({ ...settings, wreckRule: event.target.value as MultiplayerMatchSettings["wreckRule"] })}>
+          <option value="persistent">Persistent obstacles</option>
+          <option value="clear">Clear after destruction</option>
+        </select>
+      </label>
+      <label>
+        <span>FLEETS</span>
+        <select disabled={disabled} value={settings.fleetRule} onChange={(event) => onChange({ ...settings, fleetRule: event.target.value as MultiplayerMatchSettings["fleetRule"] })}>
+          <option value="custom">Independent selections</option>
+          <option value="mirrored">Mirror host fleet</option>
+        </select>
+      </label>
+      <p>These rules are locked when the match code is created. A timeout after an idle turn still shortens the next deadline to 30 seconds.</p>
+    </fieldset>
   );
 }
 
@@ -2870,7 +2929,7 @@ function MultiplayerLobby({
   view: MultiplayerView | null;
   busy: boolean;
   error: string;
-  onCreate: (name: string, fleet: MultiplayerFleetSelection) => void;
+  onCreate: (name: string, fleet: MultiplayerFleetSelection, settings: MultiplayerMatchSettings) => void;
   onJoin: (code: string, name: string, fleet: MultiplayerFleetSelection) => void;
   onAbandon: () => void;
   onMenu: () => void;
@@ -2882,6 +2941,7 @@ function MultiplayerLobby({
     ...DEFAULT_MULTIPLAYER_FLEET,
     cruisers: [...DEFAULT_MULTIPLAYER_FLEET.cruisers],
   }));
+  const [settings, setSettings] = useState<MultiplayerMatchSettings>({ ...DEFAULT_MULTIPLAYER_SETTINGS });
   const waiting = Boolean(session && view?.status === "waiting");
 
   const copyCode = async () => {
@@ -2927,6 +2987,7 @@ function MultiplayerLobby({
             <article><i /><span><small>CRIMSON COMMAND</small><strong>Open slot</strong></span><b>WAITING</b></article>
           </div>
           <p>Keep this screen open. The tactical volume initializes automatically when the second commander joins.</p>
+          {view && <p className="multiplayer-rules-summary">{view.settings.turnTimerSeconds}s turns · {view.settings.mapSize} map · {view.settings.impactRule} impacts · {view.settings.wreckRule} wrecks · {view.settings.fleetRule} fleets</p>}
           <button className="multiplayer-secondary" type="button" onClick={onAbandon}>Leave this lobby</button>
         </section>
       ) : session && !view ? (
@@ -2945,7 +3006,8 @@ function MultiplayerLobby({
             <h2>Create match</h2>
             <p>Generate a private six-character code and wait for another commander to join.</p>
             <label><span>COMMANDER NAME</span><input value={name} maxLength={24} autoComplete="nickname" onChange={(event) => setName(event.target.value)} /></label>
-            <button type="button" disabled={busy} onClick={() => onCreate(name, fleet)}>{busy ? "ESTABLISHING LINK…" : "CREATE PRIVATE MATCH"}<b>→</b></button>
+            <MultiplayerHostSettings settings={settings} disabled={busy} onChange={setSettings} />
+            <button type="button" disabled={busy} onClick={() => onCreate(name, fleet, settings)}>{busy ? "ESTABLISHING LINK…" : "CREATE PRIVATE MATCH"}<b>→</b></button>
           </article>
           <div className="multiplayer-divider"><span>OR</span></div>
           <article>
@@ -3276,7 +3338,11 @@ export function SpaceGame() {
     return () => window.clearInterval(timer);
   }, [activeMode, screen]);
 
-  const battlefieldBounds = battlefieldForMode(activeMode);
+  const multiplayerMapSize = multiplayerView?.settings.mapSize ?? "standard";
+  const battlefieldBounds = useMemo(
+    () => activeMode === "multiplayer" ? multiplayerBattlefieldFor(multiplayerMapSize) : battlefieldForMode(activeMode),
+    [activeMode, multiplayerMapSize],
+  );
   const showFleetStations = activeMode !== "story";
   const selectedShip = ships.find((ship) => ship.id === selectedShipId)
     ?? ships.find((ship) => ship.team !== "enemy" && ship.controller === "player" && ship.hull > 0)
@@ -3293,7 +3359,7 @@ export function SpaceGame() {
   const cinematicShipIds = new Set(combatFocus ? [combatFocus.left.id, combatFocus.right.id] : []);
   const readyCount = livingCommandShips.filter((ship) => staged.has(ship.id)).length;
   const isCommandOrderValid = (ship: Ship) => {
-    const bounds = battlefieldForMode(activeMode);
+    const bounds = battlefieldBounds;
     const order = drafts[ship.id];
     if (!order || !isDestinationValid(ship, order.destination, order.mode, bounds)) return false;
     return order.mode !== "focus-fire" || ships.some((candidate) => candidate.id === order.targetId && candidate.team === "enemy" && candidate.hull > 0);
@@ -3315,7 +3381,7 @@ export function SpaceGame() {
 
   const forecast = useMemo(() => {
     if (!selectedShip || !selectedDraft) return null;
-    const bounds = battlefieldForMode(activeMode);
+    const bounds = battlefieldBounds;
     const target = ships.find((ship) => ship.id === selectedDraft.targetId && ship.hull > 0);
     const salvoCount = salvosForOrder(selectedDraft);
     if (!target || salvoCount === 0) return null;
@@ -3335,7 +3401,7 @@ export function SpaceGame() {
       damage: validSolutions.reduce((sum, { weapon }) => sum + weapon.damage, 0) * salvoCount,
       salvoCount,
     };
-  }, [selectedShip, selectedDraft, ships, activeMode]);
+  }, [battlefieldBounds, selectedShip, selectedDraft, ships]);
 
   const updateDraft = useCallback((patch: Partial<Order>) => {
     if (!selectedShip || selectedShip.controller !== "player" || phase !== "planning") return;
@@ -3378,7 +3444,7 @@ export function SpaceGame() {
       if (controller === "player") {
         return {
           ...current,
-          [selectedShip.id]: defaultOrderFor(updatedShip, ships, battlefieldForMode(activeMode)),
+          [selectedShip.id]: defaultOrderFor(updatedShip, ships, battlefieldBounds),
         };
       }
       const next = { ...current };
@@ -3394,11 +3460,11 @@ export function SpaceGame() {
       `${selectedShip.name} transferred to ${controller === "ai" ? "AI mission control" : "manual command"}.`,
       ...current,
     ].slice(0, 12));
-  }, [activeMode, phase, selectedShip, ships]);
+  }, [activeMode, battlefieldBounds, phase, selectedShip, ships]);
 
   const updateRelativeMovement = useCallback((axis: keyof ShipRelativeMovement, value: number) => {
     if (!selectedShip || !selectedDraft) return;
-    const bounds = battlefieldForMode(activeMode);
+    const bounds = battlefieldBounds;
     const movement = shipMovementFromDestination(selectedShip.position, selectedShip.rotation, selectedDraft.destination);
     const constrainedMovement = clampShipMovementToRange(
       { ...movement, [axis]: value },
@@ -3412,11 +3478,11 @@ export function SpaceGame() {
     updateDraft({
       destination: clampDestination(selectedShip, proposedDestination, selectedDraft.mode, bounds),
     });
-  }, [selectedShip, selectedDraft, updateDraft, activeMode]);
+  }, [battlefieldBounds, selectedShip, selectedDraft, updateDraft]);
 
   const updateFlightMode = useCallback((mode: FlightMode) => {
     if (!selectedShip || !selectedDraft) return;
-    const bounds = battlefieldForMode(activeMode);
+    const bounds = battlefieldBounds;
     updateDraft({
       mode,
       destination: mode === "focus-fire"
@@ -3424,7 +3490,7 @@ export function SpaceGame() {
         : clampDestination(selectedShip, selectedDraft.destination, mode, bounds),
       fire: fireStateForMode(mode, true),
     });
-  }, [selectedShip, selectedDraft, updateDraft, activeMode]);
+  }, [battlefieldBounds, selectedShip, selectedDraft, updateDraft]);
 
   const faceTarget = useCallback(() => {
     if (!selectedShip || !selectedDraft) return;
@@ -3441,7 +3507,7 @@ export function SpaceGame() {
   }, [selectedShip, selectedDraft, ships, updateDraft]);
 
   const generateNpcOrders = useCallback((currentShips: Ship[], scope: "all" | "friendly" = "all") => {
-    const bounds = battlefieldForMode(activeMode);
+    const bounds = battlefieldBounds;
     const orders: Record<string, Order> = {};
     const comms: AiCommandComms[] = [];
     const wingTargets = carrierWingTargetAssignments(currentShips);
@@ -3471,10 +3537,10 @@ export function SpaceGame() {
         }
       });
     return { orders, comms };
-  }, [activeMode]);
+  }, [battlefieldBounds]);
 
   const executeTurn = useCallback(async (automatic = false) => {
-    const bounds = battlefieldForMode(activeMode);
+    const bounds = battlefieldBounds;
     const fishtankCommit = activeMode === "fishtank" && automatic;
     const commandOrderIsValid = (ship: Ship) => {
       const order = drafts[ship.id];
@@ -3546,10 +3612,10 @@ export function SpaceGame() {
       ...current,
     ].slice(0, 12));
     setResolution(result);
-  }, [activeMode, drafts, generateNpcOrders, multiplayerSession, phase, ships, staged, turn]);
+  }, [activeMode, battlefieldBounds, drafts, generateNpcOrders, multiplayerSession, phase, ships, staged, turn]);
 
   const resolveCombat = useCallback((finished: Resolution) => {
-    const bounds = battlefieldForMode(activeMode);
+    const bounds = battlefieldBounds;
     if (activeMode === "multiplayer" && pendingMultiplayerState) {
       const results = copyShips(pendingMultiplayerState.ships);
       setShips(results);
@@ -3604,7 +3670,7 @@ export function SpaceGame() {
     const nextFriendly = results.find((ship) => ship.team !== "enemy" && ship.controller === "player" && ship.hull > 0)
       ?? results.find((ship) => ship.team !== "enemy" && ship.hull > 0);
     if (nextFriendly) setSelectedShipId(nextFriendly.id);
-  }, [activeMode, multiplayerView?.status, pendingMultiplayerState]);
+  }, [activeMode, battlefieldBounds, multiplayerView?.status, pendingMultiplayerState]);
 
   const loadCombatState = useCallback((nextShips: Ship[], nextLog: string[], bounds: BattlefieldBounds) => {
     const encounterShips = copyShips(nextShips);
@@ -3624,10 +3690,12 @@ export function SpaceGame() {
   }, []);
 
   const beginMultiplayerBattle = useCallback((view: MultiplayerView) => {
+    const bounds = multiplayerBattlefieldFor(view.settings.mapSize);
     loadCombatState(view.state.ships, [
       `Match ${view.code}: ${view.hostName} and ${view.guestName ?? "Crimson Commander"} connected.`,
+      view.settings.fleetRule === "mirrored" ? "Host rule: both commanders deploy the host fleet composition." : "Host rule: commanders retain their independent fleet selections.",
       "Plot every ship in private. The turn begins when both commanders release their order envelopes.",
-    ], FLEET_BATTLEFIELD);
+    ], bounds);
     setMultiplayerView(view);
     setTurn(view.state.turn);
     setPhase(view.status === "complete" ? view.state.phase : view.ownSubmitted ? "waiting" : "planning");
@@ -3638,11 +3706,11 @@ export function SpaceGame() {
     setScreen("battle");
   }, [loadCombatState]);
 
-  const createMultiplayer = useCallback(async (name: string, fleet: MultiplayerFleetSelection) => {
+  const createMultiplayer = useCallback(async (name: string, fleet: MultiplayerFleetSelection, settings: MultiplayerMatchSettings) => {
     setMultiplayerBusy(true);
     setMultiplayerError("");
     try {
-      const created = await createRemoteMatch(name, fleet);
+      const created = await createRemoteMatch(name, fleet, settings);
       saveMultiplayerSession(created.session);
       setMultiplayerSession(created.session);
       setMultiplayerView(created.view);
@@ -4281,6 +4349,7 @@ export function SpaceGame() {
                 <span><small>{multiplayerCommandState.eyebrow}</small><strong>{multiplayerCommandState.title}</strong></span>
                 <div className="multiplayer-link-meta">
                   <span><small>MATCH</small><b>{multiplayerView.code}</b></span>
+                  <span className="multiplayer-active-rules"><small>RULES</small><b>{multiplayerView.settings.mapSize.toUpperCase()} · {multiplayerView.settings.impactRule.toUpperCase()}</b></span>
                   <span className={`multiplayer-presence ${multiplayerPresence}`}><i />{multiplayerPresence === "connected" ? "RIVAL ONLINE" : multiplayerPresence === "disconnected" ? "RIVAL SIGNAL LOST" : "CHECKING SIGNAL"}</span>
                   <span className={`multiplayer-turn-timer ${multiplayerClockUrgent ? "urgent" : ""}`}>
                     <small>{multiplayerView.lastTurnTimedOut ? "30 SEC DEADLINE" : "TURN TIMER"}</small>

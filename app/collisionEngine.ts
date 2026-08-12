@@ -38,6 +38,11 @@ export type MovementCollisionResult<T extends CollisionShip> = {
   hitFaces: Partial<Record<string, ShieldFace[]>>;
 };
 
+export type CollisionRules = {
+  damageMultiplier?: number;
+  wrecksPersist?: boolean;
+};
+
 const EPSILON = 1e-8;
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(maximum, Math.max(minimum, value));
@@ -185,7 +190,11 @@ export function resolveMovementCollisions<T extends CollisionShip>(
   battlefieldLengthHalf = 20,
   battlefieldVerticalHalf = 7,
   battlefieldWidthHalf = battlefieldLengthHalf,
+  rules: CollisionRules = {},
 ): MovementCollisionResult<T> {
+  const damageMultiplier = Math.max(0, rules.damageMultiplier ?? 1);
+  const wrecksPersist = rules.wrecksPersist ?? true;
+  const persistentWreck = (ship: T) => wrecksPersist && isPersistentWreck(ship);
   const results = intendedShips.map(cloneShip);
   const startById = new Map(sourceShips.map((ship) => [ship.id, ship]));
   const resultById = new Map(results.map((ship) => [ship.id, ship]));
@@ -199,8 +208,8 @@ export function resolveMovementCollisions<T extends CollisionShip>(
       const shipB = resultById.get(results[rightIndex].id)!;
       const liveA = shipA.hull > 0;
       const liveB = shipB.hull > 0;
-      const wreckA = isPersistentWreck(shipA);
-      const wreckB = isPersistentWreck(shipB);
+      const wreckA = persistentWreck(shipA);
+      const wreckB = persistentWreck(shipB);
       if ((!liveA && !wreckA) || (!liveB && !wreckB) || (wreckA && wreckB)) continue;
 
       const startA = new THREE.Vector3(...(startById.get(shipA.id)?.position ?? shipA.position));
@@ -232,8 +241,8 @@ export function resolveMovementCollisions<T extends CollisionShip>(
         const massB = collisionMassFor(shipB);
         setPosition(shipA, endA.clone().addScaledVector(normal, deflection * (massB / (massA + massB))), battlefieldLengthHalf, battlefieldVerticalHalf, battlefieldWidthHalf);
         setPosition(shipB, endB.clone().addScaledVector(normal, -deflection * (massA / (massA + massB))), battlefieldLengthHalf, battlefieldVerticalHalf, battlefieldWidthHalf);
-        const impactA = applyImpactDamage(shipA, collisionDamage(shipB, shipA, relativeSpeed), closest.pointB);
-        const impactB = applyImpactDamage(shipB, collisionDamage(shipA, shipB, relativeSpeed), closest.pointA);
+        const impactA = applyImpactDamage(shipA, collisionDamage(shipB, shipA, relativeSpeed) * damageMultiplier, closest.pointB);
+        const impactB = applyImpactDamage(shipB, collisionDamage(shipA, shipB, relativeSpeed) * damageMultiplier, closest.pointA);
         damageToA = impactA.damage;
         damageToB = impactB.damage;
         shieldDamageToA = impactA.shieldDamage;
@@ -242,8 +251,8 @@ export function resolveMovementCollisions<T extends CollisionShip>(
         hullDamageToB = impactB.hullDamage;
         faceA = impactA.face;
         faceB = impactB.face;
-        (hitFaceSets.get(shipA.id) ?? hitFaceSets.set(shipA.id, new Set()).get(shipA.id)!).add(faceA);
-        (hitFaceSets.get(shipB.id) ?? hitFaceSets.set(shipB.id, new Set()).get(shipB.id)!).add(faceB);
+        if (impactA.damage > 0) (hitFaceSets.get(shipA.id) ?? hitFaceSets.set(shipA.id, new Set()).get(shipA.id)!).add(faceA);
+        if (impactB.damage > 0) (hitFaceSets.get(shipB.id) ?? hitFaceSets.set(shipB.id, new Set()).get(shipB.id)!).add(faceB);
       } else {
         const liveShip = liveA ? shipA : shipB;
         const wreck = wreckA ? shipA : shipB;
@@ -253,7 +262,7 @@ export function resolveMovementCollisions<T extends CollisionShip>(
         const wreckPosition = new THREE.Vector3(...wreck.position);
         const finalOverlap = Math.max(0, minimumDistance - liveEnd.distanceTo(wreckPosition));
         setPosition(liveShip, liveEnd.addScaledVector(away, finalOverlap + Math.min(0.8, 0.22 + relativeSpeed * 0.06)), battlefieldLengthHalf, battlefieldVerticalHalf, battlefieldWidthHalf);
-        const impact = applyImpactDamage(liveShip, clamp(3 + relativeSpeed * 0.55, 3, 10), wreckPosition);
+        const impact = applyImpactDamage(liveShip, clamp(3 + relativeSpeed * 0.55, 3, 10) * damageMultiplier, wreckPosition);
         if (liveIsA) {
           damageToA = impact.damage;
           shieldDamageToA = impact.shieldDamage;
@@ -265,7 +274,7 @@ export function resolveMovementCollisions<T extends CollisionShip>(
           hullDamageToB = impact.hullDamage;
           faceB = impact.face;
         }
-        (hitFaceSets.get(liveShip.id) ?? hitFaceSets.set(liveShip.id, new Set()).get(liveShip.id)!).add(impact.face);
+        if (impact.damage > 0) (hitFaceSets.get(liveShip.id) ?? hitFaceSets.set(liveShip.id, new Set()).get(liveShip.id)!).add(impact.face);
       }
 
       [shipA, shipB].forEach((ship) => {
@@ -300,8 +309,8 @@ export function resolveMovementCollisions<T extends CollisionShip>(
         const shipB = results[rightIndex];
         const liveA = shipA.hull > 0;
         const liveB = shipB.hull > 0;
-        const solidA = liveA || isPersistentWreck(shipA);
-        const solidB = liveB || isPersistentWreck(shipB);
+        const solidA = liveA || persistentWreck(shipA);
+        const solidB = liveB || persistentWreck(shipB);
         if (!solidA || !solidB || (!liveA && !liveB)) continue;
         const positionA = new THREE.Vector3(...shipA.position);
         const positionB = new THREE.Vector3(...shipB.position);
@@ -330,7 +339,7 @@ export function resolveMovementCollisions<T extends CollisionShip>(
     const shipA = resultById.get(collision.shipAId)!;
     const shipB = resultById.get(collision.shipBId)!;
     if (collision.kind === "wreck") {
-      const wreck = isPersistentWreck(shipA) ? shipA : shipB;
+      const wreck = persistentWreck(shipA) ? shipA : shipB;
       const live = wreck.id === shipA.id ? shipB : shipA;
       const damage = wreck.id === shipA.id ? collision.damageToB : collision.damageToA;
       return `${live.name} clipped ${wreck.name}'s wreck — ${damage} impact damage and course deflection.`;
