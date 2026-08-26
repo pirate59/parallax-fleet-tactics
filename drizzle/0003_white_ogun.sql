@@ -1,0 +1,1 @@
+ALTER TABLE `multiplayer_matches` ADD `settings_json` text;
