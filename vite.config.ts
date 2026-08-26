@@ -5,8 +5,18 @@ import { sites } from "./build/sites-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
+const SITE_CREATOR_PLACEHOLDER_DATABASE_NAME = "site-creator-d1";
 
 const { d1, r2 } = hostingConfig;
+const isCloudflareWorkersBuild = process.env.WORKERS_CI === "1";
+const configuredD1DatabaseId = process.env.D1_DATABASE_ID?.trim();
+const configuredD1DatabaseName = process.env.D1_DATABASE_NAME?.trim();
+
+if (d1 && isCloudflareWorkersBuild && (!configuredD1DatabaseId || !configuredD1DatabaseName)) {
+  throw new Error(
+    "Cloudflare Workers Builds requires D1_DATABASE_ID and D1_DATABASE_NAME in Settings > Build > Build Variables and Secrets.",
+  );
+}
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
@@ -18,8 +28,10 @@ const localBindingConfig = {
     ? [
         {
           binding: d1,
-          database_name: "site-creator-d1",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          database_name:
+            configuredD1DatabaseName ?? SITE_CREATOR_PLACEHOLDER_DATABASE_NAME,
+          database_id:
+            configuredD1DatabaseId ?? SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
         },
       ]
     : [],

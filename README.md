@@ -94,6 +94,20 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 - `npm test`: build the starter and verify its rendered loading skeleton
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 
+## Cloudflare Git Builds
+
+The all-zero D1 database ID used by local development must never be deployed.
+When deploying this repository with Cloudflare Workers Builds, add these under
+**Settings > Build > Build Variables and Secrets**:
+
+- `D1_DATABASE_ID`: the UUID of the production D1 database
+- `D1_DATABASE_NAME`: the name of the production D1 database
+
+Keep the runtime D1 binding named `DB`. Cloudflare sets `WORKERS_CI=1` for its
+Git builds; the build will stop with a clear configuration error if either
+required value is missing instead of generating a deployment that references
+the local placeholder database.
+
 ## Learn More
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)
